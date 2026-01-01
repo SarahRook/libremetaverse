@@ -1,5 +1,5 @@
 /* Copyright (c) 2008 Robert Adams
- * Copyright (c) 2021-2024, Sjofn LLC. All rights reserved.
+ * Copyright (c) 2021-2025, Sjofn LLC. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -29,7 +29,7 @@
  * The Idealist viewer is licensed under the three clause BSD license.
  */
 /*
- * MeshmerizerR class implments OpenMetaverse.Rendering.IRendering interface
+ * MeshmerizerR class implements OpenMetaverse.Rendering.IRendering interface
  * using PrimMesher (http://forge.opensimulator.org/projects/primmesher).
  */
 
@@ -156,7 +156,7 @@ namespace OpenMetaverse.Rendering
 
         /// <summary>
         /// Create a faceted mesh from prim shape parameters.
-        /// Generates a a series of faces, each face containing a mesh and
+        /// Generates a series of faces, each face containing a mesh and
         /// material metadata.
         /// A prim will turn into multiple faces with each being independent
         /// meshes and each having different material information.
@@ -751,7 +751,7 @@ namespace OpenMetaverse.Rendering
             }
             catch (Exception ex)
             {
-                Logger.Log("Failed to decode mesh asset", Helpers.LogLevel.Error, ex);
+                Logger.Error("Failed to decode mesh asset", ex);
                 meshData = null;
             }
             return meshData;
@@ -861,7 +861,7 @@ namespace OpenMetaverse.Rendering
                 newPrim.taperY = 1.0f - primData.PathScaleY;
                 newPrim.twistBegin = (int)(180 * primData.PathTwistBegin);
                 newPrim.twistEnd = (int)(180 * primData.PathTwist);
-                newPrim.ExtrudeLinear();
+                newPrim.Extrude(PathType.Linear);
             }
             else
             {
@@ -869,7 +869,7 @@ namespace OpenMetaverse.Rendering
                 newPrim.taperY = primData.PathTaperY;
                 newPrim.twistBegin = (int)(360 * primData.PathTwistBegin);
                 newPrim.twistEnd = (int)(360 * primData.PathTwist);
-                newPrim.ExtrudeCircular();
+                newPrim.Extrude(PathType.Circular);
             }
 
             return newPrim;
@@ -914,3 +914,4 @@ namespace OpenMetaverse.Rendering
         }
     }
 }
+

@@ -1,6 +1,7 @@
-using System;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Movement
 {
     public class SitCommand: Command
     {
@@ -12,6 +13,11 @@ namespace OpenMetaverse.TestClient
 		}
 			
         public override string Execute(string[] args, UUID fromAgentID)
+		{
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
 		{
             Primitive closest = null;
 		    double closestDistance = double.MaxValue;
@@ -31,13 +37,12 @@ namespace OpenMetaverse.TestClient
 
             if (closest == null)
             {
-                return "Couldn't find a nearby prim to sit on";
+                return Task.FromResult("Couldn't find a nearby prim to sit on");
             }
             Client.Self.RequestSit(closest.ID, Vector3.Zero);
             Client.Self.Sit();
 
-            return $"Sat on {closest.ID} ({closest.LocalID}). Distance: {closestDistance}";
-
+            return Task.FromResult($"Sat on {closest.ID} ({closest.LocalID}). Distance: {closestDistance}");
         }
     }
 }

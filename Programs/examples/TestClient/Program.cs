@@ -1,10 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using CommandLine.Utility;
-using CoreJ2K.Util;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient
 {
     [Serializable]
     public class CommandLineArgumentsException : Exception
@@ -34,8 +33,6 @@ namespace OpenMetaverse.TestClient
 
         static void Main(string[] args)
         {
-            SKBitmapImageCreator.Register();
-            
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.InputEncoding = System.Text.Encoding.UTF8;
 
@@ -64,7 +61,7 @@ namespace OpenMetaverse.TestClient
                 LoginURI = arguments["loginuri"];
             if (string.IsNullOrEmpty(LoginURI))
                 LoginURI = Settings.AGNI_LOGIN_SERVER;
-            Logger.Log("Using login URI " + LoginURI, Helpers.LogLevel.Info);
+            Logger.Info("Using login URI " + LoginURI);
 
             if (arguments["gettextures"] != null)
                 getTextures = true;
@@ -77,7 +74,7 @@ namespace OpenMetaverse.TestClient
                 scriptFile = arguments["scriptfile"];
                 if (!File.Exists(scriptFile))
                 {
-                    Logger.Log($"File {scriptFile} Does not exist", Helpers.LogLevel.Error);
+                    Logger.Error($"File {scriptFile} Does not exist");
                     return;
                 }
             }
@@ -88,7 +85,7 @@ namespace OpenMetaverse.TestClient
 
                 if (!File.Exists(file))
                 {
-                    Logger.Log($"File {file} Does not exist", Helpers.LogLevel.Error);
+                    Logger.Error($"File {file} Does not exist");
                     return;
                 }
 
@@ -127,16 +124,15 @@ namespace OpenMetaverse.TestClient
                             }
                             else
                             {
-                                Logger.Log("Invalid data on line " + lineNumber +
-                                           ", must be in the format of: FirstName LastName Password [Sim/StartX/StartY/StartZ]",
-                                    Helpers.LogLevel.Warning);
+                                Logger.Warn("Invalid data on line " + lineNumber +
+                                           ", must be in the format of: FirstName LastName Password [Sim/StartX/StartY/StartZ]");
                             }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log("Error reading from " + args[1], Helpers.LogLevel.Error, ex);
+                    Logger.Error("Error reading from " + args[1], ex);
                     return;
                 }
             }
@@ -185,3 +181,4 @@ namespace OpenMetaverse.TestClient
         }
     }
 }
+

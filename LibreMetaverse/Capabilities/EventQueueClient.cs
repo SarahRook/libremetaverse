@@ -32,12 +32,13 @@ using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using LibreMetaverse;
+using OpenMetaverse.Messages.Linden;
 using OpenMetaverse.StructuredData;
 
 namespace OpenMetaverse.Http
 {
     /// <summary>EventQueueClient manages the polling-based EventQueueGet capability</summary>
-    public class EventQueueClient
+    public class EventQueueClient : IDisposable
     {
         private const string PROXY_TIMEOUT_RESPONSE = "502 Proxy Error";
         private const string MALFORMED_EMPTY_RESPONSE = "<llsd><undef /></llsd>";
@@ -48,17 +49,17 @@ namespace OpenMetaverse.Http
         public ConnectedCallback OnConnected;
         public EventCallback OnEvent;
 
-        public bool Running => _eqTask != null 
-                               && !_eqTask.IsCompleted 
-                               && (_eqTask.Status.Equals(TaskStatus.Running) 
-                                   || _eqTask.Status.Equals(TaskStatus.WaitingToRun)
-                                   || _eqTask.Status.Equals(TaskStatus.WaitingForActivation));
+        public bool Running => _queueCts != null && !_queueCts.IsCancellationRequested
+                               && _eqTask != null && !_eqTask.IsCompleted;
 
         protected readonly Uri Address;
         protected readonly Simulator Simulator;
         private CancellationTokenSource _queueCts;
         private Task _eqTask;
-        private OSD _reqPayload;
+
+        private readonly object _payloadLock = new object();
+        private OSDMap _reqPayloadMap;
+        private byte[] _reqPayloadBytes;
 
         public EventQueueClient(Uri eventQueueLocation, Simulator sim)
         {
@@ -67,11 +68,36 @@ namespace OpenMetaverse.Http
             _queueCts = new CancellationTokenSource();
         }
 
-        ~EventQueueClient()
+        /// <summary>
+        /// Dispose resources deterministically
+        /// </summary>
+        public void Dispose()
         {
-            _queueCts?.Dispose();
+            try
+            {
+                Stop(true);
+            }
+            catch { /* noop */ }
+
+            // Ensure task is observed/cleaned up
+            try
+            {
+                if (_eqTask != null)
+                {
+                    if (_eqTask.IsFaulted && _eqTask.Exception != null)
+                    {
+                        Logger.Error($"EventQueueClient background task faulted during dispose: {_eqTask.Exception}");
+                    }
+                }
+            }
+            catch { /* noop */ }
+
+            // Atomically take ownership and dispose
+            var oldCts = Interlocked.Exchange(ref _queueCts, null);
+            DisposalHelper.SafeCancelAndDispose(oldCts);
+            GC.SuppressFinalize(this);
         }
-        
+
         /// <summary>
         /// Starts event queue polling if it isn't already running.
         /// </summary>
@@ -86,15 +112,56 @@ namespace OpenMetaverse.Http
         private void Create()
         {
             // Create an EventQueueGet request
-            _reqPayload = new OSDMap { ["ack"] = new OSD(), ["done"] = OSD.FromBoolean(false) };
+            var eqAck = new EventQueueAck { Done = false };
+            var initial = eqAck.Serialize() as OSDMap ?? new OSDMap { ["done"] = OSD.FromBoolean(false) };
 
-            _queueCts = new CancellationTokenSource();
+            lock (_payloadLock)
+            {
+                _reqPayloadMap = initial;
+                _reqPayloadBytes = OSDParser.SerializeLLSDXmlBytes(_reqPayloadMap);
+            }
 
-            _eqTask = Repeat.Interval(TimeSpan.FromSeconds(1), ack, _queueCts.Token, true);
-            return;
+            // Atomically replace previous CTS and dispose it
+            var newCts = new CancellationTokenSource();
+            var prev = Interlocked.Exchange(ref _queueCts, newCts);
+            DisposalHelper.SafeCancelAndDispose(prev);
 
-            async void ack() => await Simulator.Client.HttpCapsClient.PostRequestAsync(
-                Address, OSDFormat.Xml, _reqPayload, _queueCts.Token, RequestCompletedHandler, null, ConnectedResponseHandler);
+            _eqTask = Repeat.IntervalAsync(TimeSpan.FromSeconds(1), ack, newCts.Token, true);
+
+            async Task ack()
+            {
+                try
+                {
+                    byte[] payloadSnapshot;
+                    lock (_payloadLock)
+                    {
+                        payloadSnapshot = _reqPayloadBytes;
+                    }
+
+                    // Fallback if for some reason payload is null
+                    if (payloadSnapshot == null)
+                    {
+                        // serialize under lock
+                        lock (_payloadLock)
+                        {
+                            _reqPayloadBytes = OSDParser.SerializeLLSDXmlBytes(_reqPayloadMap ?? new OSDMap());
+                            payloadSnapshot = _reqPayloadBytes;
+                        }
+                    }
+
+                    await Simulator.Client.HttpCapsClient.PostRequestAsync(
+                        Address, OSDFormat.Xml, payloadSnapshot, newCts.Token, RequestCompletedHandler, ConnectedResponseHandler)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // noop, cancellation is expected when stopping
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Exception sending EventQueue POST to {Simulator}: {ex.Message}", ex);
+                }
+            }
         }
 
         /// <summary>
@@ -103,8 +170,33 @@ namespace OpenMetaverse.Http
         /// <param name="immediate">quite honestly does nothing.</param>
         public void Stop(bool immediate)
         {
-            // do we need to POST one more request telling EQ we are done? i dunno!
-            _queueCts.Cancel();
+            // Atomically take ownership and cancel/dispose the CTS
+            var old = Interlocked.Exchange(ref _queueCts, null);
+            DisposalHelper.SafeCancelAndDispose(old);
+
+            // Wait a short time for the background task to finish so resources are cleaned up
+            try
+            {
+                if (_eqTask != null)
+                {
+                    // Wait up to 2 seconds for the repeating task to stop and observe exceptions
+                    DisposalHelper.SafeWaitTask(_eqTask, TimeSpan.FromSeconds(2), (m, ex) =>
+                    {
+                        if (ex == null)
+                        {
+                            Logger.Debug($"{m} for {Simulator}");
+                        }
+                        else
+                        {
+                            Logger.Error(m, ex);
+                        }
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Exception while waiting for EventQueueClient task to stop: {ex.Message}", ex);
+            }
         }
 
         private void ConnectedResponseHandler(HttpResponseMessage response)
@@ -119,8 +211,56 @@ namespace OpenMetaverse.Http
             }
             catch (Exception ex)
             {
-                Logger.Log(ex.Message, Helpers.LogLevel.Error, ex);
+                Logger.Error(ex.Message, ex);
             }
+        }
+
+        /// <summary>
+        /// Determine whether an HTTP response payload is likely LLSD/XML and therefore safe to attempt LLSD parsing.
+        /// Checks the Content-Type header first (if present) and otherwise peeks up to the first 256 bytes
+        /// of the payload to detect HTML/DOCTYPE bodies or LLSD/XML markers. Centralized to keep parsing
+        /// decision logic in one place and to provide consistent logging behaviour.
+        /// </summary>
+        /// <param name="response">The HTTP response message (might be null).</param>
+        /// <param name="data">The response body bytes.</param>
+        /// <returns>True if the payload should be treated as LLSD/XML and can be parsed; false otherwise.</returns>
+        private static bool IsLikelyLLSD(HttpResponseMessage response, byte[] data)
+        {
+            if (data == null || data.Length == 0) return false;
+
+            // Prefer a canonical content-type check when available
+            string mediaType = null;
+            try { mediaType = response?.Content?.Headers?.ContentType?.MediaType; } catch { mediaType = null; }
+            if (!string.IsNullOrEmpty(mediaType))
+            {
+                var mt = mediaType.ToLowerInvariant();
+                if (mt.Contains("xml") || mt.Contains("llsd"))
+                    return true;
+                // Content type explicitly present and not XML-like -> avoid parsing as LLSD
+                return false;
+            }
+
+            // No content-type header: peek at the start of the body
+            string prefix;
+            try { prefix = System.Text.Encoding.UTF8.GetString(data, 0, Math.Min(data.Length, 256)).TrimStart(); } catch { return false; }
+
+            // Common non-LLSD payloads we want to reject quickly
+            if (prefix.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase) ||
+                prefix.StartsWith("<html", StringComparison.OrdinalIgnoreCase) ||
+                prefix.StartsWith("<!doctype", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            // Common LLSD/XML markers
+            if (prefix.StartsWith("<? LLSD/", StringComparison.Ordinal) ||
+                prefix.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase) ||
+                prefix.StartsWith("<llsd", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // If it starts with a '<' and none of the HTML doctype matches above, treat as XML-like
+            if (prefix.StartsWith("<"))
+                return true;
+
+            return false;
         }
 
         private void RequestCompletedHandler(HttpResponseMessage response, byte[] responseData, Exception error)
@@ -148,68 +288,84 @@ namespace OpenMetaverse.Http
                             if (exception.Message.Equals("The response ended prematurely. (ResponseEnded)"))
 #endif
                             {
-                                Logger.Log($"Unable to parse response from {Simulator} event queue: " +
-                                           error.Message, Helpers.LogLevel.Error);
+                                Logger.Error($"Unable to parse response from {Simulator} event queue: " +
+                                           error.Message);
                             }
                         }
                         else
                         {
-                            Logger.Log($"Unable to parse response from {Simulator} event queue: " +
-                                       error.Message, Helpers.LogLevel.Error);
+                            Logger.Error($"Unable to parse response from {Simulator} event queue: " +
+                                       error.Message);
                         }
-                        
+
                         return;
                     }
-                    else switch (response.StatusCode)
+
+                    switch (response.StatusCode)
                     {
                         case HttpStatusCode.NotFound:
                         case HttpStatusCode.Gone:
-                            Logger.Log($"Closing event queue at {Simulator} due to missing caps URI",
-                                Helpers.LogLevel.Info);
+                            Logger.Info($"Closing event queue at {Simulator} due to missing caps URI");
 
-                            _queueCts.Cancel();
+                            // Cancel safely on snapshot
+                            var ctsSnapshot1 = Volatile.Read(ref _queueCts);
+                            if (ctsSnapshot1 != null)
+                            {
+                                try { ctsSnapshot1.Cancel(); } catch (ObjectDisposedException) { }
+                            }
                             break;
                         case (HttpStatusCode)499: // weird error returned occasionally, ignore for now
-                            Logger.Log($"Possible HTTP-out timeout error from {Simulator}, no need to continue",
-                                Helpers.LogLevel.Debug);
+                            Logger.Debug($"Possible HTTP-out timeout error from {Simulator}, no need to continue");
 
-                            _queueCts.Cancel();
+                            var ctsSnapshot2 = Volatile.Read(ref _queueCts);
+                            if (ctsSnapshot2 != null)
+                            {
+                                try { ctsSnapshot2.Cancel(); } catch (ObjectDisposedException) { }
+                            }
                             break;
 
                         case HttpStatusCode.InternalServerError:
                         {
-#if NET5_0_OR_GREATER
-                            var responseString = response.Content.ReadAsStringAsync(_queueCts.Token).Result;
-#else
-                            var responseString = response.Content.ReadAsStringAsync().Result;
-#endif
-                            if (!responseString.Contains(PROXY_TIMEOUT_RESPONSE))
+                            // If responseData already buffered, log it directly
+                            if (responseData != null)
                             {
-                                Logger.Log($"Grid sent a {response.StatusCode} : {response.ReasonPhrase} at {Simulator}", Helpers.LogLevel.Debug, Simulator.Client);
-
-                                if (!string.IsNullOrEmpty(responseString))
+                                try
                                 {
-                                    Logger.Log($"Full response was: {responseString}", Helpers.LogLevel.Debug, Simulator.Client);
-                                }
-
-                                if (error.InnerException != null)
-                                {
-                                    if (!error.InnerException.Message.Contains(PROXY_TIMEOUT_RESPONSE))
+                                    var responseString = System.Text.Encoding.UTF8.GetString(responseData);
+                                    if (!string.IsNullOrEmpty(responseString) &&
+                                        responseString.IndexOf(PROXY_TIMEOUT_RESPONSE, StringComparison.Ordinal) < 0)
                                     {
-                                        _queueCts.Cancel();
+                                        Logger.Debug($"Full response was: {responseString}", Simulator.Client);
                                     }
                                 }
-                                else
-                                {
-                                    const bool WILLFULLY_IGNORE_LL_SPECS_ON_EVENT_QUEUE = true;
+                                catch { /* ignore decode failures */ }
+                            }
 
-                                    if (!WILLFULLY_IGNORE_LL_SPECS_ON_EVENT_QUEUE || !Simulator.Connected)
+                            if (error.InnerException != null)
+                            {
+                                if (error.InnerException.Message.IndexOf(PROXY_TIMEOUT_RESPONSE, StringComparison.Ordinal) < 0)
+                                {
+                                    var ctsSnapshot3 = Volatile.Read(ref _queueCts);
+                                    if (ctsSnapshot3 != null)
                                     {
-                                        _queueCts.Cancel();
+                                        try { ctsSnapshot3.Cancel(); } catch (ObjectDisposedException) { }
                                     }
                                 }
                             }
-                        } 
+                            else
+                            {
+                                const bool WILLFULLY_IGNORE_LL_SPECS_ON_EVENT_QUEUE = true;
+
+                                if (!WILLFULLY_IGNORE_LL_SPECS_ON_EVENT_QUEUE || !Simulator.Connected)
+                                {
+                                    var ctsSnapshot4 = Volatile.Read(ref _queueCts);
+                                    if (ctsSnapshot4 != null)
+                                    {
+                                        try { ctsSnapshot4.Cancel(); } catch (ObjectDisposedException) { }
+                                    }
+                                }
+                            }
+                        }
                             break;
 
                         case HttpStatusCode.BadGateway:
@@ -221,87 +377,105 @@ namespace OpenMetaverse.Http
                             //
                             // Note: if this condition persists, it _might_ be the grid trying to request
                             // that the client closes the connection, as per LL's specs (gwyneth 20220414)
-                            Logger.Log($"Grid sent a Bad Gateway Error at {Simulator}; " +
-                                       $"probably a time-out from the grid's EventQueue server (normal) -- ignoring and continuing",
-                                Helpers.LogLevel.Debug);
+                            Logger.Debug($"Grid sent a Bad Gateway Error at {Simulator}; " +
+                                       $"probably a time-out from the grid's EventQueue server (normal) -- ignoring and continuing");
                             break;
                         default:
                             // Try to log a meaningful error message
                             if (response.StatusCode != HttpStatusCode.OK)
                             {
-                                Logger.Log($"Unrecognized caps connection problem from {Simulator}: {response.StatusCode} {response.ReasonPhrase}",
-                                    Helpers.LogLevel.Warning);
+                                Logger.Warn($"Unrecognized caps connection problem from {Simulator}: {response.StatusCode} {response.ReasonPhrase}");
                             }
                             else if (error.InnerException != null)
                             {
                                 // see comment above (gwyneth 20220414)
-                                Logger.Log($"Unrecognized internal caps exception from {Simulator}: '{error.InnerException.Message}'",
-                                    Helpers.LogLevel.Warning);
-                                Logger.Log($"Message ---\n{error.Message}", Helpers.LogLevel.Warning);
+                                Logger.Warn($"Unrecognized internal caps exception from {Simulator}: '{error.InnerException.Message}'");
+                                Logger.Warn($"Message ---\n{error.Message}");
                                 if (error.Data.Count > 0)
                                 {
-                                    Logger.Log("  Extra details:", Helpers.LogLevel.Warning);
+                                    Logger.Warn("  Extra details:");
                                     foreach (DictionaryEntry de in error.Data)
                                     {
-                                        Logger.Log(string.Format("    Key: {0,-20}      Value: {1}",
-                                                "'" + de.Key + "'", de.Value),
-                                            Helpers.LogLevel.Warning);
+                                        Logger.Warn(string.Format("    Key: {0,-20}      Value: {1}",
+                                                "'" + de.Key + "'", de.Value));
                                     }
                                 }
                             }
                             else
                             {
-                                Logger.Log($"Unrecognized caps exception from {Simulator}: {error.Message}",
-                                    Helpers.LogLevel.Warning);
+                                Logger.Warn($"Unrecognized caps exception from {Simulator}: {error.Message}");
                             }
 
                             break;
                     } // end switch
                 }
-#endregion Error handling
+                #endregion Error handling
                 else if (responseData != null)
                 {
-                    // Got a response
-                    if (OSDParser.DeserializeLLSDXml(responseData) is OSDMap result)
+                    // Got a response. Validate that the payload is likely LLSD/XML before attempting to parse.
+                    if (!IsLikelyLLSD(response, responseData))
                     {
-                        events = result["events"] as OSDArray;
-                        ack = result["id"];
+                        var responseString = System.Text.Encoding.UTF8.GetString(responseData);
+                        if (responseString.IndexOf(PROXY_TIMEOUT_RESPONSE, StringComparison.Ordinal) < 0
+                            && responseString.IndexOf(MALFORMED_EMPTY_RESPONSE, StringComparison.Ordinal) < 0)
+                        {
+                            var preview = responseString.Length > 200 ? responseString.Substring(0, 200) : responseString;
+                            Logger.Warn($"Skipping LLSD parsing; server returned non-LLSD response from {Simulator}: \"{preview}\"");
+                        }
                     }
                     else
                     {
-                        var responseString = System.Text.Encoding.UTF8.GetString(responseData);
-
-                        // We might get a ghost Gateway 502 in the message body, or we may get a 
-                        // badly-formed Undefined LLSD response. It's just par for the course for
-                        // EventQueueGet and we take it in stride
-                        if (!responseString.Contains(PROXY_TIMEOUT_RESPONSE)
-                            && !responseString.Contains(MALFORMED_EMPTY_RESPONSE))
+                        if (OSDParser.DeserializeLLSDXml(responseData) is OSDMap result)
                         {
-                            Logger.Log($"Could not parse response (1) from {Simulator} event queue: \"" +
-                                       responseString + "\"", Helpers.LogLevel.Warning);
+                            events = result["events"] as OSDArray;
+                            ack = result["id"];
+                        }
+                        else
+                        {
+                            var responseString = System.Text.Encoding.UTF8.GetString(responseData);
+
+                            // We might get a ghost Gateway 502 in the message body, or we may get a 
+                            // badly-formed Undefined LLSD response. It's just par for the course for
+                            // EventQueueGet and we take it in stride
+                            if (responseString.IndexOf(PROXY_TIMEOUT_RESPONSE, StringComparison.Ordinal) < 0
+                                && responseString.IndexOf(MALFORMED_EMPTY_RESPONSE, StringComparison.Ordinal) < 0)
+                            {
+                                Logger.Warn($"Could not parse response (1) from {Simulator} event queue: \"" +
+                                           responseString + "\"");
+                            }
                         }
                     }
                 }
 
                 #region Prepare the next ping
 
-                if (_queueCts.Token.IsCancellationRequested)
+                lock (_payloadLock)
                 {
-                    // We will fire off one more POST to tell the simulator, that's it we're done.
-                    // Not sure if this even necessary. Only our dark lords know what 'done' does.
-                    _reqPayload = new OSDMap
+                    if (_reqPayloadMap == null) _reqPayloadMap = new OSDMap();
+                    _reqPayloadMap["ack"] = ack;
+
+                    var ctsLocal = Volatile.Read(ref _queueCts);
+                    if (ctsLocal == null || ctsLocal.IsCancellationRequested)
                     {
-                        ["ack"] = ack,
-                        ["done"] = OSD.FromBoolean(true)
-                    };
-                }
-                else
-                {
-                    _reqPayload = new OSDMap
+                        // We will fire off one more POST to tell the simulator, that's it we're done.
+                        // Not sure if this even necessary. Only our dark lords know what 'done' does.
+                        _reqPayloadMap["done"] = OSD.FromBoolean(true);
+                    }
+                    else
                     {
-                        ["ack"] = ack,
-                        ["done"] = OSD.FromBoolean(!Simulator.Connected)
-                    };
+                        _reqPayloadMap["done"] = OSD.FromBoolean(!Simulator.Connected);
+                    }
+
+                    // reserialize for next request
+                    try
+                    {
+                        _reqPayloadBytes = OSDParser.SerializeLLSDXmlBytes(_reqPayloadMap);
+                    }
+                    catch
+                    {
+                        // If serialization fails for any reason, clear bytes so caller will fallback
+                        _reqPayloadBytes = null;
+                    }
                 }
 
                 #endregion Prepare the next ping
@@ -318,11 +492,12 @@ namespace OpenMetaverse.Http
 
                     try
                     {
-                        OnEvent(msg, body);
+                        // Run handlers on the thread pool to avoid blocking the event loop
+                        Task.Run(() => OnEvent(msg, body));
                     }
                     catch (Exception ex)
                     {
-                        Logger.Log(ex.Message, Helpers.LogLevel.Error, ex);
+                        Logger.Error(ex.Message, ex);
                     }
                 }
 
@@ -331,8 +506,9 @@ namespace OpenMetaverse.Http
 
             catch (Exception e)
             {
-                Logger.Log($"Exception in EventQueueGet handler; {e.Message}", Helpers.LogLevel.Warning, e);
+                Logger.Warn($"Exception in EventQueueGet handler; {e.Message}", e);
             }
         }
     }
 }
+

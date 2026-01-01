@@ -1,7 +1,9 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Inventory
 {
     public class ObjectInventoryCommand : Command
     {
@@ -13,6 +15,11 @@ namespace OpenMetaverse.TestClient
         }
 
         public override string Execute(string[] args, UUID fromAgentID)
+        {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
         {
             if (args.Length != 1)
             {
@@ -32,7 +39,7 @@ namespace OpenMetaverse.TestClient
             
             var objectLocalID = found.Value.LocalID;
 
-            var items = Client.Inventory.GetTaskInventory(objectID, objectLocalID, TimeSpan.FromSeconds(30));
+            var items = await Client.Inventory.GetTaskInventoryAsync(objectID, objectLocalID).ConfigureAwait(false);
 
             if (items == null)
             {

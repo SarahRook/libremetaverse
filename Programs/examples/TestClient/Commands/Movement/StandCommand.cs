@@ -1,4 +1,7 @@
-namespace OpenMetaverse.TestClient
+using System.Threading.Tasks;
+using OpenMetaverse;
+
+namespace TestClient.Commands.Movement
 {
     public class StandCommand: Command
     {
@@ -11,8 +14,13 @@ namespace OpenMetaverse.TestClient
 	
         public override string Execute(string[] args, UUID fromAgentID)
 	    {
-            Client.Self.Stand();
-		    return "Standing up.";  
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
 	    }
+
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
+            Client.Self.Stand();
+            return Task.FromResult("Standing up.");
+        }
     }
 }

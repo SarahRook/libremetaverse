@@ -1,6 +1,8 @@
 ﻿using System.Linq;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Prims
 {
     public class DeRezCommand : Command
     {
@@ -34,7 +36,11 @@ namespace OpenMetaverse.TestClient
                 Client.Inventory.FindFolderForType(FolderType.Trash),
                 UUID.Random());
             return $"Removing {target}";
+        }
 
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
+            return Task.FromResult(Execute(args, fromAgentID));
         }
     }
 }

@@ -29,8 +29,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using OpenMetaverse;
+using TestClient.Commands.Inventory;
+using TestClient.Commands.System;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient
 {
     public class LoginDetails
     {
@@ -126,7 +129,7 @@ namespace OpenMetaverse.TestClient
 
             if (string.IsNullOrEmpty(account.URI))
                 account.URI = Program.LoginURI;
-            Logger.Log($"Using login URI {account.URI}", Helpers.LogLevel.Info);
+            Logger.Info($"Using login URI {account.URI}");
 
             return Login(account);
         }
@@ -156,7 +159,7 @@ namespace OpenMetaverse.TestClient
             client.Network.LoginProgress +=
                 delegate(object sender, LoginProgressEventArgs e)
                 {
-                    Logger.Log($"Login {e.Status}: {e.Message}", Helpers.LogLevel.Info, client);
+                    Logger.Info($"Login {e.Status}: {e.Message}", client);
 
                     if (e.Status == LoginStatus.Success)
                     {
@@ -171,12 +174,12 @@ namespace OpenMetaverse.TestClient
                                 if (dpe.QueryID != query) { return; }
                                 if (dpe.MatchedPeople.Count != 1)
                                 {
-                                    Logger.Log($"Unable to resolve master key from {client.MasterName}", Helpers.LogLevel.Warning);
+                                    Logger.Warn($"Unable to resolve master key from {client.MasterName}");
                                 }
                                 else
                                 {
                                     client.MasterKey = dpe.MatchedPeople[0].AgentID;
-                                    Logger.Log($"Master key resolved to {client.MasterKey}", Helpers.LogLevel.Info);
+                                    Logger.Info($"Master key resolved to {client.MasterKey}");
                                 }
                             }
 
@@ -184,13 +187,12 @@ namespace OpenMetaverse.TestClient
                             query = client.Directory.StartPeopleSearch(client.MasterName, 0);
                         }
 
-                        Logger.Log($"Logged in {client}", Helpers.LogLevel.Info);
+                        Logger.Info($"Logged in {client}");
                         --PendingLogins;
                     }
                     else if (e.Status == LoginStatus.Failed)
                     {
-                        Logger.Log($"Failed to login {account.FirstName} {account.LastName}: {client.Network.LoginMessage}", 
-                            Helpers.LogLevel.Warning);
+                        Logger.Warn($"Failed to login {account.FirstName} {account.LastName}: {client.Network.LoginMessage}");
                         --PendingLogins;
                     }
                 };
@@ -215,7 +217,8 @@ namespace OpenMetaverse.TestClient
             if (!string.IsNullOrEmpty(account.URI))
                 loginParams.URI = account.URI;
 
-            client.Network.BeginLogin(loginParams);
+            // Prefer async login API even from synchronous callers to centralize async behavior
+            client.Network.LoginAsync(loginParams).GetAwaiter().GetResult();
             return client;
         }
 
@@ -229,7 +232,7 @@ namespace OpenMetaverse.TestClient
             {
                 while (Running)
                 {
-                    Thread.Sleep(2 * 1000);
+                    System.Threading.Tasks.Task.Delay(2 * 1000).GetAwaiter().GetResult();
                 }
             }
             else {
@@ -262,13 +265,13 @@ namespace OpenMetaverse.TestClient
         /// <summary>
         /// 
         /// </summary>
-        /// <param name="cmd"></param>
+        /// <param name="commandLine"></param>
         /// <param name="fromAgentID"></param>
-        public void DoCommandAll(string cmd, UUID fromAgentID)
+        public void DoCommandAll(string commandLine, UUID fromAgentID)
         {
-            if (cmd == null)
+            if (commandLine == null)
                 return;
-            string[] tokens = cmd.Trim().Split(' ', '\t');
+            string[] tokens = commandLine.Trim().Split(' ', '\t');
             if (tokens.Length == 0)
                 return;
             
@@ -286,12 +289,11 @@ namespace OpenMetaverse.TestClient
                     onlyAvatar = tokens[1]+" "+tokens[2];
                     bool found = Clients.Values.Any(client => (client.ToString() == onlyAvatar) && (client.Network.Connected));
 
-                    Logger.Log(
-                        found
+                    Logger.Info(found
                             ? $"Commanding only {onlyAvatar} now"
-                            : $"Commanding nobody now. Avatar {onlyAvatar} is offline", Helpers.LogLevel.Info);
+                            : $"Commanding nobody now. Avatar {onlyAvatar} is offline");
                 } else {
-                    Logger.Log("Commanding all avatars now", Helpers.LogLevel.Info);
+                    Logger.Info("Commanding all avatars now");
                 }
                 return;
             }
@@ -307,7 +309,7 @@ namespace OpenMetaverse.TestClient
             else if (firstToken == "quit")
             {
                 Quit();
-                Logger.Log("All clients logged out and program finished running.", Helpers.LogLevel.Info);
+                Logger.Info("All clients logged out and program finished running.");
             }
             else if (firstToken == "help")
             {
@@ -315,7 +317,8 @@ namespace OpenMetaverse.TestClient
                 {
                     foreach (TestClient client in Clients.Values)
                     {
-                        Console.WriteLine(client.Commands["help"].Execute(args, UUID.Zero));
+                        // Use async API but keep synchronous behavior for the caller
+                        Console.WriteLine(client.Commands["help"].ExecuteAsync(args, UUID.Zero).GetAwaiter().GetResult());
                         break;
                     }
                 }
@@ -328,7 +331,7 @@ namespace OpenMetaverse.TestClient
             {
                 // No reason to pass this to all bots, and we also want to allow it when there are no bots
                 ScriptCommand command = new ScriptCommand(null);
-                Logger.Log(command.Execute(args, UUID.Zero), Helpers.LogLevel.Info);
+                Logger.Info(command.ExecuteAsync(args, UUID.Zero).GetAwaiter().GetResult());
             }
             else if (firstToken == "waitforlogin")
             {
@@ -336,11 +339,11 @@ namespace OpenMetaverse.TestClient
                 if (ClientManager.Instance.PendingLogins > 0)
                 {
                     WaitForLoginCommand command = new WaitForLoginCommand(null);
-                    Logger.Log(command.Execute(args, UUID.Zero), Helpers.LogLevel.Info);
+                    Logger.Info(command.ExecuteAsync(args, UUID.Zero).GetAwaiter().GetResult());
                 }
                 else
                 {
-                    Logger.Log("No pending logins", Helpers.LogLevel.Info);
+                    Logger.Info("No pending logins");
                 }
             }
             else
@@ -348,36 +351,41 @@ namespace OpenMetaverse.TestClient
                 // Make an immutable copy of the Clients dictionary to safely iterate over
                 Dictionary<UUID, TestClient> clientsCopy = new Dictionary<UUID, TestClient>(Clients);
 
-                int completed = 0;
+                var tasks = new List<System.Threading.Tasks.Task>();
 
                 foreach (TestClient client in clientsCopy.Values)
                 {
-                    ThreadPool.QueueUserWorkItem(
-                        delegate(object state)
-                        {
-                            TestClient testClient = (TestClient)state;
-                            if ((string.Empty == onlyAvatar) || (testClient.ToString() == onlyAvatar)) {
-                                if (testClient.Commands.ContainsKey(firstToken)) {
-                                    string result;
-                                    try {
-                                        result = testClient.Commands[firstToken].Execute(args, fromAgentID);
-                                        Logger.Log(result, Helpers.LogLevel.Info, testClient);
-                                    } catch(Exception e) {
-                                        Logger.Log($"{firstToken} raised exception {e}",
-                                                   Helpers.LogLevel.Error,
-                                                   testClient);
-                                    }
-                                } else
-                                    Logger.Log($"Unknown command {firstToken}", Helpers.LogLevel.Warning);
-                            }
+                    TestClient testClient = client;
 
-                            ++completed;
-                        },
-                        client);
+                    if ((string.Empty == onlyAvatar) || (testClient.ToString() == onlyAvatar))
+                    {
+                        if (testClient.Commands.TryGetValue(firstToken, out var command))
+                        {
+                            var task = System.Threading.Tasks.Task.Run(async () =>
+                            {
+                                try
+                                {
+                                    var result = await command.ExecuteAsync(args, fromAgentID).ConfigureAwait(false);
+                                    Logger.Info(result, testClient);
+                                }
+                                catch (Exception e)
+                                {
+                                    Logger.Error($"{firstToken} raised exception {e}", testClient);
+                                }
+                            });
+
+                            tasks.Add(task);
+                        }
+                        else
+                        {
+                            Logger.Warn($"Unknown command {firstToken}");
+                        }
+                    }
                 }
 
-                while (completed < clientsCopy.Count)
-                    Thread.Sleep(50);
+                // Wait for all command tasks to complete
+                if (tasks.Count > 0)
+                    System.Threading.Tasks.Task.WhenAll(tasks).GetAwaiter().GetResult();
             }
         }
 
@@ -401,3 +409,4 @@ namespace OpenMetaverse.TestClient
         }
     }
 }
+

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -70,17 +70,9 @@ namespace OpenMetaverse.Assets
             output.Append("{\n");
             output.Append("LLEmbeddedItems version 1\n");
             output.Append("{\n");
+            output.Append($"count {EmbeddedItems.Count}\n");
 
-            int count = 0;
-
-            if (EmbeddedItems != null)
-            {
-                count = EmbeddedItems.Count;
-            }
-
-            output.Append("count " + count + "\n");
-
-            if (count > 0)
+            if (EmbeddedItems.Count > 0)
             {
                 output.Append("{\n");
 
@@ -392,9 +384,10 @@ namespace OpenMetaverse.Assets
             }
             catch (Exception ex)
             {
-                Logger.Log("Decoding notecard asset failed: " + ex.Message, Helpers.LogLevel.Error);
+                Logger.Error("Decoding notecard asset failed: " + ex.Message);
                 return false;
             }
         }
     }
 }
+

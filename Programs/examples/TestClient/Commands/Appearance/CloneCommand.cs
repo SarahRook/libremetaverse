@@ -1,15 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using LibreMetaverse;
+using OpenMetaverse;
 using OpenMetaverse.Packets;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Appearance
 {
     public class CloneCommand : Command
     {
         uint _serialNum = 2;
-        readonly CacheDictionary<UUID, AvatarAppearancePacket> Appearances = 
+        readonly CacheDictionary<UUID, AvatarAppearancePacket> Appearances =
             new CacheDictionary<UUID, AvatarAppearancePacket>(100, new LruRemovalStrategy<UUID>());
 
         public CloneCommand(TestClient testClient)
@@ -23,6 +25,11 @@ namespace OpenMetaverse.TestClient
 
         public override string Execute(string[] args, UUID fromAgentID)
         {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
             string targetName = string.Empty;
             List<DirectoryManager.AgentSearchData> matches;
 
@@ -30,7 +37,7 @@ namespace OpenMetaverse.TestClient
             targetName = targetName.TrimEnd();
 
             if (targetName.Length == 0)
-                return "Usage: clone [name]";
+                return Task.FromResult("Usage: clone [name]");
 
 #pragma warning disable CS0618 // Type or member is obsolete
             if (Client.Directory.PeopleSearch(DirectoryManager.DirFindFlags.People, targetName, 0, 1000 * 10,
@@ -77,16 +84,16 @@ namespace OpenMetaverse.TestClient
                     // Send the new appearance packet
                     Client.Network.SendPacket(set);
 
-                    return $"Cloned {targetName}";
+                    return Task.FromResult($"Cloned {targetName}");
                 }
                 else
                 {
-                    return $"Don't have an appearance cached for {targetName}";
+                    return Task.FromResult($"Don't have an appearance cached for {targetName}");
                 }
             }
             else
             {
-                return $"Could not find {targetName}";
+                return Task.FromResult($"Could not find {targetName}");
             }
         }
 

@@ -1,6 +1,8 @@
 using System.Collections.Generic;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Groups
 {
     public class InviteGroupCommand : Command
     {
@@ -13,9 +15,14 @@ namespace OpenMetaverse.TestClient
 
         public override string Execute(string[] args, UUID fromAgentID)
         {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
             if (args.Length < 2)
             {
-                return Description;
+                return Task.FromResult(Description);
             }
 
             UUID avatar = UUID.Zero;
@@ -23,8 +30,8 @@ namespace OpenMetaverse.TestClient
             UUID role = UUID.Zero;
             List<UUID> roles = new List<UUID>();
 
-            if (!UUID.TryParse(args[0], out avatar)) { return "parse error avatar UUID"; }
-            if (!UUID.TryParse(args[1], out group)) { return "parse error group UUID"; }
+            if (!UUID.TryParse(args[0], out avatar)) { return Task.FromResult("parse error avatar UUID"); }
+            if (!UUID.TryParse(args[1], out group)) { return Task.FromResult("parse error group UUID"); }
 
             if (2 == args.Length)
             {
@@ -43,7 +50,7 @@ namespace OpenMetaverse.TestClient
 
             Client.Groups.Invite(group, roles, avatar);
 
-            return "invited "+avatar+" to "+group;
+            return Task.FromResult("invited " + avatar + " to " + group);
         }
     }
 }

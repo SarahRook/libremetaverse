@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
+using OpenMetaverse;
 using OpenMetaverse.StructuredData;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Prims
 {
     public class ImportCommand : Command
     {
@@ -35,7 +36,7 @@ namespace OpenMetaverse.TestClient
 
         Primitive currentPrim;
         Vector3 currentPosition;
-        AutoResetEvent primDone = new AutoResetEvent(false);
+        TaskCompletionSource<bool> primDoneTcs;
         List<Primitive> primsCreated;
         List<uint> linkQueue;
         uint rootLocalID;
@@ -46,11 +47,16 @@ namespace OpenMetaverse.TestClient
             Name = "import";
             Description = "Import prims from an exported xml file. Usage: import inputfile.xml [usegroup]";
             Category = CommandCategory.Objects;
-            
+
             testClient.Objects.ObjectUpdate += Objects_OnNewPrim;
         }
 
         public override string Execute(string[] args, UUID fromAgentID)
+        {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
         {
             if (args.Length < 1)
                 return "Usage: import inputfile.xml [usegroup]";
@@ -105,10 +111,15 @@ namespace OpenMetaverse.TestClient
                     Quaternion rootRotation = linkset.RootPrim.Rotation;
                     linkset.RootPrim.Rotation = Quaternion.Identity;
 
+                    // Prepare TCS
+                    primDoneTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
                     Client.Objects.AddPrim(Client.Network.CurrentSim, linkset.RootPrim.PrimData, GroupID,
                         linkset.RootPrim.Position, linkset.RootPrim.Scale, linkset.RootPrim.Rotation);
 
-                    if (!primDone.WaitOne(TimeSpan.FromSeconds(10), false))
+                    // wait for created prim
+                    var completed = await Task.WhenAny(primDoneTcs.Task, Task.Delay(TimeSpan.FromSeconds(10))).ConfigureAwait(false);
+                    if (completed != primDoneTcs.Task || !primDoneTcs.Task.Result)
                         return "Rez failed, timed out while creating the root prim.";
 
                     Client.Objects.SetPosition(Client.Network.CurrentSim, primsCreated[primsCreated.Count - 1].LocalID, linkset.RootPrim.Position);
@@ -121,11 +132,15 @@ namespace OpenMetaverse.TestClient
                         currentPrim = prim;
                         currentPosition = prim.Position + linkset.RootPrim.Position;
 
+                        primDoneTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
                         Client.Objects.AddPrim(Client.Network.CurrentSim, prim.PrimData, GroupID, currentPosition,
                             prim.Scale, prim.Rotation);
 
-                        if (!primDone.WaitOne(TimeSpan.FromSeconds(10), false))
+                        var childCompleted = await Task.WhenAny(primDoneTcs.Task, Task.Delay(TimeSpan.FromSeconds(10))).ConfigureAwait(false);
+                        if (childCompleted != primDoneTcs.Task || !primDoneTcs.Task.Result)
                             return "Rez failed, timed out while creating child prim.";
+
                         Client.Objects.SetPosition(Client.Network.CurrentSim, primsCreated[primsCreated.Count - 1].LocalID, currentPosition);
 
                     }
@@ -142,24 +157,32 @@ namespace OpenMetaverse.TestClient
 
                         // Link and set the permissions + rotation
                         state = ImporterState.Linking;
+
+                        primDoneTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
                         Client.Objects.LinkPrims(Client.Network.CurrentSim, linkQueue);
 
-                        if (primDone.WaitOne(TimeSpan.FromSeconds(linkset.Children.Count), false))
+                        var linkCompleted = await Task.WhenAny(primDoneTcs.Task, Task.Delay(TimeSpan.FromSeconds(linkset.Children.Count))).ConfigureAwait(false);
+                        if (linkCompleted == primDoneTcs.Task && primDoneTcs.Task.Result)
+                        {
                             Client.Objects.SetRotation(Client.Network.CurrentSim, rootLocalID, rootRotation);
+                        }
                         else
+                        {
                             Console.WriteLine("Warning: Failed to link {0} prims", linkQueue.Count);
+                        }
 
                     }
                     else
                     {
                         Client.Objects.SetRotation(Client.Network.CurrentSim, rootLocalID, rootRotation);
                     }
-                    
+
                     // Set permissions on newly created prims
                     Client.Objects.SetPermissions(Client.Network.CurrentSim, primIDs,
                         PermissionWho.Everyone | PermissionWho.Group | PermissionWho.NextOwner,
                         PermissionMask.All, true);
-                    
+
                     state = ImporterState.Idle;
                 }
                 else
@@ -221,7 +244,7 @@ namespace OpenMetaverse.TestClient
                         }
 
                         primsCreated.Add(prim);
-                        primDone.Set();
+                        primDoneTcs?.TrySetResult(true);
                     }
                     break;
                 case ImporterState.Linking:
@@ -232,7 +255,7 @@ namespace OpenMetaverse.TestClient
                         {
                             linkQueue.RemoveAt(index);
                             if (linkQueue.Count == 0)
-                                primDone.Set();
+                                primDoneTcs?.TrySetResult(true);
                         }
                     }
                     break;

@@ -1,4 +1,7 @@
-﻿namespace OpenMetaverse.TestClient
+using System.Threading.Tasks;
+using OpenMetaverse;
+
+namespace TestClient.Commands.System
 {
     public class WaitForLoginCommand : Command
     {
@@ -11,13 +14,19 @@
 
         public override string Execute(string[] args, UUID fromAgentID)
         {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
             while (ClientManager.Instance.PendingLogins > 0)
             {
-                System.Threading.Thread.Sleep(1000);
-                Logger.Log("Pending logins: " + ClientManager.Instance.PendingLogins, Helpers.LogLevel.Info);
+                await Task.Delay(1000).ConfigureAwait(false);
+                Logger.Info($"Pending logins: {ClientManager.Instance.PendingLogins}");
             }
 
-            return "All pending logins have completed, currently tracking " + ClientManager.Instance.Clients.Count + " bots";
+            return $"All pending logins have completed, currently tracking {ClientManager.Instance.Clients.Count} bots";
         }
     }
 }
+

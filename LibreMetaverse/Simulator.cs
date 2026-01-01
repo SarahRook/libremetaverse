@@ -30,8 +30,10 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Net;
 using LibreMetaverse;
+using LibreMetaverse.Threading;
 using OpenMetaverse.Packets;
 
 namespace OpenMetaverse
@@ -47,68 +49,69 @@ namespace OpenMetaverse
         /// <summary>No flags set</summary>
         None = 0,
         /// <summary>Agents can take damage and be killed</summary>
-        AllowDamage = 1 << 0,
+        AllowDamage = 1UL << 0,
         /// <summary>Landmarks can be created here</summary>
-        AllowLandmark = 1 << 1,
+        AllowLandmark = 1UL << 1,
         /// <summary>Home position can be set in this sim</summary>
-        AllowSetHome = 1 << 2,
+        AllowSetHome = 1UL << 2,
         /// <summary>Home position is reset when an agent teleports away</summary>
-        ResetHomeOnTeleport = 1 << 3,
+        ResetHomeOnTeleport = 1UL << 3,
         /// <summary>Sun does not move</summary>
-        SunFixed = 1 << 4,
+        SunFixed = 1UL << 4,
         /// <summary>Allows private parcels (ie. banlines)</summary>
-        AllowAccessOverride = 1 << 5,
+        AllowAccessOverride = 1UL << 5,
         /// <summary>Disable heightmap alterations (agents can still plant foliage)</summary>
-        BlockTerraform = 1 << 6,
+        BlockTerraform = 1UL << 6,
         /// <summary>Land cannot be released, sold, or purchased</summary>
-        BlockLandResell = 1 << 7,
+        BlockLandResell = 1UL << 7,
         /// <summary>All content is wiped nightly</summary>
-        Sandbox = 1 << 8,
+        Sandbox = 1UL << 8,
         /// <summary>Unknown: Related to the availability of an overview world map tile.(Think mainland images when zoomed out.)</summary>
-        NullLayer = 1 << 9,
+        NullLayer = 1UL << 9,
         /// <summary>Unknown: Related to region debug flags. Possibly to skip processing of agent interaction with world. </summary>
-        SkipAgentAction = 1 << 10,
+        SkipAgentAction = 1UL << 10,
         /// <summary>Region does not update agent prim interest lists. Internal debugging option.</summary>
-        SkipUpdateInterestList = 1 << 11,
+        SkipUpdateInterestList = 1UL << 11,
         /// <summary>No collision detection for non-agent objects</summary>
-        SkipCollisions = 1 << 12,
+        SkipCollisions = 1UL << 12,
         /// <summary>No scripts are ran</summary>
-        SkipScripts = 1 << 13,
+        SkipScripts = 1UL << 13,
         /// <summary>All physics processing is turned off</summary>
-        SkipPhysics = 1 << 14,
+        SkipPhysics = 1UL << 14,
         /// <summary>Region can be seen from other regions on world map. (Legacy world map option?) </summary>
-        ExternallyVisible = 1 << 15,
+        ExternallyVisible = 1UL << 15,
         /// <summary>Region can be seen from mainland on world map. (Legacy world map option?) </summary>
-        MainlandVisible = 1 << 16,
+        MainlandVisible = 1UL << 16,
         /// <summary>Agents not explicitly on the access list can visit the region. </summary>
-        PublicAllowed = 1 << 17,
+        PublicAllowed = 1UL << 17,
         /// <summary>Traffic calculations are not run across entire region, overrides parcel settings. </summary>
-        BlockDwell = 1 << 18,
+        BlockDwell = 1UL << 18,
         /// <summary>Flight is disabled (not currently enforced by the sim)</summary>
-        NoFly = 1 << 19,
+        NoFly = 1UL << 19,
         /// <summary>Allow direct (p2p) teleporting</summary>
-        AllowDirectTeleport = 1 << 20,
+        AllowDirectTeleport = 1UL << 20,
         /// <summary>Estate owner has temporarily disabled scripting</summary>
-        EstateSkipScripts = 1 << 21,
+        EstateSkipScripts = 1UL << 21,
         /// <summary>Restricts the usage of the LSL llPushObject function, applies to whole region.</summary>
-        RestrictPushObject = 1 << 22,
+        RestrictPushObject = 1UL << 22,
         /// <summary>Deny agents with no payment info on file</summary>
-        DenyAnonymous = 1 << 23,
+        DenyAnonymous = 1UL << 23,
         /// <summary>Deny agents with payment info on file</summary>
-        DenyIdentified = 1 << 24,
+        DenyIdentified = 1UL << 24,
         /// <summary>Deny agents who have made a monetary transaction</summary>
-        DenyTransacted = 1 << 25,
+        DenyTransacted = 1UL << 25,
         /// <summary>Parcels within the region may be joined or divided by anyone, not just estate owners/managers. </summary>
-        AllowParcelChanges = 1 << 26,
+        AllowParcelChanges = 1UL << 26,
         /// <summary>Abuse reports sent from within this region are sent to the estate owner defined email. </summary>
-        AbuseEmailToEstateOwner = 1 << 27,
+        AbuseEmailToEstateOwner = 1UL << 27,
         /// <summary>Region is Voice Enabled</summary>
-        AllowVoice = 1 << 28,
+        AllowVoice = 1UL << 28,
         /// <summary>Removes the ability from parcel owners to set their parcels to show in search.</summary>
-        BlockParcelSearch = 1 << 29,
+        BlockParcelSearch = 1UL << 29,
         /// <summary>Deny agents who have not been age verified from entering the region.</summary>
-        DenyAgeUnverified = 1 << 30
-
+        DenyAgeUnverified = 1UL << 30,
+        /// <summary>Deny scripted agents from entering the region</summary>
+        DenyBots = 1UL << 31
     }
 
     /// <summary>
@@ -120,9 +123,9 @@ namespace OpenMetaverse
         /// <summary>Nothing special</summary>
         None = 0,
         /// <summary>Region supports Server side Appearance</summary>
-        AgentAppearanceService = 1 << 0,
+        AgentAppearanceService = 1UL << 0,
         /// <summary>Viewer supports Server side Appearance</summary>
-        SelfAppearanceSupport = 1 << 2
+        SelfAppearanceSupport = 1UL << 2
     }
 
     /// <summary>
@@ -156,98 +159,153 @@ namespace OpenMetaverse
     {
         #region Structs
         /// <summary>
-        /// Simulator Statistics
+        /// Simulator Statistics (thread-safe)
         /// </summary>
-        public struct SimStats
+        public class SimStats
         {
-            /// <summary>Total number of packets sent by this simulator to this agent</summary>
-            public long SentPackets;
-            /// <summary>Total number of packets received by this simulator to this agent</summary>
-            public long RecvPackets;
-            /// <summary>Total number of bytes sent by this simulator to this agent</summary>
-            public long SentBytes;
-            /// <summary>Total number of bytes received by this simulator to this agent</summary>
-            public long RecvBytes;
-            /// <summary>Time in seconds agent has been connected to simulator</summary>
-            public int ConnectTime;
-            /// <summary>Total number of packets that have been resent</summary>
-            public int ResentPackets;
-            /// <summary>Total number of resent packets received</summary>
-            public int ReceivedResends;
-            /// <summary>Total number of pings sent to this simulator by this agent</summary>
-            public int SentPings;
-            /// <summary>Total number of ping replies sent to this agent by this simulator</summary>
-            public int ReceivedPongs;
-            /// <summary>
-            /// Incoming bytes per second
-            /// </summary>
-            /// <remarks>It would be nice to have this calculated on the fly, but
-            /// this is far, far easier</remarks>
-            public int IncomingBPS;
-            /// <summary>
-            /// Outgoing bytes per second
-            /// </summary>
-            /// <remarks>It would be nice to have this calculated on the fly, but
-            /// this is far, far easier</remarks>
-            public int OutgoingBPS;
-            /// <summary>Time last ping was sent</summary>
-            public int LastPingSent;
-            /// <summary>ID of last Ping sent</summary>
-            public byte LastPingID;
+            // Backing fields for commonly updated counters (use Interlocked)
+            private long _sentPackets;
+            private long _recvPackets;
+            private long _sentBytes;
+            private long _recvBytes;
+
+            private int _connectTime;
+            private int _resentPackets;
+            private int _receivedResends;
+            private int _sentPings;
+            private int _receivedPongs;
+            private int _incomingBPS;
+            private int _outgoingBPS;
+            private int _lastPingSent;
+            private int _lastPingID;
+
+            // Less frequently updated fields
+            private readonly object _sync = new object();
+
+            private int _lastLag;
             /// <summary></summary>
-            public int LastLag;
+            public int LastLag { get { lock (_sync) { return _lastLag; } } set { lock (_sync) { _lastLag = value; } } }
+            private int _missedPings;
             /// <summary></summary>
-            public int MissedPings;
-            /// <summary>Current time dilation of this simulator</summary>
-            public float Dilation;
-            /// <summary>Current Frames per second of simulator</summary>
-            public int FPS;
-            /// <summary>Current Physics frames per second of simulator</summary>
-            public float PhysicsFPS;
+            public int MissedPings { get { lock (_sync) { return _missedPings; } } set { lock (_sync) { _missedPings = value; } } }
+            private float _dilation;
             /// <summary></summary>
-            public float AgentUpdates;
+            public float Dilation { get { lock (_sync) { return _dilation; } } set { lock (_sync) { _dilation = value; } } }
+            private int _fps;
             /// <summary></summary>
-            public float FrameTime;
+            public int FPS { get { lock (_sync) { return _fps; } } set { lock (_sync) { _fps = value; } } }
+            private float _physicsFPS;
             /// <summary></summary>
-            public float NetTime;
+            public float PhysicsFPS { get { lock (_sync) { return _physicsFPS; } } set { lock (_sync) { _physicsFPS = value; } } }
+            private float _agentUpdates;
             /// <summary></summary>
-            public float PhysicsTime;
+            public float AgentUpdates { get { lock (_sync) { return _agentUpdates; } } set { lock (_sync) { _agentUpdates = value; } } }
+            private float _frameTime;
             /// <summary></summary>
-            public float ImageTime;
+            public float FrameTime { get { lock (_sync) { return _frameTime; } } set { lock (_sync) { _frameTime = value; } } }
+            private float _netTime;
             /// <summary></summary>
-            public float ScriptTime;
+            public float NetTime { get { lock (_sync) { return _netTime; } } set { lock (_sync) { _netTime = value; } } }
+            private float _physicsTime;
             /// <summary></summary>
-            public float AgentTime;
+            public float PhysicsTime { get { lock (_sync) { return _physicsTime; } } set { lock (_sync) { _physicsTime = value; } } }
+            private float _imageTime;
             /// <summary></summary>
-            public float OtherTime;
-            /// <summary>Total number of objects Simulator is simulating</summary>
-            public int Objects;
-            /// <summary>Total number of Active (Scripted) objects running</summary>
-            public int ScriptedObjects;
-            /// <summary>Number of agents currently in this simulator</summary>
-            public int Agents;
-            /// <summary>Number of agents in neighbor simulators</summary>
-            public int ChildAgents;
-            /// <summary>Number of Active scripts running in this simulator</summary>
-            public int ActiveScripts;
+            public float ImageTime { get { lock (_sync) { return _imageTime; } } set { lock (_sync) { _imageTime = value; } } }
+            private float _scriptTime;
             /// <summary></summary>
-            public int LSLIPS;
+            public float ScriptTime { get { lock (_sync) { return _scriptTime; } } set { lock (_sync) { _scriptTime = value; } } }
+            private float _agentTime;
             /// <summary></summary>
-            public int INPPS;
+            public float AgentTime { get { lock (_sync) { return _agentTime; } } set { lock (_sync) { _agentTime = value; } } }
+            private float _otherTime;
             /// <summary></summary>
-            public int OUTPPS;
-            /// <summary>Number of downloads pending</summary>
-            public int PendingDownloads;
-            /// <summary>Number of uploads pending</summary>
-            public int PendingUploads;
+            public float OtherTime { get { lock (_sync) { return _otherTime; } } set { lock (_sync) { _otherTime = value; } } }
+            private int _objects;
             /// <summary></summary>
-            public int VirtualSize;
+            public int Objects { get { lock (_sync) { return _objects; } } set { lock (_sync) { _objects = value; } } }
+            private int _scriptedObjects;
             /// <summary></summary>
-            public int ResidentSize;
-            /// <summary>Number of local uploads pending</summary>
-            public int PendingLocalUploads;
-            /// <summary>Unacknowledged bytes in queue</summary>
-            public int UnackedBytes;
+            public int ScriptedObjects { get { lock (_sync) { return _scriptedObjects; } } set { lock (_sync) { _scriptedObjects = value; } } }
+            private int _agents;
+            /// <summary></summary>
+            public int Agents { get { lock (_sync) { return _agents; } } set { lock (_sync) { _agents = value; } } }
+            private int _childAgents;
+            /// <summary></summary>
+            public int ChildAgents { get { lock (_sync) { return _childAgents; } } set { lock (_sync) { _childAgents = value; } } }
+            private int _activeScripts;
+            /// <summary></summary>
+            public int ActiveScripts { get { lock (_sync) { return _activeScripts; } } set { lock (_sync) { _activeScripts = value; } } }
+            private int _lslips;
+            /// <summary></summary>
+            public int LSLIPS { get { lock (_sync) { return _lslips; } } set { lock (_sync) { _lslips = value; } } }
+            private int _inpps;
+            /// <summary></summary>
+            public int INPPS { get { lock (_sync) { return _inpps; } } set { lock (_sync) { _inpps = value; } } }
+            private int _outpps;
+            /// <summary></summary>
+            public int OUTPPS { get { lock (_sync) { return _outpps; } } set { lock (_sync) { _outpps = value; } } }
+            private int _pendingDownloads;
+            /// <summary></summary>
+            public int PendingDownloads { get { lock (_sync) { return _pendingDownloads; } } set { lock (_sync) { _pendingDownloads = value; } } }
+            private int _pendingUploads;
+            /// <summary></summary>
+            public int PendingUploads { get { lock (_sync) { return _pendingUploads; } } set { lock (_sync) { _pendingUploads = value; } } }
+            private int _virtualSize;
+            /// <summary></summary>
+            public int VirtualSize { get { lock (_sync) { return _virtualSize; } } set { lock (_sync) { _virtualSize = value; } } }
+            private int _residentSize;
+            /// <summary></summary>
+            public int ResidentSize { get { lock (_sync) { return _residentSize; } } set { lock (_sync) { _residentSize = value; } } }
+            private int _pendingLocalUploads;
+            /// <summary></summary>
+            public int PendingLocalUploads { get { lock (_sync) { return _pendingLocalUploads; } } set { lock (_sync) { _pendingLocalUploads = value; } } }
+            private int _unackedBytes;
+            /// <summary></summary>
+            public int UnackedBytes { get { lock (_sync) { return _unackedBytes; } } set { lock (_sync) { _unackedBytes = value; } } }
+
+            // Atomic operations
+            public void AddRecvBytes(long v) => Interlocked.Add(ref _recvBytes, v);
+            public long GetRecvBytes() => Interlocked.Read(ref _recvBytes);
+
+            public void AddSentBytes(long v) => Interlocked.Add(ref _sentBytes, v);
+            public long GetSentBytes() => Interlocked.Read(ref _sentBytes);
+
+            public void IncrementRecvPackets() => Interlocked.Increment(ref _recvPackets);
+            public long GetRecvPackets() => Interlocked.Read(ref _recvPackets);
+
+            public void IncrementSentPackets() => Interlocked.Increment(ref _sentPackets);
+            public long GetSentPackets() => Interlocked.Read(ref _sentPackets);
+
+            public void IncrementReceivedResends() => Interlocked.Increment(ref _receivedResends);
+            public int GetReceivedResends() => Interlocked.Add(ref _receivedResends, 0);
+
+            public void IncrementResentPackets() => Interlocked.Increment(ref _resentPackets);
+            public int GetResentPackets() => Interlocked.Add(ref _resentPackets, 0);
+
+            public void IncrementSentPings() => Interlocked.Increment(ref _sentPings);
+            public int GetSentPings() => Interlocked.Add(ref _sentPings, 0);
+
+            public void IncrementReceivedPongs() => Interlocked.Increment(ref _receivedPongs);
+            public int GetReceivedPongs() => Interlocked.Add(ref _receivedPongs, 0);
+
+            public int GetAndIncrementLastPingID()
+            {
+                int newVal = Interlocked.Increment(ref _lastPingID);
+                return newVal - 1; // return previous value to preserve legacy ++ semantics
+            }
+
+            public void SetLastPingSent(int v) => Interlocked.Exchange(ref _lastPingSent, v);
+            public int GetLastPingSent() => Interlocked.Add(ref _lastPingSent, 0);
+
+            public void SetConnectTime(int v) => Interlocked.Exchange(ref _connectTime, v);
+            public int GetConnectTime() => Interlocked.Add(ref _connectTime, 0);
+
+            public void SetIncomingBPS(int v) => Interlocked.Exchange(ref _incomingBPS, v);
+            public int GetIncomingBPS() => Interlocked.Add(ref _incomingBPS, 0);
+
+            public void SetOutgoingBPS(int v) => Interlocked.Exchange(ref _outgoingBPS, v);
+            public int GetOutgoingBPS() => Interlocked.Add(ref _outgoingBPS, 0);
         }
 
         #endregion Structs
@@ -376,7 +434,7 @@ namespace OpenMetaverse
         /// Flags indicating which protocols this region supports
         /// </summary>
         public RegionProtocols Protocols;
-       
+      
 
         /// <summary>The current sequence number for packets sent to this
         /// simulator. Must be Interlocked before modifying. Only
@@ -398,10 +456,13 @@ namespace OpenMetaverse
         /// </summary>
         public ConcurrentDictionary<UUID, uint> GlobalToLocalID = new ConcurrentDictionary<UUID, uint>();
 
-
         public readonly TerrainPatch[] Terrain;
 
         public readonly Vector2[] WindSpeeds;
+
+        // Number of terrain patches in X and Y directions (patch size = 16m)
+        private readonly int _patchesX;
+        private readonly int _patchesY;
 
         /// <summary>
         /// Provides access to an internal thread-safe dictionary containing parcel
@@ -489,7 +550,7 @@ namespace OpenMetaverse
         internal bool DisconnectCandidate = false;
         /// <summary>Event that is triggered when the simulator successfully
         /// establishes a connection</summary>
-        internal ManualResetEvent ConnectedEvent = new ManualResetEvent(false);
+        internal ManualResetEventSlim ConnectedEvent = new ManualResetEventSlim(false);
         /// <summary>Whether this sim is currently connected or not. Hooked up
         /// to the property Connected</summary>
         internal bool connected;
@@ -513,12 +574,15 @@ namespace OpenMetaverse
 
         // ACKs that are queued up to be sent to the simulator
         private readonly ConcurrentQueue<uint> PendingAcks = new ConcurrentQueue<uint>();
-        private Timer AckTimer;
-        private Timer PingTimer;
-        private Timer StatsTimer;
-        // simulator <> parcel LocalID Map
-        private int[,] _parcelMap;
-        public readonly SimulatorDataPool DataPool;
+        
+        private CancellationTokenSource _timerCts;
+        private Task _ackLoopTask;
+        private Task _statsLoopTask;
+        private Task _pingLoopTask;
+
+         // simulator <> parcel LocalID Map
+         private int[,] _parcelMap;
+         public readonly SimulatorDataPool DataPool;
         internal bool DownloadingParcelMap
         {
             get => Client.Settings.POOL_PARCEL_DATA ? DataPool.DownloadingParcelMap : _DownloadingParcelMap;
@@ -536,34 +600,247 @@ namespace OpenMetaverse
 
             if (blockUntilRunning)
             {
-                // Wait a bit to see if the event queue comes online
                 AutoResetEvent queueEvent = new AutoResetEvent(false);
                 EventHandler<EventQueueRunningEventArgs> queueCallback =
                     delegate(object sender, EventQueueRunningEventArgs e)
                     {
-                        if (e.Simulator == this)
+                        // Accept notifications for this simulator or the client's current sim
+                        if (e?.Simulator == this || e?.Simulator == Client?.Network?.CurrentSim)
                             queueEvent.Set();
                     };
 
-                if (Caps != null)
-                {
-                    Logger.Log("Event queue restart requested.", Helpers.LogLevel.Info, Client);
-                    Client.Network.CurrentSim.Caps.EventQueue.Start();
-                }
+                if (Client?.Network != null)
+                    Client.Network.EventQueueRunning += queueCallback;
 
-                Client.Network.EventQueueRunning += queueCallback;
-                queueEvent.WaitOne(TimeSpan.FromSeconds(10), false);
-                Client.Network.EventQueueRunning -= queueCallback;
+                try
+                {
+                    // Exponential backoff: try a few times to start/wait for the event queue
+                    int maxAttempts = 4; // 1s, 2s, 4s, 8s = ~15s total max wait
+                    int delayMs = 1000;
+
+                    for (int attempt = 0; attempt < maxAttempts; attempt++)
+                    {
+                        // If either this sim or the current sim already reports running, we're done
+                        if ((Caps != null && Caps.IsEventQueueRunning) ||
+                            (Client?.Network?.CurrentSim?.Caps != null && Client.Network.CurrentSim.Caps.IsEventQueueRunning))
+                        {
+                            return true;
+                        }
+
+                        // Try to start the event queue on the client's current sim if available
+                        try
+                        {
+                            if (Client?.Network?.CurrentSim?.Caps != null)
+                            {
+                                Logger.Info($"Event queue start requested (attempt {attempt + 1}/{maxAttempts}).", Client);
+                                Client.Network.CurrentSim.Caps.EventQueue.Start();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Warn("Failed to request EventQueue start: " + ex.Message, ex, Client);
+                        }
+
+                        // Wait for the notification or timeout
+                        bool signaled = queueEvent.WaitOne(delayMs);
+                        if (signaled)
+                        {
+                            // Event arrived, break out and re-check
+                            break;
+                        }
+
+                        // Increase delay for next attempt
+                        delayMs *= 2;
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        if (Client?.Network != null)
+                            Client.Network.EventQueueRunning -= queueCallback;
+                    }
+                    catch { }
+
+                    try { queueEvent.Dispose(); } catch { }
+                }
             }
 
-            return Caps != null && Caps.IsEventQueueRunning;
+            // Final check of both this simulator and the client's current simulator
+            if (Caps != null && Caps.IsEventQueueRunning)
+                return true;
+
+            if (Client?.Network?.CurrentSim?.Caps != null && Client.Network.CurrentSim.Caps.IsEventQueueRunning)
+                return true;
+
+            return false;
         }
 
         internal bool _DownloadingParcelMap = false;
 
 
-        private readonly ManualResetEvent GotUseCircuitCodeAck = new ManualResetEvent(false);
+        private readonly ManualResetEventSlim GotUseCircuitCodeAck = new ManualResetEventSlim(false);
+        
         #endregion Internal/Private Members
+
+        // Start periodic background timer tasks (ack, stats, ping)
+        private void StartTimerTasks()
+        {
+            if (_timerCts != null) return;
+
+            _timerCts = new CancellationTokenSource();
+            var token = _timerCts.Token;
+
+            // ACK handling loop
+            _ackLoopTask = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!token.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            using (Logger.BeginClientScope(Client))
+                            using (Logger.BeginRegionScope(this))
+                            {
+                                SendAcks();
+                                ResendUnacked();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error("Error in Ack loop: " + ex.Message, ex, Client);
+                        }
+
+                        await Task.Delay(Settings.NETWORK_TICK_INTERVAL, token).ConfigureAwait(false);
+                    }
+                }
+                catch (TaskCanceledException) { }
+            }, token);
+
+            // Stats loop
+            _statsLoopTask = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!token.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            using (Logger.BeginClientScope(Client))
+                            using (Logger.BeginRegionScope(this))
+                            {
+                                StatsTimer_Elapsed(null);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.Error("Error in Stats loop: " + ex.Message, ex, Client);
+                        }
+
+                        await Task.Delay(1000, token).ConfigureAwait(false);
+                    }
+                }
+                catch (TaskCanceledException) { }
+            }, token);
+
+            // Ping loop (only if SEND_PINGS enabled)
+            if (Client?.Settings?.SEND_PINGS ?? false)
+            {
+                _pingLoopTask = Task.Run(async () =>
+                {
+                    try
+                    {
+                        while (!token.IsCancellationRequested)
+                        {
+                            try
+                            {
+                                using (Logger.BeginClientScope(Client))
+                                using (Logger.BeginRegionScope(this))
+                                {
+                                    PingTimer_Elapsed(null);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Error("Error in Ping loop: " + ex.Message, ex, Client);
+                            }
+
+                            await Task.Delay(Settings.PING_INTERVAL, token).ConfigureAwait(false);
+                        }
+                    }
+                    catch (TaskCanceledException) { }
+                }, token);
+            }
+        }
+
+        private void StopTimerTasks()
+        {
+            // Backward-compatible synchronous wrapper for the async implementation
+            StopTimerTasksAsync().GetAwaiter().GetResult();
+        }
+
+        // Async variant that cancels timer token and waits for background tasks to finish with a timeout
+        private async Task StopTimerTasksAsync(int timeoutMs = 2000)
+        {
+            if (_timerCts == null) return;
+
+            try
+            {
+                _timerCts.Cancel();
+            }
+            catch (Exception) { }
+
+            var tasksToWait = new List<Task>();
+            if (_ackLoopTask != null) tasksToWait.Add(_ackLoopTask);
+            if (_statsLoopTask != null) tasksToWait.Add(_statsLoopTask);
+            if (_pingLoopTask != null) tasksToWait.Add(_pingLoopTask);
+
+            if (tasksToWait.Count > 0)
+            {
+                try
+                {
+                    var all = Task.WhenAll(tasksToWait);
+                    var delay = Task.Delay(timeoutMs);
+
+                    var completed = await Task.WhenAny(all, delay).ConfigureAwait(false);
+                    if (completed != all)
+                    {
+                        Logger.Debug($"One or more Simulator timer tasks did not stop within {timeoutMs}ms for {this}", Client);
+                    }
+
+                    // Await all to observe exceptions if completed
+                    try
+                    {
+                        await all.ConfigureAwait(false);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error($"Exception while awaiting Simulator timer tasks: {ex}", ex, Client);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Exception while waiting for Simulator timer tasks: {ex}", ex, Client);
+                }
+
+                // Observe and log any task exceptions to avoid unobserved exceptions
+                foreach (var t in tasksToWait)
+                {
+                    if (t.IsFaulted && t.Exception != null)
+                    {
+                        try { Logger.Error($"Simulator timer task faulted: {t.Exception}", t.Exception, Client); } catch { }
+                    }
+                }
+            }
+
+            _ackLoopTask = null;
+            _statsLoopTask = null;
+            _pingLoopTask = null;
+
+            try { _timerCts.Dispose(); } catch { }
+            _timerCts = null;
+        }
 
         /// <summary>
         /// Constructor
@@ -588,13 +865,21 @@ namespace OpenMetaverse
             SizeX = sizeX;
             SizeY = sizeY;
             PacketArchive = new IncomingPacketIDCollection(Settings.PACKET_ARCHIVE_SIZE);
+            Stats = new SimStats();
             InBytes = new Queue<long>(Client.Settings.STATS_QUEUE_SIZE);
             OutBytes = new Queue<long>(Client.Settings.STATS_QUEUE_SIZE);
 
             if (client.Settings.STORE_LAND_PATCHES)
             {
-                Terrain = new TerrainPatch[sizeX/16 * sizeY/16];
-                WindSpeeds = new Vector2[sizeX/16 * sizeY/16];
+                _patchesX = Math.Max(1, (int)(sizeX / 16));
+                _patchesY = Math.Max(1, (int)(sizeY / 16));
+                Terrain = new TerrainPatch[_patchesX * _patchesY];
+                WindSpeeds = new Vector2[_patchesX * _patchesY];
+            }
+            else
+            {
+                _patchesX = Math.Max(1, (int)(sizeX / 16));
+                _patchesY = Math.Max(1, (int)(sizeY / 16));
             }
         }
 
@@ -611,53 +896,32 @@ namespace OpenMetaverse
         {
             if (!disposing) return;
 
-            AckTimer?.Dispose();
-            PingTimer?.Dispose();
-            StatsTimer?.Dispose();
-            ConnectedEvent?.Close();
+            StopTimerTasks();
+            ConnectedEvent?.Dispose();
 
             // Force all the CAPS connections closed for this simulator
             Caps?.Disconnect(true);
         }
 
         /// <summary>
-        /// Attempt to connect to this simulator
+        /// Attempt to connect to this simulator (async variant)
         /// </summary>
-        /// <param name="moveToSim">Whether to move our agent in to this sim or not</param>
-        /// <returns>True if the connection succeeded or  unknown, false if there
-        /// was a failure</returns>
-        public bool Connect(bool moveToSim)
+        public async Task<bool> ConnectAsync(bool moveToSim)
         {
             handshakeComplete = false;
 
             if (connected)
             {
-                UseCircuitCode(true);
+                await UseCircuitCodeAsync(true).ConfigureAwait(false);
                 if (moveToSim)
                 {
-                    Thread.Sleep(500);
+                    await Task.Delay(500).ConfigureAwait(false);
                     Client.Self.CompleteAgentMovement(this);
                 }
                 return true;
             }
 
-            #region Start Timers
-
-            // Timer for sending out queued packet acknowledgements
-            if (AckTimer == null)
-                AckTimer = new Timer(AckTimer_Elapsed, null, Settings.NETWORK_TICK_INTERVAL, Timeout.Infinite);
-
-            // Timer for recording simulator connection statistics
-            if (StatsTimer == null)
-                StatsTimer = new Timer(StatsTimer_Elapsed, null, 1000, 1000);
-
-            // Timer for periodically pinging the simulator
-            if (PingTimer == null && Client.Settings.SEND_PINGS)
-                PingTimer = new Timer(PingTimer_Elapsed, null, Settings.PING_INTERVAL, Settings.PING_INTERVAL);
-
-            #endregion Start Timers
-
-            Logger.Log($"Connecting to {this}", Helpers.LogLevel.Info, Client);
+            Logger.Info($"Connecting to {this}", Client);
 
             try
             {
@@ -668,26 +932,30 @@ namespace OpenMetaverse
                 connected = true;
 
                 // Initiate connection
-                UseCircuitCode(true);
+                await UseCircuitCodeAsync(true).ConfigureAwait(false);
 
-                Stats.ConnectTime = Environment.TickCount;
+                Stats.SetConnectTime(Environment.TickCount);
 
                 // Move our agent in to the sim to complete the connection
                 if (moveToSim)
                 {
-                    Thread.Sleep(500);
+                    await Task.Delay(500).ConfigureAwait(false);
                     Client.Self.CompleteAgentMovement(this);
                 }
 
-                if (!ConnectedEvent.WaitOne(Client.Settings.LOGIN_TIMEOUT, false))
+                // Wait for handshake event asynchronously
+                bool signaled = await WaitHandleAsyncFactory.FromWaitHandle(ConnectedEvent.WaitHandle, TimeSpan.FromMilliseconds(Client.Settings.LOGIN_TIMEOUT)).ConfigureAwait(false);
+                if (!signaled)
                 {
-                    Logger.Log($"Giving up waiting for RegionHandshake for {this}",
-                        Helpers.LogLevel.Warning, Client);
+                    Logger.Warn($"Giving up waiting for RegionHandshake for {this}", Client);
                     //Remove the simulator from the list, not useful if we haven't received the RegionHandshake
                     lock (Client.Network.Simulators) {
                         Client.Network.Simulators.Remove(this);
                     }
                 }
+
+                // Start periodic background tasks for ACKs, stats and pings
+                StartTimerTasks();
 
                 if (Client.Settings.SEND_AGENT_THROTTLE)
                     Client.Throttle.Set(this);
@@ -699,17 +967,24 @@ namespace OpenMetaverse
             }
             catch (Exception e)
             {
-                Logger.Log(e.Message, Helpers.LogLevel.Error, Client, e);
+                Logger.Error(e.Message, e, Client);
             }
 
             return false;
         }
 
         /// <summary>
-        /// Initiates connection to the simulator
+        /// Backwards-compatible synchronous wrapper
         /// </summary>
-        /// <param name="waitForAck">Should we block until ack for this packet is received</param>
-        public void UseCircuitCode(bool waitForAck)
+        public bool Connect(bool moveToSim)
+        {
+            return ConnectAsync(moveToSim).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Initiates connection to the simulator (async variant)
+        /// </summary>
+        public async Task<bool> UseCircuitCodeAsync(bool waitForAck)
         {
             // Send the UseCircuitCode packet to initiate the connection
             UseCircuitCodePacket use = new UseCircuitCodePacket
@@ -726,16 +1001,40 @@ namespace OpenMetaverse
             {
                 GotUseCircuitCodeAck.Reset();
             }
-            
+
             // Send the initial packet out
             SendPacket(use);
-            
+
             if (waitForAck)
             {
-                if (!GotUseCircuitCodeAck.WaitOne(Client.Settings.LOGIN_TIMEOUT, false))
+                bool signaled = await WaitHandleAsyncFactory.FromWaitHandle(GotUseCircuitCodeAck.WaitHandle, TimeSpan.FromMilliseconds(Client.Settings.LOGIN_TIMEOUT)).ConfigureAwait(false);
+                if (!signaled)
                 {
-                    Logger.Log("Failed to get ACK for UseCircuitCode packet", Helpers.LogLevel.Error, Client);
+                    Logger.Error("Failed to get ACK for UseCircuitCode packet", Client);
                 }
+                return signaled;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Backwards-compatible synchronous wrapper
+        /// </summary>
+        public void UseCircuitCode(bool waitForAck)
+        {
+            // Prefer async implementation while preserving synchronous behavior
+            try
+            {
+                bool signaled = UseCircuitCodeAsync(waitForAck).GetAwaiter().GetResult();
+                if (waitForAck && !signaled)
+                {
+                    Logger.Error("Failed to get ACK for UseCircuitCode packet", Client);
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.Error(e.Message, e, Client);
             }
         }
 
@@ -745,7 +1044,7 @@ namespace OpenMetaverse
             {
                 if (Caps._SeedCapsURI == seedcaps && !changedSim) return;
 
-                Logger.Log("Unexpected change of seed capability", Helpers.LogLevel.Warning, Client);
+                Logger.Warn("Unexpected change of seed capability", Client);
                 Caps.Disconnect(true);
                 Caps = null;
             }
@@ -757,7 +1056,7 @@ namespace OpenMetaverse
             }
             else
             {
-                Logger.Log("Setting up a sim without valid http capabilities", Helpers.LogLevel.Error, Client);
+                Logger.Error("Setting up a sim without valid http capabilities", Client);
             }
         }
 
@@ -771,14 +1070,8 @@ namespace OpenMetaverse
             if (!connected) return;
 
             connected = false;
-            // Destroy the timers
-            AckTimer?.Dispose();
-            StatsTimer?.Dispose();
-            PingTimer?.Dispose();
-
-            AckTimer = null;
-            StatsTimer = null;
-            PingTimer = null;
+            // Stop background timer tasks
+            StopTimerTasks();
 
             // Kill the current CAPS system
             if (Caps != null)
@@ -858,20 +1151,20 @@ namespace OpenMetaverse
             {
                 int patchX = x / 16;
                 int patchY = y / 16;
-                x = x % 16;
-                y = y % 16;
+                x %= 16;
+                y %= 16;
 
-                TerrainPatch patch = Terrain[patchY * 16 + patchX];
-                if (patch != null)
-                {
-                    height = patch.Data[y * 16 + x];
-                    return true;
-                }
-            }
+                TerrainPatch patch = Terrain[patchY * _patchesX + patchX];
+                 if (patch != null)
+                 {
+                     height = patch.Data[y * 16 + x];
+                     return true;
+                 }
+             }
 
-            height = 0.0f;
-            return false;
-        }
+             height = 0.0f;
+             return false;
+         }
 
         #region Packet Sending
 
@@ -883,7 +1176,7 @@ namespace OpenMetaverse
         {
             // DEBUG: This can go away after we are sure nothing in the library is trying to do this
             if (packet.Header.AppendedAcks || (packet.Header.AckList != null && packet.Header.AckList.Length > 0))
-                Logger.Log("Attempting to send packet " + packet.Type + " with ACKs appended before serialization", Helpers.LogLevel.Error);
+                Logger.Error("Attempting to send packet " + packet.Type + " with ACKs appended before serialization");
 
             if (packet.HasVariableBlocks)
             {
@@ -891,14 +1184,14 @@ namespace OpenMetaverse
                 try { datas = packet.ToBytesMultiple(); }
                 catch (NullReferenceException)
                 {
-                    Logger.Log("Failed to serialize " + packet.Type + " packet to one or more payloads due to a missing block or field. StackTrace: " +
-                        Environment.StackTrace, Helpers.LogLevel.Error);
+                    Logger.Error("Failed to serialize " + packet.Type + " packet to one or more payloads due to a missing block or field. StackTrace: " +
+                        Environment.StackTrace);
                     return;
                 }
                 int packetCount = datas.Length;
 
                 if (packetCount > 1)
-                    Logger.DebugLog("Split " + packet.Type + " packet into " + packetCount + " packets");
+                    Logger.Debug("Split " + packet.Type + " packet into " + packetCount + " packets");
 
                 for (int i = 0; i < packetCount; i++)
                 {
@@ -944,7 +1237,7 @@ namespace OpenMetaverse
             NetworkManager.OutgoingPacket outgoingPacket = new NetworkManager.OutgoingPacket(this, buffer, type);
 
             // Send ACK and logout packets directly, everything else goes through the queue
-            if (Client.Settings.THROTTLE_OUTGOING_PACKETS == false ||
+            if (!Client.Settings.THROTTLE_OUTGOING_PACKETS ||
                 type == PacketType.PacketAck ||
                 type == PacketType.LogoutRequest)
             {
@@ -967,57 +1260,61 @@ namespace OpenMetaverse
 
         internal void SendPacketFinal(NetworkManager.OutgoingPacket outgoingPacket)
         {
-            UDPPacketBuffer buffer = outgoingPacket.Buffer;
-            byte flags = buffer.Data[0];
-            bool isResend = (flags & Helpers.MSG_RESENT) != 0;
-            bool isReliable = (flags & Helpers.MSG_RELIABLE) != 0;
-
-            // Keep track of when this packet was sent out (right now)
-            outgoingPacket.TickCount = Environment.TickCount;
-
-            #region ACK Appending
-
-            int dataLength = buffer.DataLength;
-
-            // Keep appending ACKs until there is no room left in the packet or there are
-            // no more ACKs to append
-            uint ackCount = 0;
-            uint ack;
-            while (dataLength + 5 < Packet.MTU && PendingAcks.TryDequeue(out ack))
+            using (Logger.BeginClientScope(Client))
+            using (Logger.BeginRegionScope(this))
             {
-                Utils.UIntToBytesBig(ack, buffer.Data, dataLength);
-                dataLength += 4;
-                ++ackCount;
-            }
+                UDPPacketBuffer buffer = outgoingPacket.Buffer;
+                byte flags = buffer.Data[0];
+                bool isResend = (flags & Helpers.MSG_RESENT) != 0;
+                bool isReliable = (flags & Helpers.MSG_RELIABLE) != 0;
 
-            if (ackCount > 0)
-            {
-                // Set the last byte of the packet equal to the number of appended ACKs
-                buffer.Data[dataLength++] = (byte)ackCount;
-                // Set the appended ACKs flag on this packet
-                buffer.Data[0] |= Helpers.MSG_APPENDED_ACKS;
-            }
+                // Keep track of when this packet was sent out (right now)
+                outgoingPacket.TickCount = Environment.TickCount;
 
-            buffer.DataLength = dataLength;
+                #region ACK Appending
 
-            #endregion ACK Appending
+                int dataLength = buffer.DataLength;
 
-            if (!isResend)
-            {
-                // Not a resend, assign a new sequence number
-                uint sequenceNumber = (uint)Interlocked.Increment(ref Sequence);
-                Utils.UIntToBytesBig(sequenceNumber, buffer.Data, 1);
-                outgoingPacket.SequenceNumber = sequenceNumber;
-
-                if (isReliable)
+                // Keep appending ACKs until there is no room left in the packet or there are
+                // no more ACKs to append
+                uint ackCount = 0;
+                uint ack;
+                while (dataLength + 5 < Packet.MTU && PendingAcks.TryDequeue(out ack))
                 {
-                    // Add this packet to the list of ACK responses we are waiting on from the server
-                    lock (NeedAck) NeedAck[sequenceNumber] = outgoingPacket;
+                    Utils.UIntToBytesBig(ack, buffer.Data, dataLength);
+                    dataLength += 4;
+                    ++ackCount;
                 }
-            }
 
-            // Put the UDP payload on the wire
-            AsyncBeginSend(buffer);
+                if (ackCount > 0)
+                {
+                    // Set the last byte of the packet equal to the number of appended ACKs
+                    buffer.Data[dataLength++] = (byte)ackCount;
+                    // Set the appended ACKs flag on this packet
+                    buffer.Data[0] |= Helpers.MSG_APPENDED_ACKS;
+                }
+
+                buffer.DataLength = dataLength;
+
+                #endregion ACK Appending
+
+                if (!isResend)
+                {
+                    // Not a resend, assign a new sequence number
+                    uint sequenceNumber = (uint)Interlocked.Increment(ref Sequence);
+                    Utils.UIntToBytesBig(sequenceNumber, buffer.Data, 1);
+                    outgoingPacket.SequenceNumber = sequenceNumber;
+
+                    if (isReliable)
+                    {
+                        // Add this packet to the list of ACK responses we are waiting on from the server
+                        lock (NeedAck) NeedAck[sequenceNumber] = outgoingPacket;
+                    }
+                }
+
+                // Put the UDP payload on the wire
+                AsyncBeginSend(buffer);
+            }
         }
 
         /// <summary>
@@ -1047,13 +1344,13 @@ namespace OpenMetaverse
             {
                 PingID =
                 {
-                    PingID = Stats.LastPingID++,
+                    PingID = (byte)Stats.GetAndIncrementLastPingID(),
                     OldestUnacked = oldestUnacked
                 },
                 Header = {Reliable = false}
             };
             SendPacket(ping);
-            Stats.LastPingSent = Environment.TickCount;
+            Stats.SetLastPingSent(Environment.TickCount);
         }
 
         #endregion Packet Sending
@@ -1113,147 +1410,148 @@ namespace OpenMetaverse
 
         protected override void PacketReceived(UDPPacketBuffer buffer)
         {
-            Packet packet = null;
-
-            // Check if this packet came from the server we expected it to come from
-            if (!remoteEndPoint.Address.Equals(((IPEndPoint)buffer.RemoteEndPoint).Address))
+            using (Logger.BeginClientScope(Client))
+            using (Logger.BeginRegionScope(this))
             {
-                Logger.Log($"Received {buffer.DataLength} bytes of data from unrecognized source {(IPEndPoint)buffer.RemoteEndPoint}",
-                    Helpers.LogLevel.Warning, Client);
-                return;
-            }
+                Packet packet = null;
 
-            // Update the disconnect flag so this sim doesn't time out
-            DisconnectCandidate = false;
-
-            #region Packet Decoding
-
-            int packetEnd = buffer.DataLength - 1;
-
-            try
-            {
-                packet = Packet.BuildPacket(buffer.Data, ref packetEnd,
-                    // Only allocate a buffer for zerodecoding if the packet is zerocoded
-                    ((buffer.Data[0] & Helpers.MSG_ZEROCODED) != 0) ? new byte[8192] : null);
-            }
-            catch (MalformedDataException)
-            {
-                Logger.Log(
-                    $"Malformed data, cannot parse packet:\n{Utils.BytesToHexString(buffer.Data, buffer.DataLength, null)}", Helpers.LogLevel.Error);
-            }
-
-            // Fail-safe check
-            if (packet == null)
-            {
-                Logger.Log("Couldn't build a message from the incoming data", Helpers.LogLevel.Warning, Client);
-                return;
-            }
-
-            Interlocked.Add(ref Stats.RecvBytes, buffer.DataLength);
-            Interlocked.Increment(ref Stats.RecvPackets);
-
-            #endregion Packet Decoding
-
-            if (packet.Header.Resent)
-                Interlocked.Increment(ref Stats.ReceivedResends);
-
-            #region ACK Receiving
-
-            // Handle appended ACKs
-            if (packet.Header.AppendedAcks && packet.Header.AckList != null)
-            {
-                lock (NeedAck)
+                // Check if this packet came from the server we expected it to come from
+                if (!remoteEndPoint.Address.Equals(((IPEndPoint)buffer.RemoteEndPoint).Address))
                 {
-                    foreach (var t in packet.Header.AckList)
-                    {
-                        if (NeedAck.ContainsKey(t) && NeedAck[t].Type == PacketType.UseCircuitCode)
-                        {
-                            GotUseCircuitCodeAck.Set();
-                        }
-                        NeedAck.Remove(t);
-                    }
-                }
-            }
-
-            // Handle PacketAck packets
-            if (packet.Type == PacketType.PacketAck)
-            {
-                PacketAckPacket ackPacket = (PacketAckPacket)packet;
-
-                lock (NeedAck)
-                {
-                    foreach (var t in ackPacket.Packets)
-                    {
-                        if (NeedAck.ContainsKey(t.ID) && NeedAck[t.ID].Type == PacketType.UseCircuitCode)
-                        {
-                            GotUseCircuitCodeAck.Set();
-                        }
-                        NeedAck.Remove(t.ID);
-                    }
-                }
-            }
-
-            #endregion ACK Receiving
-
-            if (packet.Header.Reliable)
-            {
-                #region ACK Sending
-
-                // Add this packet to the list of ACKs that need to be sent out
-                var sequence = packet.Header.Sequence;
-                PendingAcks.Enqueue(sequence);
-
-                // Send out ACKs if we have a lot of them
-                if (PendingAcks.Count >= Client.Settings.MAX_PENDING_ACKS)
-                    SendAcks();
-
-                #endregion ACK Sending
-
-                // Check the archive of received packet IDs to see whether we already received this packet
-                if (!PacketArchive.TryEnqueue(packet.Header.Sequence))
-                {
-                    if (packet.Header.Resent)
-                        Logger.DebugLog(
-                            string.Format(
-                                "Received a resend of already processed packet #{0}, type: {1} from {2}", 
-                                packet.Header.Sequence, packet.Type, Name));
-                    else
-                        Logger.Log(
-                            string.Format(
-                                "Received a duplicate (not marked as resend) of packet #{0}, type: {1} for {2} from {3}", 
-                                packet.Header.Sequence, packet.Type, Client.Self.Name, Name),
-                            Helpers.LogLevel.Warning);
-
-                    // Avoid firing a callback twice for the same packet
+                    Logger.Warn($"Received {buffer.DataLength} bytes of data from unrecognized source {(IPEndPoint)buffer.RemoteEndPoint}", Client);
                     return;
                 }
+
+                // Update the disconnect flag so this sim doesn't time out
+                DisconnectCandidate = false;
+
+                #region Packet Decoding
+
+                int packetEnd = buffer.DataLength - 1;
+
+                try
+                {
+                    packet = Packet.BuildPacket(buffer.Data, ref packetEnd,
+                        // Only allocate a buffer for zerodecoding if the packet is zerocoded
+                        ((buffer.Data[0] & Helpers.MSG_ZEROCODED) != 0) ? new byte[8192] : null);
+                }
+                catch (MalformedDataException)
+                {
+                    Logger.Error($"Malformed data, cannot parse packet:\n{Utils.BytesToHexString(buffer.Data, buffer.DataLength, null)}");
+                }
+
+                // Fail-safe check
+                if (packet == null)
+                {
+                    Logger.Warn("Couldn't build a message from the incoming data", Client);
+                    return;
+                }
+
+                Stats.AddRecvBytes(buffer.DataLength);
+                Stats.IncrementRecvPackets();
+
+                #endregion Packet Decoding
+
+                if (packet.Header.Resent)
+                    Stats.IncrementReceivedResends();
+
+                #region ACK Receiving
+
+                // Handle appended ACKs
+                if (packet.Header.AppendedAcks && packet.Header.AckList != null)
+                {
+                    lock (NeedAck)
+                    {
+                        foreach (var t in packet.Header.AckList)
+                        {
+                            if (NeedAck.ContainsKey(t) && NeedAck[t].Type == PacketType.UseCircuitCode)
+                            {
+                                GotUseCircuitCodeAck.Set();
+                            }
+                            NeedAck.Remove(t);
+                        }
+                    }
+                }
+
+                // Handle PacketAck packets
+                if (packet.Type == PacketType.PacketAck)
+                {
+                    PacketAckPacket ackPacket = (PacketAckPacket)packet;
+
+                    lock (NeedAck)
+                    {
+                        foreach (var t in ackPacket.Packets)
+                        {
+                            if (NeedAck.ContainsKey(t.ID) && NeedAck[t.ID].Type == PacketType.UseCircuitCode)
+                            {
+                                GotUseCircuitCodeAck.Set();
+                            }
+                            NeedAck.Remove(t.ID);
+                        }
+                    }
+                }
+
+                #endregion ACK Receiving
+
+                if (packet.Header.Reliable)
+                {
+                    #region ACK Sending
+
+                    // Add this packet to the list of ACKs that need to be sent out
+                    var sequence = packet.Header.Sequence;
+                    PendingAcks.Enqueue(sequence);
+
+                    // Send out ACKs if we have a lot of them
+                    if (PendingAcks.Count >= Client.Settings.MAX_PENDING_ACKS)
+                        SendAcks();
+
+                    #endregion ACK Sending
+
+                    // Check the archive of received packet IDs to see whether we already received this packet
+                    if (!PacketArchive.TryEnqueue(packet.Header.Sequence))
+                    {
+                        if (packet.Header.Resent)
+                            Logger.Debug(
+                                string.Format(
+                                    "Received a resend of already processed packet #{0}, type: {1} from {2}", 
+                                    packet.Header.Sequence, packet.Type, Name));
+                        else
+                            Logger.Warn(
+                                string.Format(
+                                    "Received a duplicate (not marked as resend) of packet #{0}, type: {1} for {2} from {3}", 
+                                    packet.Header.Sequence, packet.Type, Client.Self.Name, Name));
+
+                        // Avoid firing a callback twice for the same packet
+                        return;
+                    }
+                }
+
+                #region Inbox Insertion
+
+                var incomingPacket = new NetworkManager.IncomingPacket
+                {
+                    Simulator = this,
+                    Packet = packet
+                };
+
+                Network.EnqueueIncoming(incomingPacket);
+
+                #endregion Inbox Insertion
+
+                #region Stats Tracking
+                if (Client.Settings.TRACK_UTILIZATION)
+                {
+                    Client.Stats.Update(packet.Type.ToString(), OpenMetaverse.Stats.Type.Packet, 0, packet.Length);
+                }
+                #endregion
             }
-
-            #region Inbox Insertion
-
-            var incomingPacket = new NetworkManager.IncomingPacket
-            {
-                Simulator = this,
-                Packet = packet
-            };
-
-            Network.EnqueueIncoming(incomingPacket);
-
-            #endregion Inbox Insertion
-
-            #region Stats Tracking
-            if (Client.Settings.TRACK_UTILIZATION)
-            {
-                Client.Stats.Update(packet.Type.ToString(), OpenMetaverse.Stats.Type.Packet, 0, packet.Length);
-            }
-            #endregion
         }
         
         protected override void PacketSent(UDPPacketBuffer buffer, int bytesSent)
         {
             // Stats tracking
-            Interlocked.Add(ref Stats.SentBytes, bytesSent);
-            Interlocked.Increment(ref Stats.SentPackets);
+            Stats.AddSentBytes(bytesSent);
+            Stats.IncrementSentPackets();
             
             Client.Network.RaisePacketSentEvent(buffer.Data, bytesSent, this);
         }
@@ -1319,7 +1617,7 @@ namespace OpenMetaverse
                 {
                     if (Client.Settings.LOG_RESENDS)
                     {
-                        Logger.DebugLog(string.Format("Resending {2} packet #{0}, {1}ms have passed",
+                        Logger.Debug(string.Format("Resending {2} packet #{0}, {1}ms have passed",
                             outgoing.SequenceNumber, now - outgoing.TickCount, outgoing.Type), Client);
                     }
 
@@ -1332,13 +1630,13 @@ namespace OpenMetaverse
 
                     // Stats tracking
                     Interlocked.Increment(ref outgoing.ResendCount);
-                    Interlocked.Increment(ref Stats.ResentPackets);
+                    Stats.IncrementResentPackets();
 
                     SendPacketFinal(outgoing);
                 }
                 else
                 {
-                    Logger.DebugLog(string.Format("Dropping packet #{0} after {1} failed attempts",
+                    Logger.Debug(string.Format("Dropping packet #{0} after {1} failed attempts",
                         outgoing.SequenceNumber, outgoing.ResendCount));
 
                     lock (NeedAck) NeedAck.Remove(outgoing.SequenceNumber);
@@ -1348,24 +1646,16 @@ namespace OpenMetaverse
 
         private void AckTimer_Elapsed(object obj)
         {
+            // This method is retained for compatibility with existing code paths.
             SendAcks();
             ResendUnacked();
-
-            // Start the ACK handling functions again after NETWORK_TICK_INTERVAL milliseconds
-            if (null == AckTimer) return;
-            try
-            {
-                AckTimer.Change(Settings.NETWORK_TICK_INTERVAL, Timeout.Infinite);
-            }
-            catch (Exception)
-            { } // *TODO: Review catch all code smell
         }
 
         private void StatsTimer_Elapsed(object obj)
         {
             long old_in = 0, old_out = 0;
-            var recv = Stats.RecvBytes;
-            var sent = Stats.SentBytes;
+            var recv = Stats.GetRecvBytes();
+            var sent = Stats.GetSentBytes();
 
             if (InBytes.Count >= Client.Settings.STATS_QUEUE_SIZE)
                 old_in = InBytes.Dequeue();
@@ -1377,18 +1667,18 @@ namespace OpenMetaverse
 
             if (old_in > 0 && old_out > 0)
             {
-                Stats.IncomingBPS = (int)(recv - old_in) / Client.Settings.STATS_QUEUE_SIZE;
-                Stats.OutgoingBPS = (int)(sent - old_out) / Client.Settings.STATS_QUEUE_SIZE;
+                Stats.SetIncomingBPS((int)(recv - old_in) / Client.Settings.STATS_QUEUE_SIZE);
+                Stats.SetOutgoingBPS((int)(sent - old_out) / Client.Settings.STATS_QUEUE_SIZE);
                 //Client.Log("Incoming: " + IncomingBPS + " Out: " + OutgoingBPS +
                 //    " Lag: " + LastLag + " Pings: " + ReceivedPongs +
-                //    "/" + SentPings, Helpers.LogLevel.Debug); 
+                //    "/" + SentPings, LogLevel.Debug); 
             }
         }
 
         private void PingTimer_Elapsed(object obj)
         {
             SendPing();
-            Interlocked.Increment(ref Stats.SentPings);
+            Stats.IncrementSentPings();
         }
     }
 
@@ -1431,48 +1721,85 @@ namespace OpenMetaverse
 
     public class SimulatorDataPool
     {
-        private static Timer InactiveSimReaper;
+        private static CancellationTokenSource InactiveSimReaperCts;
+        private static Task InactiveSimReaperTask;
 
-        private static void RemoveOldSims(object state)
+        private static async Task InactiveSimReaperLoop(CancellationToken token)
         {
-            lock (SimulatorDataPools)
+            try
             {
-                int simTimeout = Settings.SIMULATOR_POOL_TIMEOUT;
-                var reap = (from pool in SimulatorDataPools.Values
-                    where pool.InactiveSince != DateTime.MaxValue
-                          && pool.InactiveSince.AddMilliseconds(simTimeout) < DateTime.Now
-                    select pool.Handle).ToList();
-                foreach (var hndl in reap)
+                while (!token.IsCancellationRequested)
                 {
-                    SimulatorDataPools.Remove(hndl);
+                    try
+                    {
+                        lock (SimulatorDataPools)
+                        {
+                            int simTimeout = Settings.SIMULATOR_POOL_TIMEOUT;
+                            var reap = (from pool in SimulatorDataPools.Values
+                                        where pool.InactiveSince != DateTime.MaxValue
+                                              && pool.InactiveSince.AddMilliseconds(simTimeout) < DateTime.Now
+                                        select pool.Handle).ToList();
+                            foreach (var hndl in reap)
+                            {
+                                SimulatorDataPools.Remove(hndl);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        try { Logger.Error($"InactiveSimReaperLoop exception", ex); } catch { }
+                    }
+
+                    await Task.Delay(TimeSpan.FromMinutes(3), token).ConfigureAwait(false);
                 }
+            }
+            catch (TaskCanceledException) { }
+            catch (Exception ex)
+            {
+                try { Logger.Error($"InactiveSimReaperLoop fatal exception", ex); } catch { }
             }
         }
 
-        public static void SimulatorAdd(Simulator sim)
-        {
+         public static void SimulatorAdd(Simulator sim)
+         {
             lock (SimulatorDataPools)
             {
-                if (InactiveSimReaper == null)
+                if (InactiveSimReaperCts == null)
                 {
-                    InactiveSimReaper = new Timer(RemoveOldSims, null, TimeSpan.FromMinutes(3), TimeSpan.FromMinutes(3));
+                    InactiveSimReaperCts = new CancellationTokenSource();
+                    InactiveSimReaperTask = Task.Run(() => InactiveSimReaperLoop(InactiveSimReaperCts.Token));
                 }
                 var pool = GetSimulatorData(sim.Handle);
                 if (pool.ActiveClients < 1) pool.ActiveClients = 1; else pool.ActiveClients++;
                 pool.InactiveSince = DateTime.MaxValue;
             }
-        }
-        public static void SimulatorRelease(Simulator sim)
+         }
+         public static void SimulatorRelease(Simulator sim)
+         {
+             var hndl = sim.Handle;
+             lock (SimulatorDataPools)
+             {
+                 SimulatorDataPool dataPool = GetSimulatorData(hndl);
+                 dataPool.ActiveClients--;
+                 if (dataPool.ActiveClients <= 0)
+                 {
+                     dataPool.InactiveSince = DateTime.Now;
+                 }
+             }
+         }
+        
+        // Optional: allow explicit shutdown of the reaper (not currently called)
+        public static void ShutdownReaper()
         {
-            var hndl = sim.Handle;
             lock (SimulatorDataPools)
             {
-                SimulatorDataPool dataPool = GetSimulatorData(hndl);
-                dataPool.ActiveClients--;
-                if (dataPool.ActiveClients <= 0)
+                try
                 {
-                    dataPool.InactiveSince = DateTime.Now;
+                    InactiveSimReaperCts?.Cancel();
                 }
+                catch { }
+                InactiveSimReaperCts = null;
+                InactiveSimReaperTask = null;
             }
         }
 
@@ -1559,3 +1886,4 @@ namespace OpenMetaverse
         }
     }
 }
+

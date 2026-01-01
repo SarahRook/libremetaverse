@@ -1,24 +1,31 @@
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Agent
 {
     public class WhoCommand: Command
     {
         public WhoCommand(TestClient testClient)
-		{
-			Name = "who";
-			Description = "Lists seen avatars.";
+        {
+            Name = "who";
+            Description = "Lists seen avatars.";
             Category = CommandCategory.Other;
-		}
+        }
 
         public override string Execute(string[] args, UUID fromAgentID)
-		{
-			StringBuilder result = new StringBuilder();
+        {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
+            StringBuilder result = new StringBuilder();
 
             lock (Client.Network.Simulators)
             {
-                foreach (var av in from sim in Client.Network.Simulators 
+                foreach (var av in from sim in Client.Network.Simulators
                          from kvp in sim.ObjectsAvatars where kvp.Value != null select kvp.Value)
                 {
                     result.AppendLine();
@@ -27,7 +34,7 @@ namespace OpenMetaverse.TestClient
                 }
             }
 
-            return result.ToString();
-		}
+            return Task.FromResult(result.ToString());
+        }
     }
 }

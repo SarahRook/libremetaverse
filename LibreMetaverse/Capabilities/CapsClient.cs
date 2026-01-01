@@ -29,6 +29,7 @@ using System;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
+using LibreMetaverse;
 using OpenMetaverse.StructuredData;
 
 namespace OpenMetaverse.Http
@@ -280,7 +281,7 @@ namespace OpenMetaverse.Http
             if (OnDownloadProgress != null)
             {
                 try { OnDownloadProgress(this, bytesReceived, totalBytesToReceive); }
-                catch (Exception ex) { Logger.Log(ex.Message, Helpers.LogLevel.Error, ex); }
+                catch (Exception ex) { Logger.Error(ex.Message, ex); }
             }
         }
 
@@ -312,16 +313,16 @@ namespace OpenMetaverse.Http
             {
                 case OSDFormat.Xml:
                     serializedData = OSDParser.SerializeLLSDXmlBytes(data);
-                    contentType = "application/llsd+xml";
+                    contentType = HttpCapsClient.LLSD_XML;
                     break;
                 case OSDFormat.Binary:
                     serializedData = OSDParser.SerializeLLSDBinary(data);
-                    contentType = "application/llsd+binary";
+                    contentType = HttpCapsClient.LLSD_BINARY;
                     break;
                 case OSDFormat.Json:
                 default:
                     serializedData = System.Text.Encoding.UTF8.GetBytes(OSDParser.SerializeJsonString(data));
-                    contentType = "application/llsd+json";
+                    contentType = HttpCapsClient.LLSD_JSON;
                     break;
             }
         }
@@ -338,7 +339,7 @@ namespace OpenMetaverse.Http
                 catch (Exception ex)
                 {
                     Logger.DebugLog($"CapsBase.GetResponse() {_CapName} : {ex.Message}");
-                    Logger.Log(ex.Message, Helpers.LogLevel.Error, ex);
+                    Logger.Error(ex.Message, ex);
                 }
             }
 
@@ -347,3 +348,4 @@ namespace OpenMetaverse.Http
         }
     }
 }
+

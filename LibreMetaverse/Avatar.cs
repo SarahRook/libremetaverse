@@ -314,6 +314,19 @@ namespace OpenMetaverse
             {
                 return other.AttachmentPoint == AttachmentPoint && other.AttachmentID == AttachmentID;
             }
+
+            public override bool Equals(object obj)
+            {
+                return obj is Attachment objA && Equals(objA);
+            }
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    return (AttachmentPoint.GetHashCode() * 397) ^ AttachmentID.GetHashCode();
+                }
+            }
         }
 
         #endregion Subclasses
@@ -522,7 +535,7 @@ namespace OpenMetaverse
 
             foreach (FieldInfo info in Fields)
             {
-                Logger.Log("Field Matched in FromOSD: "+info.Name, Helpers.LogLevel.Debug);
+                Logger.Debug("Field Matched in FromOSD: "+info.Name);
                 info.SetValue(A, info.GetValue(P));
             }            
 
@@ -595,3 +608,4 @@ namespace OpenMetaverse
 
     }
 }
+

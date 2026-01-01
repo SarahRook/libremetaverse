@@ -1,11 +1,43 @@
+/*
+ * Copyright (c) 2006-2016, openmetaverse.co
+ * Copyright (c) 2019-2025, Sjofn, LLC
+ * All rights reserved.
+ *
+ * - Redistribution and use in source and binary forms, with or without 
+ *   modification, are permitted provided that the following conditions are met:
+ *
+ * - Redistributions of source code must retain the above copyright notice, this
+ *   list of conditions and the following disclaimer.
+ * - Neither the name of the openmetaverse.co nor the names 
+ *   of its contributors may be used to endorse or promote products derived from
+ *   this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE 
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
 using System;
 using System.Collections.Generic;
-using System.Threading;
 using System.Reflection;
-using OpenMetaverse.Packets;
+using System.Threading;
+using System.Threading.Tasks;
 using LibreMetaverse.Voice.Vivox;
+using Microsoft.Extensions.Logging;
+using OpenMetaverse;
+using LibreMetaverse.Appearance;
+using OpenMetaverse.Packets;
+using TestClient.Commands.Appearance;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient
 {
     public class TestClient : GridClient
     {
@@ -22,15 +54,25 @@ namespace OpenMetaverse.TestClient
         // Shell-like inventory commands need to be aware of the 'current' inventory folder.
         public InventoryFolder CurrentDirectory = null;
 
-        private System.Timers.Timer updateTimer;
+        private readonly System.Timers.Timer updateTimer;
         private UUID GroupMembersRequestID;
         public Dictionary<UUID, Group> GroupsCache = null;
         private readonly ManualResetEvent GroupsEvent = new ManualResetEvent(false);
         private CloneCommand CloneManager;
 
         /// <summary>
-        /// Constructor
+        /// Current Outfit Folder manager for tracking and managing avatar appearance
         /// </summary>
+        public CurrentOutfitFolder OutfitManager { get; }
+
+        /// <summary>
+        /// Initializes a new instance of the TestClient class using the specified client manager.
+        /// </summary>
+        /// <remarks>This constructor sets up event handlers, configures default settings, and initializes key components
+        /// required for the TestClient to operate. It also starts the internal update timer and registers necessary network
+        /// callbacks. The provided ClientManager must be properly initialized before being passed to this
+        /// constructor.</remarks>
+        /// <param name="manager">The ClientManager instance that manages client operations and state for this TestClient.</param>
         public TestClient(ClientManager manager)
         {
             ClientManager = manager;
@@ -41,7 +83,7 @@ namespace OpenMetaverse.TestClient
 
             RegisterAllCommands(Assembly.GetExecutingAssembly());
 
-            Settings.LOG_LEVEL = Helpers.LogLevel.Debug;
+            Settings.LOG_LEVEL = LogLevel.Debug;
             Settings.LOG_RESENDS = false;
             Settings.STORE_LAND_PATCHES = true;
             Settings.ALWAYS_DECODE_OBJECTS = true;
@@ -61,6 +103,9 @@ namespace OpenMetaverse.TestClient
             Network.RegisterCallback(PacketType.AlertMessage, AlertMessageHandler);
 
             VoiceManager = new VoiceManager(this);
+
+            // Initialize Current Outfit Folder manager
+            OutfitManager = new CurrentOutfitFolder(this);
 
             updateTimer.Start();
         }
@@ -123,7 +168,6 @@ namespace OpenMetaverse.TestClient
                 // Received an IM from someone that is not the bot's master, ignore
                 Console.WriteLine("<{0} ({1})> {2} (not master): {3} (@{4}:{5})", e.IM.GroupIM ? "GroupIM" : "IM", e.IM.Dialog, e.IM.FromAgentName, e.IM.Message,
                     e.IM.RegionID, e.IM.Position);
-                return;
             }
         }
 
@@ -172,41 +216,99 @@ namespace OpenMetaverse.TestClient
 
         public void ReloadGroupsCache()
         {
-            Groups.CurrentGroups += Groups_CurrentGroups;            
-            Groups.RequestCurrentGroups();
-            GroupsEvent.WaitOne(TimeSpan.FromSeconds(10), false);
-            Groups.CurrentGroups -= Groups_CurrentGroups;
-            GroupsEvent.Reset();
+            // Keep synchronous wrapper for compatibility by calling the async implementation
+            ReloadGroupsCacheAsync().GetAwaiter().GetResult();
         }
 
-        void Groups_CurrentGroups(object sender, CurrentGroupsEventArgs e)
+        /// <summary>
+        /// Asynchronously reload the groups cache with a 10-second timeout.
+        /// Use this method when you can await instead of blocking the calling thread.
+        /// </summary>
+        public async Task ReloadGroupsCacheAsync()
         {
-            if (null == GroupsCache)
-                GroupsCache = e.Groups;
-            else
-                lock (GroupsCache) { GroupsCache = e.Groups; }
-            GroupsEvent.Set();
-        }
+            var tcs = new TaskCompletionSource<Dictionary<UUID, Group>>();
 
-        public UUID GroupName2UUID(string groupName)
-        {
-            UUID tryUUID;
-            if (UUID.TryParse(groupName,out tryUUID))
-                    return tryUUID;
-            if (null == GroupsCache) {
-                    ReloadGroupsCache();
-                if (null == GroupsCache)
-                    return UUID.Zero;
-            }
-            lock(GroupsCache) {
-                if (GroupsCache.Count > 0) {
-                    foreach (Group currentGroup in GroupsCache.Values)
-                        if (string.Equals(currentGroup.Name, groupName, StringComparison.CurrentCultureIgnoreCase))
-                            return currentGroup.ID;
+            EventHandler<CurrentGroupsEventArgs> handler = null;
+            handler = (sender, e) =>
+            {
+                // TrySetResult in case of multiple firings
+                tcs.TrySetResult(e.Groups);
+            };
+
+            try
+            {
+                Groups.CurrentGroups += handler;
+                Groups.RequestCurrentGroups();
+
+                var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(10))).ConfigureAwait(false);
+
+                Groups.CurrentGroups -= handler;
+
+                if (completed == tcs.Task)
+                {
+                    var groups = await tcs.Task.ConfigureAwait(false);
+
+                    if (GroupsCache == null)
+                    {
+                        GroupsCache = groups;
+                    }
+                    else
+                    {
+                        lock (GroupsCache)
+                        {
+                            GroupsCache = groups;
+                        }
+                    }
                 }
             }
+            finally
+            {
+                // Ensure handler is removed in case of exceptions
+                Groups.CurrentGroups -= handler;
+            }
+        }
+
+        /// <summary>
+        /// Lookup a group's UUID by name. Prefer the async version when possible.
+        /// </summary>
+        public UUID GroupName2UUID(string groupName)
+        {
+            // Maintain existing synchronous API by blocking on the async implementation
+            return GroupName2UUIDAsync(groupName).GetAwaiter().GetResult();
+        }
+
+        /// <summary>
+        /// Asynchronously lookup a group's UUID by name. This will request the groups cache
+        /// if it is empty and wait up to 10 seconds for a reply.
+        /// </summary>
+        public async Task<UUID> GroupName2UUIDAsync(string groupName)
+        {
+            UUID tryUUID;
+            if (UUID.TryParse(groupName, out tryUUID))
+                return tryUUID;
+
+            if (GroupsCache == null)
+            {
+                await ReloadGroupsCacheAsync().ConfigureAwait(false);
+                if (GroupsCache == null)
+                    return UUID.Zero;
+            }
+
+            // Copy reference for thread-safety with minimal locking
+            Dictionary<UUID, Group> snapshot;
+            lock (GroupsCache)
+            {
+                snapshot = new Dictionary<UUID, Group>(GroupsCache);
+            }
+
+            foreach (Group currentGroup in snapshot.Values)
+            {
+                if (string.Equals(currentGroup.Name, groupName, StringComparison.CurrentCultureIgnoreCase))
+                    return currentGroup.ID;
+            }
+
             return UUID.Zero;
-        }      
+        }
 
         private void updateTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
         {
@@ -239,7 +341,7 @@ namespace OpenMetaverse.TestClient
             
             AlertMessagePacket message = (AlertMessagePacket)packet;
 
-            Logger.Log("[AlertMessage] " + Utils.BytesToString(message.AlertData.Message), Helpers.LogLevel.Info, this);
+            Logger.Info("[AlertMessage] " + Utils.BytesToString(message.AlertData.Message), this);
         }
        
         private void Inventory_OnInventoryObjectReceived(object sender, InventoryObjectOfferedEventArgs e)
@@ -257,5 +359,19 @@ namespace OpenMetaverse.TestClient
             e.Accept = true;
             return;
         }
+
+        /// <summary>
+        /// Dispose pattern override to cleanup OutfitManager
+        /// </summary>
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                OutfitManager?.Dispose();
+            }
+            
+            base.Dispose(disposing);
+        }
     }
 }
+

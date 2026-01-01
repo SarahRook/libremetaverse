@@ -1,6 +1,7 @@
-﻿using System.Collections.Generic;
+﻿using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient.Commands.Inventory.Shell
+namespace TestClient.Commands.Inventory
 {
     public class ChangeDirectoryCommand : Command
     {
@@ -13,6 +14,11 @@ namespace OpenMetaverse.TestClient.Commands.Inventory.Shell
             Category = CommandCategory.Inventory;
         }
         public override string Execute(string[] args, UUID fromAgentID)
+        {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
         {
             Inventory = Client.Inventory.Store;
 
@@ -50,7 +56,7 @@ namespace OpenMetaverse.TestClient.Commands.Inventory.Shell
                 }
                 else
                 {
-                    List<InventoryBase> currentContents = Inventory.GetContents(currentFolder);
+                    var currentContents = await Client.Inventory.FolderContentsAsync(currentFolder.UUID, Client.Self.AgentID, true, true, InventorySortOrder.ByName).ConfigureAwait(false);
                     // Try and find an InventoryBase with the corresponding name.
                     bool found = false;
                     foreach (InventoryBase item in currentContents)

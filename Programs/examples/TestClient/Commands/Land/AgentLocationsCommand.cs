@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Land
 {
     /// <summary>
     /// Display a list of all agent locations in a specified region
@@ -19,6 +21,11 @@ namespace OpenMetaverse.TestClient
 
         public override string Execute(string[] args, UUID fromAgentID)
         {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
             ulong regionHandle;
 
             if (args.Length == 0)
@@ -26,8 +33,11 @@ namespace OpenMetaverse.TestClient
             else if (!(args.Length == 1 && ulong.TryParse(args[0], out regionHandle)))
                 return "Usage: agentlocations [regionhandle]";
 
-            List<MapItem> items = Client.Grid.MapItems(regionHandle, GridItemType.AgentLocations, 
-                GridLayerType.Objects, TimeSpan.FromSeconds(20));
+            List<MapItem> items = null;
+
+            // Call synchronous MapItems on threadpool
+            items = await Task.Run(() => Client.Grid.MapItems(regionHandle, GridItemType.AgentLocations, 
+                GridLayerType.Objects, TimeSpan.FromSeconds(20))).ConfigureAwait(false);
 
             if (items != null)
             {

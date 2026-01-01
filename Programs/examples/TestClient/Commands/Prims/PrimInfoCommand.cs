@@ -1,8 +1,9 @@
 using System;
 using System.Linq;
-using System.Threading;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Prims
 {
     public class PrimInfoCommand : Command
     {
@@ -15,14 +16,17 @@ namespace OpenMetaverse.TestClient
 
         public override string Execute(string[] args, UUID fromAgentID)
         {
-            UUID primID;
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
 
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
             if (args.Length != 1)
             {
                 return "Usage: priminfo [prim-uuid]";
             }
 
-            if (!UUID.TryParse(args[0], out primID))
+            if (!UUID.TryParse(args[0], out var primID))
             {
                 return $"{args[0]} is not a valid UUID";
             }
@@ -38,53 +42,65 @@ namespace OpenMetaverse.TestClient
             var target = kvp.Value;
             if (target.Text != string.Empty)
             {
-                Logger.Log("Text: " + target.Text, Helpers.LogLevel.Info, Client);
+                Logger.Info("Text: " + target.Text, Client);
             }
             if (target.Light != null)
             {
-                Logger.Log("Light: " + target.Light, Helpers.LogLevel.Info, Client);
+                Logger.Info("Light: " + target.Light, Client);
             }
             if (target.ParticleSys.CRC != 0)
             {
-                Logger.Log("Particles: " + target.ParticleSys, Helpers.LogLevel.Info, Client);
+                Logger.Info("Particles: " + target.ParticleSys, Client);
             }
 
             if (target.Textures != null)
             {
-                Logger.Log($"Default texture: {target.Textures.DefaultTexture.TextureID.ToString()}",
-                    Helpers.LogLevel.Info);
+                Logger.Info($"Default texture: {target.Textures.DefaultTexture.TextureID.ToString()}");
 
                 for (int i = 0; i < target.Textures.FaceTextures.Length; i++)
                 {
                     if (target.Textures.FaceTextures[i] != null)
                     {
-                        Logger.Log($"Face {i}: {target.Textures.FaceTextures[i].TextureID.ToString()}",
-                            Helpers.LogLevel.Info, Client);
+                        Logger.Info($"Face {i}: {target.Textures.FaceTextures[i].TextureID.ToString()}", Client);
                     }
                 }
             }
             else
             {
-                Logger.Log("null", Helpers.LogLevel.Info, Client);
+                Logger.Info("null", Client);
             }
 
-            AutoResetEvent propsEvent = new AutoResetEvent(false);
-            EventHandler<ObjectPropertiesEventArgs> propsCallback =
-                delegate(object sender, ObjectPropertiesEventArgs e)
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            EventHandler<ObjectPropertiesEventArgs> propsCallback = null;
+            propsCallback = (sender, e) =>
+            {
+                try
                 {
-                    Logger.Log(
-                        $"Category: {e.Properties.Category}\nFolderID: {e.Properties.FolderID}\nFromTaskID: {e.Properties.FromTaskID}\nInventorySerial: {e.Properties.InventorySerial}\nItemID: {e.Properties.ItemID}\nCreationDate: {e.Properties.CreationDate}", Helpers.LogLevel.Info);
-                    propsEvent.Set();
-                };
+                    Logger.Info($"Category: {e.Properties.Category}\nFolderID: {e.Properties.FolderID}\nFromTaskID: {e.Properties.FromTaskID}\nInventorySerial: {e.Properties.InventorySerial}\nItemID: {e.Properties.ItemID}\nCreationDate: {e.Properties.CreationDate}");
+                }
+                finally
+                {
+                    tcs.TrySetResult(true);
+                }
+            };
 
-            Client.Objects.ObjectProperties += propsCallback;
+            try
+            {
+                Client.Objects.ObjectProperties += propsCallback;
 
-            Client.Objects.SelectObject(Client.Network.CurrentSim, target.LocalID, true);
+                Client.Objects.SelectObject(Client.Network.CurrentSim, target.LocalID, true);
 
-            propsEvent.WaitOne(TimeSpan.FromSeconds(10), false);
-            Client.Objects.ObjectProperties -= propsCallback;
+                var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(10))).ConfigureAwait(false);
+                // ignore timeout case, just proceed
+            }
+            finally
+            {
+                Client.Objects.ObjectProperties -= propsCallback;
+            }
 
             return "Done.";
         }
     }
 }
+

@@ -1,6 +1,8 @@
 using System;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Movement
 {
     public class GotoLandmarkCommand : Command
     {
@@ -13,19 +15,23 @@ namespace OpenMetaverse.TestClient
 
         public override string Execute(string[] args, UUID fromAgentID)
         {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
             if (args.Length < 1)
             {
-                return "Usage: goto_landmark [UUID]";
+                return Task.FromResult("Usage: goto_landmark [UUID]");
             }
 
-            UUID landmark = new UUID();
-            if (!UUID.TryParse(args[0], out landmark))
+            if (!UUID.TryParse(args[0], out var landmark))
             {
-                return "Invalid UUID";
+                return Task.FromResult("Invalid UUID");
             }
 
             Console.WriteLine("Teleporting to " + landmark);
-            return Client.Self.Teleport(landmark) ? "Teleport Successful" : "Teleport Failed";
+            return Task.FromResult(Client.Self.Teleport(landmark) ? "Teleport Successful" : "Teleport Failed");
         }
     }
 }

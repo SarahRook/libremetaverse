@@ -1,6 +1,8 @@
 using System;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient
 {
     public enum CommandCategory
     {
@@ -28,7 +30,16 @@ namespace OpenMetaverse.TestClient
 
 		public TestClient Client;
 
+		// Existing synchronous API that most commands implement
 		public abstract string Execute(string[] args, UUID fromAgentID);
+
+		// Async-friendly API. By default this will run the synchronous Execute on the threadpool
+		// so existing commands continue to work. Commands that perform IO should override this
+		// to provide a true async implementation.
+		public virtual Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+		{
+			return Task.Run(() => Execute(args, fromAgentID));
+		}
 
 		/// <summary>
 		/// When set to true, think will be called.

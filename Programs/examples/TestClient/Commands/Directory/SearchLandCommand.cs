@@ -26,15 +26,16 @@
 
 using System;
 using System.Text;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient.Commands
+namespace TestClient.Commands.Directory
 {
     /// <summary>
     /// 
     /// </summary>
     public class SearchLandCommand : Command
     {
-        private System.Threading.AutoResetEvent waitQuery = new System.Threading.AutoResetEvent(false);
         private StringBuilder result = new StringBuilder();
 
         /// <summary>
@@ -60,13 +61,12 @@ namespace OpenMetaverse.TestClient.Commands
                 "example: \"searchland mainland 0 512\" // shows the lowest priced mainland that is larger than 512/m2\n\n";
         }
 
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <param name="args"></param>
-        /// <param name="fromAgentID"></param>
-        /// <returns></returns>
         public override string Execute(string[] args, UUID fromAgentID)
+        {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
         {
             // process command line arguments
             if (args.Length < 3)
@@ -109,24 +109,45 @@ namespace OpenMetaverse.TestClient.Commands
                 return ShowUsage();
             }
 
-            //waitQuery.Reset();
+            result.Clear();
 
-            // subscribe to the event that returns the search results
-            Client.Directory.DirLandReply += Directory_DirLand;
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            // send the request to the directory manager
-            Client.Directory.StartLandSearch(queryFlags, searchTypeFlags, maxPrice, minSize, 0);
-
-            if (!waitQuery.WaitOne(TimeSpan.FromSeconds(20), false) && Client.Network.Connected)
+            EventHandler<DirLandReplyEventArgs> handler = null;
+            handler = (sender, e) =>
             {
-                result.AppendLine("Timeout waiting for simulator to respond.");
+                foreach (DirectoryManager.DirectoryParcel searchResult in e.DirParcels)
+                {
+                    // add the results to the StringBuilder object that contains the results
+                    result.AppendLine(searchResult.ToString());
+                }
+                result.AppendFormat("{0} results" + global::System.Environment.NewLine, e.DirParcels.Count);
+
+                tcs.TrySetResult(true);
+            };
+
+            try
+            {
+                // subscribe to the event that returns the search results
+                Client.Directory.DirLandReply += handler;
+
+                // send the request to the directory manager
+                Client.Directory.StartLandSearch(queryFlags, searchTypeFlags, maxPrice, minSize, 0);
+
+                var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(20))).ConfigureAwait(false);
+
+                if (completed != tcs.Task && Client.Network.Connected)
+                {
+                    result.AppendLine("Timeout waiting for simulator to respond.");
+                }
+
+                return result.ToString();
             }
-
-            // unsubscribe to the event that returns the search results
-            Client.Directory.DirLandReply -= Directory_DirLand;
-
-            // return the results
-            return result.ToString();
+            finally
+            {
+                // unsubscribe to the event that returns the search results
+                Client.Directory.DirLandReply -= handler;
+            }
         }
 
         /// <summary>
@@ -137,14 +158,15 @@ namespace OpenMetaverse.TestClient.Commands
         private void Directory_DirLand(object sender, DirLandReplyEventArgs e)
         {
 
+
             foreach (DirectoryManager.DirectoryParcel searchResult in e.DirParcels)
             {
                 // add the results to the StringBuilder object that contains the results
                 result.AppendLine(searchResult.ToString());
             }
-            result.AppendFormat("{0} results" + System.Environment.NewLine, e.DirParcels.Count);
+            result.AppendFormat("{0} results" + global::System.Environment.NewLine, e.DirParcels.Count);
             // let the calling method know we have data
-            waitQuery.Set();
+            //waitQuery.Set();
         }
     }
 }

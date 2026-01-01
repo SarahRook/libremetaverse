@@ -132,15 +132,18 @@ namespace OpenMetaverse.Packets
                         {
                             OSDArray array = (OSDArray)body[field.Name];
                             Type elementType = blockType.GetElementType();
-                            object[] blockArray = (object[])Array.CreateInstance(elementType, array.Count);
-
-                            for (int i = 0; i < array.Count; i++)
+                            if (elementType != null)
                             {
-                                OSDMap map = (OSDMap)array[i];
-                                blockArray[i] = ParseLLSDBlock(map, elementType);
-                            }
+                                object[] blockArray = (object[])Array.CreateInstance(elementType, array.Count);
 
-                            field.SetValue(packet, blockArray);
+                                for (int i = 0; i < array.Count; i++)
+                                {
+                                    OSDMap map = (OSDMap)array[i];
+                                    blockArray[i] = ParseLLSDBlock(map, elementType);
+                                }
+
+                                field.SetValue(packet, blockArray);
+                            }
                         }
                         else
                         {
@@ -152,7 +155,7 @@ namespace OpenMetaverse.Packets
             }
             catch (Exception)
             {
-                //FIXME Logger.Log(e.Message, Helpers.LogLevel.Error, e);
+                //FIXME Logger.Error(e.Message, e);
             }
 
             return packet;
@@ -290,3 +293,4 @@ namespace OpenMetaverse.Packets
         }
     }
 }
+

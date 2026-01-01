@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -112,8 +112,6 @@ namespace OpenMetaverse.Messages
                 // NewFileAgentInventory	
                 // RequestTextureDownload	
                 // SearchStatTracking	
-                // SendUserReport	
-                // SendUserReportWithScreenshot	
                 // ServerReleaseNotes	
                 // StartGroupProposal	
                 // UpdateGestureTaskInventory	
@@ -131,10 +129,11 @@ namespace OpenMetaverse.Messages
             }
             catch (Exception e)
             {
-                Logger.Log("Exception while trying to Deserialize " + eventName + ":" + e.Message + ": " + e.StackTrace, Helpers.LogLevel.Error);                    
+                Logger.Error("Exception while trying to Deserialize " + eventName + ":" + e.Message + ": " + e.StackTrace);                    
             }
 
             return null;
         }
     }
 }
+

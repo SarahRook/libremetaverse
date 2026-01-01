@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -223,8 +223,7 @@ namespace OpenMetaverse.Assets
             }
             catch (Exception ex)
             {
-                Logger.Log("Failed decoding wearable asset " + this.AssetID + ": " + ex.Message,
-                    Helpers.LogLevel.Warning);
+                Logger.Warn($"Failed decoding wearable asset {AssetID}: " + ex.Message);
                 return false;
             }
 
@@ -232,11 +231,11 @@ namespace OpenMetaverse.Assets
         }
 
         /// <summary>
-        /// Encode the assets string represantion into a format consumable by the asset server
+        /// Encode the assets string representation into a format consumable by the asset server
         /// </summary>
         public sealed override void Encode()
         {
-            const string NL = "\n";
+            const char NL = '\n';
 
             StringBuilder data = new StringBuilder("LLWearable version 22\n");
             data.Append(Name); data.Append(NL); data.Append(NL);
@@ -262,16 +261,17 @@ namespace OpenMetaverse.Assets
             data.Append("parameters "); data.Append(Params.Count); data.Append(NL);
             foreach (KeyValuePair<int, float> param in Params)
             {
-                data.Append(param.Key); data.Append(" "); data.Append(Helpers.FloatToTerseString(param.Value)); data.Append(NL);
+                data.Append(param.Key); data.Append(' '); data.Append(Helpers.FloatToTerseString(param.Value)); data.Append(NL);
             }
 
             data.Append("textures "); data.Append(Textures.Count); data.Append(NL);
             foreach (KeyValuePair<AvatarTextureIndex, UUID> texture in Textures)
             {
-                data.Append((byte)texture.Key); data.Append(" "); data.Append(texture.Value.ToString()); data.Append(NL);
+                data.Append((byte)texture.Key); data.Append(' '); data.Append(texture.Value.ToString()); data.Append(NL);
             }
 
             AssetData = Utils.StringToBytes(data.ToString());
         }
     }
 }
+

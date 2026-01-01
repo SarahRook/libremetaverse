@@ -28,6 +28,7 @@
 using System;
 using CoreJ2K.Util;
 using SkiaSharp;
+using System.Runtime.InteropServices;
 
 namespace OpenMetaverse.Imaging
 {
@@ -124,16 +125,19 @@ namespace OpenMetaverse.Imaging
             destinationData = new byte[sourceData.Length];
             for (var i = 0; i < sourceData.Length; i++)
             {
-                destinationData[i] = (byte)sourceData[i];
+                int v = sourceData[i];
+                if (v < 0) { v = 0; }
+                else if (v > 255) { v = 255; }
+                destinationData[i] = (byte)v;
             }
         }
 
         /// <summary>
-        /// Constructs ManagedImage class from <see cref="PortableImage"/>
+        /// Constructs ManagedImage class from <see cref=InterleavedImage"/>
         /// Currently only supporting 8-bit channels;
         /// </summary>
-        /// <param name="image">Input <see cref="PortableImage"/></param>
-        public ManagedImage(PortableImage image)
+        /// <param name="image">Input <see cref="InterleavedImage"/></param>
+        public ManagedImage(InterleavedImage image)
         {
             Width = image.Width;
             Height = image.Height;
@@ -146,9 +150,9 @@ namespace OpenMetaverse.Imaging
                     ConvertTo8BitChannel(image.GetComponent(0), out Red);
                     break;
                 case 2:
-                    Channels = ImageChannels.Color;
+                    Channels = ImageChannels.Gray | ImageChannels.Alpha;
                     ConvertTo8BitChannel(image.GetComponent(0), out Red);
-                    ConvertTo8BitChannel(image.GetComponent(1), out Green);
+                    ConvertTo8BitChannel(image.GetComponent(1), out Alpha);
                     break;
                 case 3:
                     Channels = ImageChannels.Color;
@@ -183,31 +187,19 @@ namespace OpenMetaverse.Imaging
             Width = bitmap.Width;
             Height = bitmap.Height;
             var pixelCount = Width * Height;
-            var bpp = bitmap.BytesPerPixel;
 
-            switch (bpp)
+            // Access pixel buffer via pointer and respect RowBytes to handle padding
+            IntPtr basePtr = bitmap.GetPixels();
+            if (basePtr == IntPtr.Zero)
+                throw new NotSupportedException("Unable to access SKBitmap pixel buffer on this platform.");
+
+            int rowBytes = bitmap.RowBytes;
+            int bytesPerPixel = rowBytes / Math.Max(1, Width);
+
+            switch (bitmap.ColorType)
             {
-                case 4:
-                    Channels = ImageChannels.Alpha | ImageChannels.Color;
-                    Red = new byte[pixelCount];
-                    Green = new byte[pixelCount];
-                    Blue = new byte[pixelCount];
-                    Alpha = new byte[pixelCount];
-                
-                    unsafe
-                    {
-                        byte* pixel = (byte*)bitmap.GetPixels();
-
-                        for (var i = 0; i < pixelCount; ++i)
-                        {
-                            Red[i] = *pixel++;
-                            Green[i] = *pixel++;
-                            Blue[i] = *pixel++;
-                            Alpha[i] = *pixel++;
-                        }
-                    }
-                    break;
-                case 3:
+                case SKColorType.Rgb565:
+                    // 16-bit RGB 5-6-5
                     Channels = ImageChannels.Color;
                     Red = new byte[pixelCount];
                     Green = new byte[pixelCount];
@@ -215,32 +207,254 @@ namespace OpenMetaverse.Imaging
 
                     unsafe
                     {
-                        byte* pixel = (byte*)bitmap.GetPixels();
+                        byte* start = (byte*)basePtr;
 
-                        for (var i = 0; i < pixelCount; ++i)
+                        for (int y = 0; y < Height; y++)
                         {
-                            Red[i] = *pixel++;
-                            Green[i] = *pixel++;
-                            Blue[i] = *pixel++;
+                            byte* row = start + y * rowBytes;
+                            for (int x = 0; x < Width; x++)
+                            {
+                                byte* p = row + x * 2;
+                                int i = y * Width + x;
+                                ushort v = (ushort)(p[0] | (p[1] << 8));
+                                int r5 = (v >> 11) & 0x1F;
+                                int g6 = (v >> 5) & 0x3F;
+                                int b5 = v & 0x1F;
+                                Red[i] = (byte)((r5 * 255 + 15) / 31);
+                                Green[i] = (byte)((g6 * 255 + 31) / 63);
+                                Blue[i] = (byte)((b5 * 255 + 15) / 31);
+                            }
                         }
                     }
                     break;
-                case 1:
-                    Channels = ImageChannels.Gray;
+
+                case SKColorType.Bgra8888:
+                    Channels = ImageChannels.Alpha | ImageChannels.Color;
                     Red = new byte[pixelCount];
-                
+                    Green = new byte[pixelCount];
+                    Blue = new byte[pixelCount];
+                    Alpha = new byte[pixelCount];
+
                     unsafe
                     {
-                        byte* pixel = (byte*)bitmap.GetPixels();
+                        byte* start = (byte*)basePtr;
 
-                        for (var i = 0; i < pixelCount; ++i)
+                        for (int y = 0; y < Height; y++)
                         {
-                            Red[i] = *pixel++;
+                            byte* row = start + y * rowBytes;
+                            for (int x = 0; x < Width; x++)
+                            {
+                                byte* p = row + x * bytesPerPixel;
+                                int i = y * Width + x;
+                                // For 8-bit BGRA layout this maps directly. For 10-bit packed formats
+                                // the 1010102 formats are handled in the combined 1010102 case below.
+                                Blue[i] = p[0];
+                                Green[i] = p[1];
+                                Red[i] = p[2];
+                                Alpha[i] = p[3];
+                            }
                         }
                     }
                     break;
+
+                case SKColorType.Rgba8888:
+                    Channels = ImageChannels.Alpha | ImageChannels.Color;
+                    Red = new byte[pixelCount];
+                    Green = new byte[pixelCount];
+                    Blue = new byte[pixelCount];
+                    Alpha = new byte[pixelCount];
+
+                    unsafe
+                    {
+                        byte* start = (byte*)basePtr;
+
+                        for (int y = 0; y < Height; y++)
+                        {
+                            byte* row = start + y * rowBytes;
+                            for (int x = 0; x < Width; x++)
+                            {
+                                byte* p = row + x * bytesPerPixel;
+                                int i = y * Width + x;
+                                Red[i] = p[0];
+                                Green[i] = p[1];
+                                Blue[i] = p[2];
+                                Alpha[i] = p[3];
+                            }
+                        }
+                    }
+                    break;
+
+                case SKColorType.Rgba1010102:
+                case SKColorType.Bgra1010102:
+                    // 10-bit per channel formats (packed into 4 bytes). Handle both Rgba1010102 and Bgra1010102
+                    Channels = ImageChannels.Alpha | ImageChannels.Color;
+                    Red = new byte[pixelCount];
+                    Green = new byte[pixelCount];
+                    Blue = new byte[pixelCount];
+                    Alpha = new byte[pixelCount];
+
+                    unsafe
+                    {
+                        byte* start = (byte*)basePtr;
+
+                        bool isRgbaOrder = bitmap.ColorType == SKColorType.Rgba1010102;
+
+                        for (int y = 0; y < Height; y++)
+                        {
+                            byte* row = start + y * rowBytes;
+                            for (int x = 0; x < Width; x++)
+                            {
+                                byte* p = row + x * 4;
+                                int i = y * Width + x;
+                                uint v = (uint)(p[0] | (p[1] << 8) | (p[2] << 16) | (p[3] << 24));
+
+                                if (isRgbaOrder)
+                                {
+                                    int r10 = (int)(v & 0x3FF);
+                                    int g10 = (int)((v >> 10) & 0x3FF);
+                                    int b10 = (int)((v >> 20) & 0x3FF);
+                                    int a2 = (int)((v >> 30) & 0x3);
+                                    Red[i] = (byte)((r10 * 255 + 511) / 1023);
+                                    Green[i] = (byte)((g10 * 255 + 511) / 1023);
+                                    Blue[i] = (byte)((b10 * 255 + 511) / 1023);
+                                    Alpha[i] = (byte)(a2 * 85); // map 0..3 -> 0,85,170,255
+                                }
+                                else
+                                {
+                                    int b10 = (int)(v & 0x3FF);
+                                    int g10 = (int)((v >> 10) & 0x3FF);
+                                    int r10 = (int)((v >> 20) & 0x3FF);
+                                    int a2 = (int)((v >> 30) & 0x3);
+                                    Red[i] = (byte)((r10 * 255 + 511) / 1023);
+                                    Green[i] = (byte)((g10 * 255 + 511) / 1023);
+                                    Blue[i] = (byte)((b10 * 255 + 511) / 1023);
+                                    Alpha[i] = (byte)(a2 * 85);
+                                }
+                            }
+                        }
+                    }
+                    break;
+
+                case SKColorType.Gray8:
+                    Channels = ImageChannels.Gray;
+                    Red = new byte[pixelCount];
+
+                    unsafe
+                    {
+                        byte* start = (byte*)basePtr;
+
+                        for (int y = 0; y < Height; y++)
+                        {
+                            byte* row = start + y * rowBytes;
+                            for (int x = 0; x < Width; x++)
+                            {
+                                int i = y * Width + x;
+                                Red[i] = row[x * bytesPerPixel];
+                            }
+                        }
+                    }
+                    break;
+
+                case SKColorType.Alpha8:
+                    Channels = ImageChannels.Alpha;
+                    Alpha = new byte[pixelCount];
+
+                    unsafe
+                    {
+                        byte* start = (byte*)basePtr;
+
+                        for (int y = 0; y < Height; y++)
+                        {
+                            byte* row = start + y * rowBytes;
+                            for (int x = 0; x < Width; x++)
+                            {
+                                int i = y * Width + x;
+                                Alpha[i] = row[x * bytesPerPixel];
+                            }
+                        }
+                    }
+                    break;
+
                 default:
-                    throw new NotSupportedException($"Pixel depth of {bpp} is not supported.");
+                    // Fallback: use bytesPerPixel and assume BGR(A) or Gray layout
+                    var bpp = bytesPerPixel;
+                    if (bpp == 4)
+                    {
+                        Channels = ImageChannels.Alpha | ImageChannels.Color;
+                        Red = new byte[pixelCount];
+                        Green = new byte[pixelCount];
+                        Blue = new byte[pixelCount];
+                        Alpha = new byte[pixelCount];
+
+                        unsafe
+                        {
+                            byte* start = (byte*)basePtr;
+
+                            for (int y = 0; y < Height; y++)
+                            {
+                                byte* row = start + y * rowBytes;
+                                for (int x = 0; x < Width; x++)
+                                {
+                                    byte* p = row + x * bpp;
+                                    int i = y * Width + x;
+                                    Blue[i] = p[0];
+                                    Green[i] = p[1];
+                                    Red[i] = p[2];
+                                    Alpha[i] = p[3];
+                                }
+                            }
+                        }
+                    }
+                    else if (bpp == 3)
+                    {
+                        Channels = ImageChannels.Color;
+                        Red = new byte[pixelCount];
+                        Green = new byte[pixelCount];
+                        Blue = new byte[pixelCount];
+
+                        unsafe
+                        {
+                            byte* start = (byte*)basePtr;
+
+                            for (int y = 0; y < Height; y++)
+                            {
+                                byte* row = start + y * rowBytes;
+                                for (int x = 0; x < Width; x++)
+                                {
+                                    byte* p = row + x * bpp;
+                                    int i = y * Width + x;
+                                    Blue[i] = p[0];
+                                    Green[i] = p[1];
+                                    Red[i] = p[2];
+                                }
+                            }
+                        }
+                    }
+                    else if (bpp == 1)
+                    {
+                        Channels = ImageChannels.Gray;
+                        Red = new byte[pixelCount];
+
+                        unsafe
+                        {
+                            byte* start = (byte*)basePtr;
+
+                            for (int y = 0; y < Height; y++)
+                            {
+                                byte* row = start + y * rowBytes;
+                                for (int x = 0; x < Width; x++)
+                                {
+                                    int i = y * Width + x;
+                                    Red[i] = row[x];
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        throw new NotSupportedException($"Pixel format {bitmap.ColorType} (bytesPerPixel={bpp}) is not supported.");
+                    }
+                    break;
             }
         }
 
@@ -254,8 +468,8 @@ namespace OpenMetaverse.Imaging
                 return;
 
             int n = Width * Height;
-            ImageChannels add = Channels ^ channels & channels;
-            ImageChannels del = Channels ^ channels & Channels;
+            ImageChannels add = (Channels ^ channels) & channels;
+            ImageChannels del = (Channels ^ channels) & Channels;
 
             if ((add & ImageChannels.Color) != 0)
             {
@@ -309,7 +523,7 @@ namespace OpenMetaverse.Imaging
                 alpha = null, 
                 bump = null;
             int n = width * height;
-            int di = 0, si;
+            int di = 0;
 
             if (Red != null) red = new byte[n];
             if (Green != null) green = new byte[n];
@@ -319,9 +533,15 @@ namespace OpenMetaverse.Imaging
             
             for (int y = 0; y < height; y++)
             {
+                int srcY = (y * Height) / Math.Max(1, height); // compute source row
                 for (int x = 0; x < width; x++)
                 {
-                    si = y * Height / height * Width + x * Width / width;
+                    int srcX = (x * Width) / Math.Max(1, width); // compute source column
+                    int si = srcY * Width + srcX;
+                    // bounds guard
+                    if (si < 0) si = 0;
+                    else if (si >= Width * Height) si = Width * Height - 1;
+
                     if (Red != null) red[di] = Red[si];
                     if (Green != null) green[di] = Green[si];
                     if (Blue != null) blue[di] = Blue[si];
@@ -418,7 +638,8 @@ namespace OpenMetaverse.Imaging
             if ((Channels & ImageChannels.Alpha) != 0)
             {
                 if ((Channels & ImageChannels.Color) != 0)
-                    // RGBA
+                {
+                    // RGBA -> BGRA
                     for (var pos = 0; pos < Height * Width; pos++)
                     {
                         raw[pos * 4 + 0] = Blue[pos];
@@ -426,8 +647,10 @@ namespace OpenMetaverse.Imaging
                         raw[pos * 4 + 2] = Red[pos];
                         raw[pos * 4 + 3] = Alpha[pos];
                     }
+                }
                 else
-                    // Alpha only
+                {
+                    // Alpha only -> replicate to RGB, full alpha
                     for (var pos = 0; pos < Height * Width; pos++)
                     {
                         raw[pos * 4 + 0] = Alpha[pos];
@@ -435,10 +658,11 @@ namespace OpenMetaverse.Imaging
                         raw[pos * 4 + 2] = Alpha[pos];
                         raw[pos * 4 + 3] = byte.MaxValue;
                     }
+                }
             }
             else
             {
-                // RGB
+                // RGB -> BGRA
                 for (var pos = 0; pos < Height * Width; pos++)
                 {
                     raw[pos * 4 + 0] = Blue[pos];
@@ -448,8 +672,19 @@ namespace OpenMetaverse.Imaging
                 }
             }
 
-            var img = SKImage.FromEncodedData(raw);
-            return SKBitmap.FromImage(img);
+            var info = new SKImageInfo(Width, Height, SKColorType.Bgra8888, SKAlphaType.Unpremul);
+            var bmp = new SKBitmap(info);
+
+            IntPtr ptr = bmp.GetPixels();
+            if (ptr == IntPtr.Zero)
+            {
+                throw new NotSupportedException("Unable to access SKBitmap pixel buffer on this platform.");
+            }
+
+            // Copy raw BGRA bytes directly into bitmap buffer
+            Marshal.Copy(raw, 0, ptr, raw.Length);
+
+            return bmp;
         }
 
         [Obsolete("ExportTGA() is deprecated, please use Targa.Encode() instead.")]

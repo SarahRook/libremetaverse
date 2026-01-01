@@ -28,6 +28,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
+using System.Buffers;
+using System.Collections.Concurrent;
 
 namespace LibreMetaverse.PrimMesher
 {
@@ -58,8 +61,8 @@ namespace LibreMetaverse.PrimMesher
             axis = axis.Normalize();
 
             angle *= 0.5f;
-            var c = (float) Math.Cos(angle);
-            var s = (float) Math.Sin(angle);
+            var c = (float)Math.Cos(angle);
+            var s = (float)Math.Sin(angle);
 
             X = axis.X * s;
             Y = axis.Y * s;
@@ -71,7 +74,7 @@ namespace LibreMetaverse.PrimMesher
 
         public float Length()
         {
-            return (float) Math.Sqrt(X * X + Y * Y + Z * Z + W * W);
+            return (float)Math.Sqrt(X * X + Y * Y + Z * Z + W * W);
         }
 
         public Quat Normalize()
@@ -129,7 +132,7 @@ namespace LibreMetaverse.PrimMesher
 
         public float Length()
         {
-            return (float) Math.Sqrt(X * X + Y * Y + Z * Z);
+            return (float)Math.Sqrt(X * X + Y * Y + Z * Z);
         }
 
         public Coord Invert()
@@ -192,36 +195,33 @@ namespace LibreMetaverse.PrimMesher
         {
             // From http://www.euclideanspace.com/maths/algebra/realNormedAlgebra/quaternions/transforms/
 
-            var c2 = new Coord(0.0f, 0.0f, 0.0f);
-
-            c2.X = q.W * q.W * v.X +
-                   2f * q.Y * q.W * v.Z -
-                   2f * q.Z * q.W * v.Y +
-                   q.X * q.X * v.X +
-                   2f * q.Y * q.X * v.Y +
-                   2f * q.Z * q.X * v.Z -
-                   q.Z * q.Z * v.X -
-                   q.Y * q.Y * v.X;
-
-            c2.Y =
-                2f * q.X * q.Y * v.X +
-                q.Y * q.Y * v.Y +
-                2f * q.Z * q.Y * v.Z +
-                2f * q.W * q.Z * v.X -
-                q.Z * q.Z * v.Y +
-                q.W * q.W * v.Y -
-                2f * q.X * q.W * v.Z -
-                q.X * q.X * v.Y;
-
-            c2.Z =
-                2f * q.X * q.Z * v.X +
-                2f * q.Y * q.Z * v.Y +
-                q.Z * q.Z * v.Z -
-                2f * q.W * q.Y * v.X -
-                q.Y * q.Y * v.Z +
-                2f * q.W * q.X * v.Y -
-                q.X * q.X * v.Z +
-                q.W * q.W * v.Z;
+            var c2 = new Coord(0.0f, 0.0f, 0.0f)
+            {
+                X = q.W * q.W * v.X +
+                    2f * q.Y * q.W * v.Z -
+                    2f * q.Z * q.W * v.Y +
+                    q.X * q.X * v.X +
+                    2f * q.Y * q.X * v.Y +
+                    2f * q.Z * q.X * v.Z -
+                    q.Z * q.Z * v.X -
+                    q.Y * q.Y * v.X,
+                Y = 2f * q.X * q.Y * v.X +
+                    q.Y * q.Y * v.Y +
+                    2f * q.Z * q.Y * v.Z +
+                    2f * q.W * q.Z * v.X -
+                    q.Z * q.Z * v.Y +
+                    q.W * q.W * v.Y -
+                    2f * q.X * q.W * v.Z -
+                    q.X * q.X * v.Y,
+                Z = 2f * q.X * q.Z * v.X +
+                    2f * q.Y * q.Z * v.Y +
+                    q.Z * q.Z * v.Z -
+                    2f * q.W * q.Y * v.X -
+                    q.Y * q.Y * v.Z +
+                    2f * q.W * q.X * v.Y -
+//                    q.X * q.X * v.Z +
+                    q.W * q.W * v.Z
+            };
 
             return c2;
         }
@@ -421,6 +421,10 @@ namespace LibreMetaverse.PrimMesher
 
     internal class AngleList
     {
+        // Cache computed angle lists to avoid recomputing identical profiles
+        private static readonly ConcurrentDictionary<string, (Angle[] angles, Coord[] normals)> AngleCache =
+            new ConcurrentDictionary<string, (Angle[], Coord[])>();
+
         private static readonly Angle[] angles3 =
         {
             new Angle(0.0f, 1.0f, 0.0f),
@@ -488,7 +492,7 @@ namespace LibreMetaverse.PrimMesher
         private float iX, iY; // intersection point
         internal List<Coord> normals;
 
-        private Angle interpolatePoints(float newPoint, Angle p1, Angle p2)
+        private static Angle interpolatePoints(float newPoint, Angle p1, Angle p2)
         {
             var m = (newPoint - p1.angle) / (p2.angle - p1.angle);
             return new Angle(newPoint, p1.X + m * (p2.X - p1.X), p1.Y + m * (p2.Y - p1.Y));
@@ -504,18 +508,27 @@ namespace LibreMetaverse.PrimMesher
             if (denom != 0.0)
             {
                 var ua = uaNumerator / denom;
-                iX = (float) (x1 + ua * (x2 - x1));
-                iY = (float) (y1 + ua * (y2 - y1));
+                iX = (float)(x1 + ua * (x2 - x1));
+                iY = (float)(y1 + ua * (y2 - y1));
             }
         }
 
         internal void makeAngles(int sides, float startAngle, float stopAngle)
         {
+            // Try cache first
+            var key = sides + ":" + startAngle.ToString("R") + ":" + stopAngle.ToString("R");
+            if (AngleCache.TryGetValue(key, out var cached))
+            {
+                angles = new List<Angle>(cached.angles);
+                normals = new List<Coord>(cached.normals ?? Array.Empty<Coord>());
+                return;
+            }
+
             angles = new List<Angle>();
             normals = new List<Coord>();
 
             var twoPi = Math.PI * 2.0;
-            var twoPiInv = 1.0f / (float) twoPi;
+            var twoPiInv = 1.0f / (float)twoPi;
 
             if (sides < 1)
                 throw new Exception("number of sides not greater than zero");
@@ -534,10 +547,10 @@ namespace LibreMetaverse.PrimMesher
                     sourceAngles = angles4;
                 else sourceAngles = angles24;
 
-                var startAngleIndex = (int) (startAngle * sides);
+                var startAngleIndex = (int)(startAngle * sides);
                 var endAngleIndex = sourceAngles.Length - 1;
                 if (stopAngle < 1.0f)
-                    endAngleIndex = (int) (stopAngle * sides) + 1;
+                    endAngleIndex = (int)(stopAngle * sides) + 1;
                 if (endAngleIndex == startAngleIndex)
                     endAngleIndex++;
 
@@ -564,13 +577,13 @@ namespace LibreMetaverse.PrimMesher
             {
                 var stepSize = twoPi / sides;
 
-                var startStep = (int) (startAngle / stepSize);
+                var startStep = (int)(startAngle / stepSize);
                 var angle = stepSize * startStep;
                 var step = startStep;
                 double stopAngleTest = stopAngle;
                 if (stopAngle < twoPi)
                 {
-                    stopAngleTest = stepSize * ((int) (stopAngle / stepSize) + 1);
+                    stopAngleTest = stepSize * ((int)(stopAngle / stepSize) + 1);
                     if (stopAngleTest < stopAngle)
                         stopAngleTest += stepSize;
                     if (stopAngleTest > twoPi)
@@ -580,9 +593,9 @@ namespace LibreMetaverse.PrimMesher
                 while (angle <= stopAngleTest)
                 {
                     Angle newAngle;
-                    newAngle.angle = (float) angle;
-                    newAngle.X = (float) Math.Cos(angle);
-                    newAngle.Y = (float) Math.Sin(angle);
+                    newAngle.angle = (float)angle;
+                    newAngle.X = (float)Math.Cos(angle);
+                    newAngle.Y = (float)Math.Sin(angle);
                     angles.Add(newAngle);
                     step += 1;
                     angle = stepSize * step;
@@ -592,7 +605,7 @@ namespace LibreMetaverse.PrimMesher
                 {
                     Angle newAngle;
                     intersection(angles[0].X, angles[0].Y, angles[1].X, angles[1].Y, 0.0f, 0.0f,
-                        (float) Math.Cos(startAngle), (float) Math.Sin(startAngle));
+                        (float)Math.Cos(startAngle), (float)Math.Sin(startAngle));
                     newAngle.angle = startAngle;
                     newAngle.X = iX;
                     newAngle.Y = iY;
@@ -604,22 +617,34 @@ namespace LibreMetaverse.PrimMesher
                 {
                     Angle newAngle;
                     intersection(angles[index - 1].X, angles[index - 1].Y, angles[index].X, angles[index].Y, 0.0f, 0.0f,
-                        (float) Math.Cos(stopAngle), (float) Math.Sin(stopAngle));
+                        (float)Math.Cos(stopAngle), (float)Math.Sin(stopAngle));
                     newAngle.angle = stopAngle;
                     newAngle.X = iX;
                     newAngle.Y = iY;
                     angles[index] = newAngle;
                 }
             }
-        }
-    }
+
+            // Store into cache for reuse
+            try
+            {
+                var a = angles.ToArray();
+                var n = normals.Count > 0 ? normals.ToArray() : Array.Empty<Coord>();
+                AngleCache.TryAdd(key, (a, n));
+            }
+            catch
+            {
+                // ignore cache failures
+            }
+         }
+     }
 
     /// <summary>
     ///     generates a profile for extrusion
     /// </summary>
     public class Profile
     {
-        private const float twoPi = 2.0f * (float) Math.PI;
+        private const float twoPi = 2.0f * (float)Math.PI;
         public int bottomFaceNumber;
 
         public bool calcVertexNormals;
@@ -652,24 +677,25 @@ namespace LibreMetaverse.PrimMesher
 
         public Profile()
         {
-            coords = new List<Coord>();
-            faces = new List<Face>();
-            vertexNormals = new List<Coord>();
-            us = new List<float>();
-            faceUVs = new List<UVCoord>();
-            faceNumbers = new List<int>();
+            coords = new List<Coord>(8);
+            faces = new List<Face>(8);
+            vertexNormals = new List<Coord>(8);
+            us = new List<float>(8);
+            faceUVs = new List<UVCoord>(8);
+            faceNumbers = new List<int>(8);
         }
 
         public Profile(int sides, float profileStart, float profileEnd, float hollow, int hollowSides, bool createFaces,
             bool calcVertexNormals)
         {
             this.calcVertexNormals = calcVertexNormals;
+
             coords = new List<Coord>();
             faces = new List<Face>();
             vertexNormals = new List<Coord>();
             us = new List<float>();
             faceUVs = new List<UVCoord>();
-            faceNumbers = new List<int>();
+            faceNumbers = new List<int>(8);
 
             var center = new Coord(0.0f, 0.0f, 0.0f);
 
@@ -751,6 +777,17 @@ namespace LibreMetaverse.PrimMesher
 
             Angle angle;
             var newVert = new Coord();
+
+            // Pre-size lists for performance
+            var estimatedTotalVerts = numOuterVerts + (hasHollow ? numHollowVerts : 0) + 2;
+            if (estimatedTotalVerts < 8) estimatedTotalVerts = 8;
+            coords.Capacity = Math.Max(coords.Capacity, estimatedTotalVerts);
+            vertexNormals.Capacity = Math.Max(vertexNormals.Capacity, estimatedTotalVerts);
+            faceUVs.Capacity = Math.Max(faceUVs.Capacity, estimatedTotalVerts);
+            us.Capacity = Math.Max(us.Capacity, estimatedTotalVerts);
+            if (createFaces)
+                faces.Capacity = Math.Max(faces.Capacity, numOuterVerts * 2 + 8);
+
             if (hasHollow && hollowSides != sides)
             {
                 var numHollowAngles = hollowAngles.angles.Count;
@@ -788,7 +825,7 @@ namespace LibreMetaverse.PrimMesher
                 coords.Add(newVert);
                 if (this.calcVertexNormals)
                 {
-                    outerCoordIndices.Add(coords.Count - 1);
+                    outerCoordIndices?.Add(coords.Count - 1);
 
                     if (sides < 5)
                     {
@@ -923,11 +960,14 @@ namespace LibreMetaverse.PrimMesher
                 }
 
                 if (calcVertexNormals)
-                    foreach (var hc in hollowCoords)
+                {
+                    // Add hollow coords with reserved capacity to avoid reallocation
+                    for (var hcIndex = 0; hcIndex < hollowCoords.Count; hcIndex++)
                     {
-                        coords.Add(hc);
+                        coords.Add(hollowCoords[hcIndex]);
                         hollowCoordIndices.Add(coords.Count - 1);
                     }
+                }
                 else
                     coords.AddRange(hollowCoords);
 
@@ -988,10 +1028,6 @@ namespace LibreMetaverse.PrimMesher
 
             MakeFaceUVs();
 
-            hollowCoords = null;
-            hollowNormals = null;
-            hollowUs = null;
-
             if (calcVertexNormals)
             {
                 // calculate prim face numbers
@@ -1032,16 +1068,18 @@ namespace LibreMetaverse.PrimMesher
                 for (var i = 0; i < faceNumbers.Count; i++)
                     if (faceNumbers[i] == -1)
                         faceNumbers[i] = faceNum++;
-
-                numPrimFaces = faceNum;
             }
         }
 
         public void MakeFaceUVs()
         {
-            faceUVs = new List<UVCoord>();
-            foreach (var c in coords)
+            // preallocate to avoid repeated growth
+            faceUVs = new List<UVCoord>(coords.Count);
+            for (var i = 0; i < coords.Count; i++)
+            {
+                var c = coords[i];
                 faceUVs.Add(new UVCoord(1.0f - (0.5f + c.X), 1.0f - (0.5f - c.Y)));
+            }
         }
 
         public Profile Copy()
@@ -1053,26 +1091,36 @@ namespace LibreMetaverse.PrimMesher
         {
             var copy = new Profile();
 
+            // Reserve capacity for copying to reduce reallocations
+            copy.coords = new List<Coord>(coords.Count);
             copy.coords.AddRange(coords);
+
+            copy.faceUVs = new List<UVCoord>(faceUVs.Count);
             copy.faceUVs.AddRange(faceUVs);
 
             if (needFaces)
+            {
+                copy.faces = new List<Face>(faces.Count);
                 copy.faces.AddRange(faces);
+            }
 
             copy.calcVertexNormals = calcVertexNormals;
             if (calcVertexNormals)
             {
+                copy.vertexNormals = new List<Coord>(vertexNormals.Count);
                 copy.vertexNormals.AddRange(vertexNormals);
                 copy.faceNormal = faceNormal;
                 copy.cutNormal1 = cutNormal1;
                 copy.cutNormal2 = cutNormal2;
+                copy.us = new List<float>(us.Count);
                 copy.us.AddRange(us);
+                copy.faceNumbers = new List<int>(faceNumbers.Count);
                 copy.faceNumbers.AddRange(faceNumbers);
 
-                copy.cut1CoordIndices = new List<int>(cut1CoordIndices);
-                copy.cut2CoordIndices = new List<int>(cut2CoordIndices);
-                copy.hollowCoordIndices = new List<int>(hollowCoordIndices);
-                copy.outerCoordIndices = new List<int>(outerCoordIndices);
+                copy.cut1CoordIndices = cut1CoordIndices != null ? new List<int>(cut1CoordIndices) : null;
+                copy.cut2CoordIndices = cut2CoordIndices != null ? new List<int>(cut2CoordIndices) : null;
+                copy.hollowCoordIndices = hollowCoordIndices != null ? new List<int>(hollowCoordIndices) : null;
+                copy.outerCoordIndices = outerCoordIndices != null ? new List<int>(outerCoordIndices) : null;
             }
             copy.numOuterVerts = numOuterVerts;
             copy.numHollowVerts = numHollowVerts;
@@ -1087,13 +1135,11 @@ namespace LibreMetaverse.PrimMesher
 
         public void AddPos(float x, float y, float z)
         {
-            int i;
             var numVerts = coords.Count;
-            Coord vert;
 
-            for (i = 0; i < numVerts; i++)
+            for (var i = 0; i < numVerts; i++)
             {
-                vert = coords[i];
+                var vert = coords[i];
                 vert.X += x;
                 vert.Y += y;
                 vert.Z += z;
@@ -1103,16 +1149,15 @@ namespace LibreMetaverse.PrimMesher
 
         public void AddRot(Quat q)
         {
-            int i;
             var numVerts = coords.Count;
 
-            for (i = 0; i < numVerts; i++)
+            for (var i = 0; i < numVerts; i++)
                 coords[i] *= q;
 
             if (calcVertexNormals)
             {
                 var numNormals = vertexNormals.Count;
-                for (i = 0; i < numNormals; i++)
+                for (var i = 0; i < numNormals; i++)
                     vertexNormals[i] *= q;
 
                 faceNormal *= q;
@@ -1123,13 +1168,11 @@ namespace LibreMetaverse.PrimMesher
 
         public void Scale(float x, float y)
         {
-            int i;
             var numVerts = coords.Count;
-            Coord vert;
 
-            for (i = 0; i < numVerts; i++)
+            for (var i = 0; i < numVerts; i++)
             {
-                vert = coords[i];
+                var vert = coords[i];
                 vert.X *= x;
                 vert.Y *= y;
                 coords[i] = vert;
@@ -1142,17 +1185,11 @@ namespace LibreMetaverse.PrimMesher
         /// </summary>
         public void FlipNormals()
         {
-            int i;
             var numFaces = faces.Count;
-            Face tmpFace;
-            int tmp;
-
-            for (i = 0; i < numFaces; i++)
+            for (var i = 0; i < numFaces; i++)
             {
-                tmpFace = faces[i];
-                tmp = tmpFace.v3;
-                tmpFace.v3 = tmpFace.v1;
-                tmpFace.v1 = tmp;
+                Face tmpFace = faces[i];
+                (tmpFace.v3, tmpFace.v1) = (tmpFace.v1, tmpFace.v3);
                 faces[i] = tmpFace;
             }
 
@@ -1172,7 +1209,7 @@ namespace LibreMetaverse.PrimMesher
             faceNormal.Z = -faceNormal.Z;
 
             var numfaceUVs = faceUVs.Count;
-            for (i = 0; i < numfaceUVs; i++)
+            for (var i = 0; i < numfaceUVs; i++)
             {
                 var uv = faceUVs[i];
                 uv.V = 1.0f - uv.V;
@@ -1183,10 +1220,9 @@ namespace LibreMetaverse.PrimMesher
         public void AddValue2FaceVertexIndices(int num)
         {
             var numFaces = faces.Count;
-            Face tmpFace;
             for (var i = 0; i < numFaces; i++)
             {
-                tmpFace = faces[i];
+                var tmpFace = faces[i];
                 tmpFace.v1 += num;
                 tmpFace.v2 += num;
                 tmpFace.v3 += num;
@@ -1200,10 +1236,9 @@ namespace LibreMetaverse.PrimMesher
             if (calcVertexNormals)
             {
                 var numFaces = faces.Count;
-                Face tmpFace;
                 for (var i = 0; i < numFaces; i++)
                 {
-                    tmpFace = faces[i];
+                    var tmpFace = faces[i];
                     tmpFace.n1 += num;
                     tmpFace.n2 += num;
                     tmpFace.n3 += num;
@@ -1219,18 +1254,17 @@ namespace LibreMetaverse.PrimMesher
                 return;
             var fileName = name + "_" + title + ".raw";
             var completePath = System.IO.Path.Combine(path, fileName);
-            var sw = new StreamWriter(completePath);
-
-            for (var i = 0; i < faces.Count; i++)
+            using (var sw = new StreamWriter(completePath))
             {
-                var s = coords[faces[i].v1].ToString();
-                s += " " + coords[faces[i].v2];
-                s += " " + coords[faces[i].v3];
+                for (var i = 0; i < faces.Count; i++)
+                {
+                    var s = coords[faces[i].v1].ToString();
+                    s += " " + coords[faces[i].v2];
+                    s += " " + coords[faces[i].v3];
 
-                sw.WriteLine(s);
+                    sw.WriteLine(s);
+                }
             }
-
-            sw.Close();
         }
     }
 
@@ -1252,7 +1286,7 @@ namespace LibreMetaverse.PrimMesher
 
     public class Path
     {
-        private const float twoPi = 2.0f * (float) Math.PI;
+        private const float twoPi = 2.0f * (float)Math.PI;
         public float dimpleBegin;
         public float dimpleEnd = 1.0f;
         public float holeSizeX = 1.0f; // called pathScaleX in pbs
@@ -1291,7 +1325,7 @@ namespace LibreMetaverse.PrimMesher
                 var twistTotal = twistEnd - twistBegin;
                 var twistTotalAbs = Math.Abs(twistTotal);
                 if (twistTotalAbs > 0.01f)
-                    steps += (int) (twistTotalAbs * 3.66); //  dahlia's magic number
+                    steps += (int)(twistTotalAbs * 3.66); //  dahlia's magic number
 
                 var start = -0.5f;
                 var stepSize = length / steps;
@@ -1311,7 +1345,7 @@ namespace LibreMetaverse.PrimMesher
 
                 while (!done)
                 {
-                    var newNode = new PathNode {xScale = 1.0f};
+                    var newNode = new PathNode { xScale = 1.0f };
 
                     if (taperX == 0.0f)
                         newNode.xScale = 1.0f;
@@ -1375,10 +1409,10 @@ namespace LibreMetaverse.PrimMesher
                 var yShearCompensation = 1.0f + Math.Abs(topShearY) * 0.25f;
 
                 // It's not quite clear what pushY (Y top shear) does, but subtracting it from the start and end
-                // angles appears to approximate it's effects on path cut. Likewise, adding it to the angle used
-                // to calculate the sine for generating the path radius appears to approximate it's effects there
+                // angles appears to approximate its effects on path cut. Likewise, adding it to the angle used
+                // to calculate the sine for generating the path radius appears to approximate its effects there
                 // too, but there are some subtle differences in the radius which are noticeable as the prim size
-                // increases and it may affect megaprims quite a bit. The effect of the Y top shear parameter on
+                // increases, and it may affect megaprims quite a bit. The effect of the Y top shear parameter on
                 // the meshes generated with this technique appear nearly identical in shape to the same prims when
                 // displayed by the viewer.
 
@@ -1386,7 +1420,7 @@ namespace LibreMetaverse.PrimMesher
                 var endAngle = twoPi * pathCutEnd * revolutions - topShearY * 0.9f;
                 var stepSize = twoPi / stepsPerRevolution;
 
-                var step = (int) (startAngle / stepSize);
+                var step = (int)(startAngle / stepSize);
                 var angle = startAngle;
 
                 var done = false;
@@ -1422,11 +1456,11 @@ namespace LibreMetaverse.PrimMesher
                     var twist = twistBegin + twistTotal * percentOfPath;
 
                     var xOffset = 0.5f * (skewStart + totalSkew * percentOfAngles);
-                    xOffset += (float) Math.Sin(angle) * xOffsetTopShearXFactor;
+                    xOffset += (float)Math.Sin(angle) * xOffsetTopShearXFactor;
 
-                    var yOffset = yShearCompensation * (float) Math.Cos(angle) * (0.5f - yPathScale) * radiusScale;
+                    var yOffset = yShearCompensation * (float)Math.Cos(angle) * (0.5f - yPathScale) * radiusScale;
 
-                    var zOffset = (float) Math.Sin(angle + topShearY) * (0.5f - yPathScale) * radiusScale;
+                    var zOffset = (float)Math.Sin(angle + topShearY) * (0.5f - yPathScale) * radiusScale;
 
                     newNode.position = new Coord(xOffset, yOffset, zOffset);
 
@@ -1464,7 +1498,7 @@ namespace LibreMetaverse.PrimMesher
 
     public class PrimMesh
     {
-        private const float twoPi = 2.0f * (float) Math.PI;
+        private const float twoPi = 2.0f * (float)Math.PI;
         public bool calcVertexNormals;
 
         public List<Coord> coords;
@@ -1550,39 +1584,63 @@ namespace LibreMetaverse.PrimMesher
         public bool HasHollow { get; private set; }
 
         /// <summary>
-        ///     Human readable string representation of the parameters used to create a mesh.
+        ///     Human-readable string representation of the parameters used to create a mesh.
         /// </summary>
         /// <returns></returns>
         public string ParamsToDisplayString()
         {
-            var s = "";
-            s += "sides..................: " + sides;
-            s += "\nhollowSides..........: " + hollowSides;
-            s += "\nprofileStart.........: " + profileStart;
-            s += "\nprofileEnd...........: " + profileEnd;
-            s += "\nhollow...............: " + hollow;
-            s += "\ntwistBegin...........: " + twistBegin;
-            s += "\ntwistEnd.............: " + twistEnd;
-            s += "\ntopShearX............: " + topShearX;
-            s += "\ntopShearY............: " + topShearY;
-            s += "\npathCutBegin.........: " + pathCutBegin;
-            s += "\npathCutEnd...........: " + pathCutEnd;
-            s += "\ndimpleBegin..........: " + dimpleBegin;
-            s += "\ndimpleEnd............: " + dimpleEnd;
-            s += "\nskew.................: " + skew;
-            s += "\nholeSizeX............: " + holeSizeX;
-            s += "\nholeSizeY............: " + holeSizeY;
-            s += "\ntaperX...............: " + taperX;
-            s += "\ntaperY...............: " + taperY;
-            s += "\nradius...............: " + radius;
-            s += "\nrevolutions..........: " + revolutions;
-            s += "\nstepsPerRevolution...: " + stepsPerRevolution;
-            s += "\nsphereMode...........: " + sphereMode;
-            s += "\nhasProfileCut........: " + HasProfileCut;
-            s += "\nhasHollow............: " + HasHollow;
-            s += "\nviewerMode...........: " + viewerMode;
+            var sb = new StringBuilder(512);
+            sb.AppendFormat("sides..................: {0}", sides);
+            sb.AppendLine();
+            sb.AppendFormat("hollowSides..........: {0}", hollowSides);
+            sb.AppendLine();
+            sb.AppendFormat("profileStart.........: {0}", profileStart);
+            sb.AppendLine();
+            sb.AppendFormat("profileEnd...........: {0}", profileEnd);
+            sb.AppendLine();
+            sb.AppendFormat("hollow...............: {0}", hollow);
+            sb.AppendLine();
+            sb.AppendFormat("twistBegin...........: {0}", twistBegin);
+            sb.AppendLine();
+            sb.AppendFormat("twistEnd.............: {0}", twistEnd);
+            sb.AppendLine();
+            sb.AppendFormat("topShearX............: {0}", topShearX);
+            sb.AppendLine();
+            sb.AppendFormat("topShearY............: {0}", topShearY);
+            sb.AppendLine();
+            sb.AppendFormat("pathCutBegin.........: {0}", pathCutBegin);
+            sb.AppendLine();
+            sb.AppendFormat("pathCutEnd...........: {0}", pathCutEnd);
+            sb.AppendLine();
+            sb.AppendFormat("dimpleBegin..........: {0}", dimpleBegin);
+            sb.AppendLine();
+            sb.AppendFormat("dimpleEnd............: {0}", dimpleEnd);
+            sb.AppendLine();
+            sb.AppendFormat("skew.................: {0}", skew);
+            sb.AppendLine();
+            sb.AppendFormat("holeSizeX............: {0}", holeSizeX);
+            sb.AppendLine();
+            sb.AppendFormat("holeSizeY............: {0}", holeSizeY);
+            sb.AppendLine();
+            sb.AppendFormat("taperX...............: {0}", taperX);
+            sb.AppendLine();
+            sb.AppendFormat("taperY...............: {0}", taperY);
+            sb.AppendLine();
+            sb.AppendFormat("radius...............: {0}", radius);
+            sb.AppendLine();
+            sb.AppendFormat("revolutions..........: {0}", revolutions);
+            sb.AppendLine();
+            sb.AppendFormat("stepsPerRevolution...: {0}", stepsPerRevolution);
+            sb.AppendLine();
+            sb.AppendFormat("sphereMode...........: {0}", sphereMode);
+            sb.AppendLine();
+            sb.AppendFormat("hasProfileCut........: {0}", HasProfileCut);
+            sb.AppendLine();
+            sb.AppendFormat("hasHollow............: {0}", HasHollow);
+            sb.AppendLine();
+            sb.AppendFormat("viewerMode...........: {0}", viewerMode);
 
-            return s;
+            return sb.ToString();
         }
 
         /// <summary>
@@ -1590,14 +1648,16 @@ namespace LibreMetaverse.PrimMesher
         /// </summary>
         public void Extrude(PathType pathType)
         {
-            var needEndFaces = false;
+            bool needEndFaces;
 
             coords = new List<Coord>();
             this.faces = new List<Face>();
 
             if (viewerMode)
             {
-                viewerFaces = new List<ViewerFace>();
+                // Pre-size viewerFaces to reduce growth allocations. Estimate: layers * verts * 2
+                // We'll estimate conservatively; path created later but this helps avoid many small resizes
+                viewerFaces = new List<ViewerFace>(64);
                 calcVertexNormals = true;
             }
 
@@ -1607,24 +1667,10 @@ namespace LibreMetaverse.PrimMesher
             var steps = 1;
 
             var length = pathCutEnd - pathCutBegin;
-            normalsProcessed = false;
-
-            if (viewerMode && sides == 3)
-                if (Math.Abs(taperX) > 0.01 || Math.Abs(taperY) > 0.01)
-                    steps = (int) (steps * 4.5 * length);
-
-            if (sphereMode)
-                HasProfileCut = profileEnd - profileStart < 0.4999f;
-            else
-                HasProfileCut = profileEnd - profileStart < 0.9999f;
-            HasHollow = this.hollow > 0.001f;
-
-            var twistBegin = this.twistBegin / 360.0f * twoPi;
-            var twistEnd = this.twistEnd / 360.0f * twoPi;
             var twistTotal = twistEnd - twistBegin;
             var twistTotalAbs = Math.Abs(twistTotal);
             if (twistTotalAbs > 0.01f)
-                steps += (int) (twistTotalAbs * 3.66); //  dahlia's magic number
+                steps += (int)(twistTotalAbs * 3.66); //  dahlia's magic number
 
             var hollow = this.hollow;
 
@@ -1654,7 +1700,7 @@ namespace LibreMetaverse.PrimMesher
                 switch (sides)
                 {
                     case 3:
-                        initialProfileRot = (float) Math.PI;
+                        initialProfileRot = (float)Math.PI;
                         if (hollowSides == 4)
                         {
                             if (hollow > 0.7f)
@@ -1667,14 +1713,14 @@ namespace LibreMetaverse.PrimMesher
                         }
                         break;
                     case 4:
-                        initialProfileRot = 0.25f * (float) Math.PI;
+                        initialProfileRot = 0.25f * (float)Math.PI;
                         if (hollowSides != 4)
                             hollow *= 0.707f;
                         break;
                     default:
                         if (sides > 4)
                         {
-                            initialProfileRot = (float) Math.PI;
+                            initialProfileRot = (float)Math.PI;
                             if (hollowSides == 4)
                             {
                                 if (hollow > 0.7f)
@@ -1702,7 +1748,7 @@ namespace LibreMetaverse.PrimMesher
                         }
                         break;
                     case 4:
-                        initialProfileRot = 1.25f * (float) Math.PI;
+                        initialProfileRot = 1.25f * (float)Math.PI;
                         if (hollowSides != 4)
                             hollow *= 0.707f;
                         break;
@@ -1753,7 +1799,6 @@ namespace LibreMetaverse.PrimMesher
 
             var lastCutNormal1 = new Coord();
             var lastCutNormal2 = new Coord();
-            var thisV = 0.0f;
             var lastV = 0.0f;
 
             var path = new Path
@@ -1781,315 +1826,254 @@ namespace LibreMetaverse.PrimMesher
             for (var nodeIndex = 0; nodeIndex < path.pathNodes.Count; nodeIndex++)
             {
                 var node = path.pathNodes[nodeIndex];
-                var newLayer = profile.Copy();
-                newLayer.Scale(node.xScale, node.yScale);
 
-                newLayer.AddRot(node.rotation);
-                newLayer.AddPos(node.position);
-
-                if (needEndFaces && nodeIndex == 0)
+                // Transform profile coords into a temporary pooled buffer to avoid copying entire Profile
+                var profileCount = profile.coords.Count;
+                var coordsLen = coords.Count;
+                var pool = ArrayPool<Coord>.Shared;
+                var tmp = pool.Rent(profileCount);
+                try
                 {
-                    newLayer.FlipNormals();
-
-                    // add the bottom faces to the viewerFaces list
-                    if (viewerMode)
+                    for (var ci = 0; ci < profileCount; ci++)
                     {
-                        var faceNormal = newLayer.faceNormal;
-                        var newViewerFace = new ViewerFace(profile.bottomFaceNumber);
-                        var numFaces = newLayer.faces.Count;
-                        var faces = newLayer.faces;
+                        var v = profile.coords[ci];
+                        v.X *= node.xScale;
+                        v.Y *= node.yScale;
+                        v *= node.rotation;
+                        v.X += node.position.X;
+                        v.Y += node.position.Y;
+                        v.Z += node.position.Z;
+                        tmp[ci] = v;
+                    }
 
-                        for (var i = 0; i < numFaces; i++)
+                    // append transformed coords
+                    for (var ci = 0; ci < profileCount; ci++) coords.Add(tmp[ci]);
+
+                    // normals
+                    if (calcVertexNormals)
+                    {
+                        for (var ni = 0; ni < profile.vertexNormals.Count; ni++)
                         {
-                            var face = faces[i];
-                            newViewerFace.v1 = newLayer.coords[face.v1];
-                            newViewerFace.v2 = newLayer.coords[face.v2];
-                            newViewerFace.v3 = newLayer.coords[face.v3];
-
-                            newViewerFace.coordIndex1 = face.v1;
-                            newViewerFace.coordIndex2 = face.v2;
-                            newViewerFace.coordIndex3 = face.v3;
-
-                            newViewerFace.n1 = faceNormal;
-                            newViewerFace.n2 = faceNormal;
-                            newViewerFace.n3 = faceNormal;
-
-                            newViewerFace.uv1 = newLayer.faceUVs[face.v1];
-                            newViewerFace.uv2 = newLayer.faceUVs[face.v2];
-                            newViewerFace.uv3 = newLayer.faceUVs[face.v3];
-
-                            if (pathType == PathType.Linear)
-                            {
-                                newViewerFace.uv1.Flip();
-                                newViewerFace.uv2.Flip();
-                                newViewerFace.uv3.Flip();
-                            }
-
-                            viewerFaces.Add(newViewerFace);
+                            var n = profile.vertexNormals[ni];
+                            n *= node.rotation;
+                            normals.Add(n);
                         }
                     }
-                } // if (nodeIndex == 0)
 
-                // append this layer
-
-                var coordsLen = coords.Count;
-                newLayer.AddValue2FaceVertexIndices(coordsLen);
-
-                coords.AddRange(newLayer.coords);
-
-                if (calcVertexNormals)
-                {
-                    newLayer.AddValue2FaceNormalIndices(normals.Count);
-                    normals.AddRange(newLayer.vertexNormals);
-                }
-
-                if (node.percentOfPath < pathCutBegin + 0.01f || node.percentOfPath > pathCutEnd - 0.01f)
-                    this.faces.AddRange(newLayer.faces);
-
-                // fill faces between layers
-
-                var numVerts = newLayer.coords.Count;
-                var newFace1 = new Face();
-                var newFace2 = new Face();
-
-                thisV = 1.0f - node.percentOfPath;
-
-                if (nodeIndex > 0)
-                {
-                    var startVert = coordsLen + 1;
-                    var endVert = coords.Count;
-
-                    if (sides < 5 || HasProfileCut || HasHollow)
-                        startVert--;
-
-                    for (var i = startVert; i < endVert; i++)
+                    // add profile faces with index offsets
+                    if (node.percentOfPath < pathCutBegin + 0.01f || node.percentOfPath > pathCutEnd - 0.01f)
                     {
-                        var iNext = i + 1;
-                        if (i == endVert - 1)
-                            iNext = startVert;
-
-                        var whichVert = i - startVert;
-
-                        newFace1.v1 = i;
-                        newFace1.v2 = i - numVerts;
-                        newFace1.v3 = iNext;
-
-                        newFace1.n1 = newFace1.v1;
-                        newFace1.n2 = newFace1.v2;
-                        newFace1.n3 = newFace1.v3;
-                        faces.Add(newFace1);
-
-                        newFace2.v1 = iNext;
-                        newFace2.v2 = i - numVerts;
-                        newFace2.v3 = iNext - numVerts;
-
-                        newFace2.n1 = newFace2.v1;
-                        newFace2.n2 = newFace2.v2;
-                        newFace2.n3 = newFace2.v3;
-                        faces.Add(newFace2);
-
-                        if (viewerMode)
+                        var normalsOffset = (normals != null) ? (normals.Count - profile.vertexNormals.Count) : 0;
+                        for (var fi = 0; fi < profile.faces.Count; fi++)
                         {
-                            // add the side faces to the list of viewerFaces here
+                            var f = profile.faces[fi];
+                            var nf = new Face
+                            {
+                                primFace = f.primFace,
+                                v1 = f.v1 + coordsLen,
+                                v2 = f.v2 + coordsLen,
+                                v3 = f.v3 + coordsLen,
+                                uv1 = f.uv1,
+                                uv2 = f.uv2,
+                                uv3 = f.uv3
+                            };
+                            if (calcVertexNormals)
+                            {
+                                nf.n1 = f.n1 + normalsOffset;
+                                nf.n2 = f.n2 + normalsOffset;
+                                nf.n3 = f.n3 + normalsOffset;
+                            }
+                            faces.Add(nf);
+                        }
+                    }
 
-                            var primFaceNum = profile.faceNumbers[whichVert];
-                            if (!needEndFaces)
-                                primFaceNum -= 1;
+                    // build side faces between layers
+                    var numVerts = profileCount;
+                    var thisV = 1.0f - node.percentOfPath;
+                    if (nodeIndex > 0)
+                    {
+                        var startVert = coordsLen + 1;
+                        var endVert = coords.Count;
+                        if (sides < 5 || HasProfileCut || HasHollow) startVert--;
 
-                            var newViewerFace1 = new ViewerFace(primFaceNum);
-                            var newViewerFace2 = new ViewerFace(primFaceNum);
+                        for (var i = startVert; i < endVert; i++)
+                        {
+                            var iNext = i == endVert - 1 ? startVert : i + 1;
+                            var whichVert = i - startVert;
+
+                            var newFace1 = new Face { v1 = i, v2 = i - numVerts, v3 = iNext };
+                            newFace1.n1 = newFace1.v1; newFace1.n2 = newFace1.v2; newFace1.n3 = newFace1.v3;
+                            faces.Add(newFace1);
+
+                            var newFace2 = new Face { v1 = iNext, v2 = i - numVerts, v3 = iNext - numVerts };
+                            newFace2.n1 = newFace2.v1; newFace2.n2 = newFace2.v2; newFace2.n3 = newFace2.v3;
+                            faces.Add(newFace2);
+
+                            if (!viewerMode) continue;
+
+                            int primFaceNum = 0;
+                            if (profile.faceNumbers != null && whichVert >= 0 && whichVert < profile.faceNumbers.Count)
+                                primFaceNum = profile.faceNumbers[whichVert];
+                            else if (profile.faceNumbers != null && profile.faceNumbers.Count > 0)
+                                primFaceNum = profile.faceNumbers[0];
+                            if (!needEndFaces) primFaceNum = Math.Max(0, primFaceNum - 1);
+                            var vf1 = new ViewerFace(primFaceNum); var vf2 = new ViewerFace(primFaceNum);
 
                             var uIndex = whichVert;
-                            if (!HasHollow && sides > 4 && uIndex < newLayer.us.Count - 1)
-                                uIndex++;
-
-                            var u1 = newLayer.us[uIndex];
-                            var u2 = 1.0f;
-                            if (uIndex < newLayer.us.Count - 1)
-                                u2 = newLayer.us[uIndex + 1];
-
-                            if (whichVert == cut1Vert || whichVert == cut2Vert)
+                            if (!HasHollow && sides > 4 && profile.us != null && uIndex < profile.us.Count - 1) uIndex++;
+                            // clamp uIndex
+                            if (profile.us == null || profile.us.Count == 0)
                             {
-                                u1 = 0.0f;
-                                u2 = 1.0f;
+                                // no uv data available
+                                vf1.uv1.U = vf1.uv2.U = vf1.uv3.U = 0f;
+                                vf2.uv1.U = vf2.uv2.U = vf2.uv3.U = 0f;
                             }
-                            else if (sides < 5)
+                            else
                             {
-                                if (whichVert < profile.numOuterVerts)
+                                if (uIndex < 0) uIndex = 0;
+                                if (uIndex >= profile.us.Count) uIndex = profile.us.Count - 1;
+                                var u1 = profile.us[uIndex];
+                                var u2 = (uIndex < profile.us.Count - 1) ? profile.us[uIndex + 1] : 1.0f;
+                                if (whichVert == cut1Vert || whichVert == cut2Vert) { u1 = 0f; u2 = 1f; }
+                                else if (sides < 5 && whichVert < profile.numOuterVerts)
                                 {
-                                    // boxes and prisms have one texture face per side of the prim, so the U values have to be scaled
-                                    // to reflect the entire texture width
-                                    u1 *= sides;
-                                    u2 *= sides;
-                                    u2 -= (int) u1;
-                                    u1 -= (int) u1;
-                                    if (u2 < 0.1f)
-                                        u2 = 1.0f;
+                                    u1 *= sides; u2 *= sides;
+                                    u2 -= (int)u1; u1 -= (int)u1; if (u2 < 0.1f) u2 = 1f;
                                 }
-                            }
-
-                            if (sphereMode)
-                                if (whichVert != cut1Vert && whichVert != cut2Vert)
+                                if (sphereMode && whichVert != cut1Vert && whichVert != cut2Vert)
                                 {
-                                    u1 = u1 * 2.0f - 1.0f;
-                                    u2 = u2 * 2.0f - 1.0f;
-
-                                    if (whichVert >= newLayer.numOuterVerts)
-                                    {
-                                        u1 -= hollow;
-                                        u2 -= hollow;
-                                    }
+                                    u1 = u1 * 2f - 1f; u2 = u2 * 2f - 1f; if (whichVert >= profile.numOuterVerts) { u1 -= hollow; u2 -= hollow; }
                                 }
 
-                            newViewerFace1.uv1.U = u1;
-                            newViewerFace1.uv2.U = u1;
-                            newViewerFace1.uv3.U = u2;
+                                vf1.uv1.U = u1; vf1.uv2.U = u1; vf1.uv3.U = u2; vf1.uv1.V = thisV; vf1.uv2.V = lastV; vf1.uv3.V = thisV;
+                                vf2.uv1.U = u2; vf2.uv2.U = u1; vf2.uv3.U = u2; vf2.uv1.V = thisV; vf2.uv2.V = lastV; vf2.uv3.V = lastV;
+                            }
 
-                            newViewerFace1.uv1.V = thisV;
-                            newViewerFace1.uv2.V = lastV;
-                            newViewerFace1.uv3.V = thisV;
-
-                            newViewerFace2.uv1.U = u2;
-                            newViewerFace2.uv2.U = u1;
-                            newViewerFace2.uv3.U = u2;
-
-                            newViewerFace2.uv1.V = thisV;
-                            newViewerFace2.uv2.V = lastV;
-                            newViewerFace2.uv3.V = lastV;
-
-                            newViewerFace1.v1 = coords[newFace1.v1];
-                            newViewerFace1.v2 = coords[newFace1.v2];
-                            newViewerFace1.v3 = coords[newFace1.v3];
-
-                            newViewerFace2.v1 = coords[newFace2.v1];
-                            newViewerFace2.v2 = coords[newFace2.v2];
-                            newViewerFace2.v3 = coords[newFace2.v3];
-
-                            newViewerFace1.coordIndex1 = newFace1.v1;
-                            newViewerFace1.coordIndex2 = newFace1.v2;
-                            newViewerFace1.coordIndex3 = newFace1.v3;
-
-                            newViewerFace2.coordIndex1 = newFace2.v1;
-                            newViewerFace2.coordIndex2 = newFace2.v2;
-                            newViewerFace2.coordIndex3 = newFace2.v3;
+                            // assign coords
+                            vf1.v1 = coords[newFace1.v1]; vf1.v2 = coords[newFace1.v2]; vf1.v3 = coords[newFace1.v3];
+                            vf2.v1 = coords[newFace2.v1]; vf2.v2 = coords[newFace2.v2]; vf2.v3 = coords[newFace2.v3];
+                            vf1.coordIndex1 = newFace1.v1; vf1.coordIndex2 = newFace1.v2; vf1.coordIndex3 = newFace1.v3;
+                            vf2.coordIndex1 = newFace2.v1; vf2.coordIndex2 = newFace2.v2; vf2.coordIndex3 = newFace2.v3;
 
                             // profile cut faces
                             if (whichVert == cut1Vert)
                             {
-                                newViewerFace1.primFaceNumber = cut1FaceNumber;
-                                newViewerFace2.primFaceNumber = cut1FaceNumber;
-                                newViewerFace1.n1 = newLayer.cutNormal1;
-                                newViewerFace1.n2 = newViewerFace1.n3 = lastCutNormal1;
-
-                                newViewerFace2.n1 = newViewerFace2.n3 = newLayer.cutNormal1;
-                                newViewerFace2.n2 = lastCutNormal1;
+                                var tcn1 = profile.cutNormal1; tcn1 *= node.rotation;
+                                vf1.primFaceNumber = cut1FaceNumber; vf2.primFaceNumber = cut1FaceNumber;
+                                vf1.n1 = tcn1; vf1.n2 = vf1.n3 = lastCutNormal1; vf2.n1 = vf2.n3 = tcn1; vf2.n2 = lastCutNormal1;
                             }
                             else if (whichVert == cut2Vert)
                             {
-                                newViewerFace1.primFaceNumber = cut2FaceNumber;
-                                newViewerFace2.primFaceNumber = cut2FaceNumber;
-                                newViewerFace1.n1 = newLayer.cutNormal2;
-                                newViewerFace1.n2 = lastCutNormal2;
-                                newViewerFace1.n3 = lastCutNormal2;
-
-                                newViewerFace2.n1 = newLayer.cutNormal2;
-                                newViewerFace2.n3 = newLayer.cutNormal2;
-                                newViewerFace2.n2 = lastCutNormal2;
+                                var tcn2 = profile.cutNormal2; tcn2 *= node.rotation;
+                                vf1.primFaceNumber = cut2FaceNumber; vf2.primFaceNumber = cut2FaceNumber;
+                                vf1.n1 = tcn2; vf1.n2 = lastCutNormal2; vf1.n3 = lastCutNormal2; vf2.n1 = tcn2; vf2.n3 = tcn2; vf2.n2 = lastCutNormal2;
                             }
-
-                            else // outer and hollow faces
+                            else
                             {
-                                if (sides < 5 && whichVert < newLayer.numOuterVerts ||
-                                    hollowSides < 5 && whichVert >= newLayer.numOuterVerts)
+                                // prefer per-vertex normals when available, otherwise compute face normals
+                                bool usePerVertexNormals = (sides < 5 && whichVert < profile.numOuterVerts) || (hollowSides < 5 && whichVert >= profile.numOuterVerts);
+                                if (usePerVertexNormals)
                                 {
-                                    // looks terrible when path is twisted... need vertex normals here
-                                    newViewerFace1.CalcSurfaceNormal();
-                                    newViewerFace2.CalcSurfaceNormal();
+                                    vf1.CalcSurfaceNormal(); vf2.CalcSurfaceNormal();
                                 }
                                 else
                                 {
-                                    newViewerFace1.n1 = normals[newFace1.n1];
-                                    newViewerFace1.n2 = normals[newFace1.n2];
-                                    newViewerFace1.n3 = normals[newFace1.n3];
+                                    // safe access to normals list
+                                    int nIndex1 = newFace1.n1;
+                                    int nIndex2 = newFace1.n2;
+                                    int nIndex3 = newFace1.n3;
 
-                                    newViewerFace2.n1 = normals[newFace2.n1];
-                                    newViewerFace2.n2 = normals[newFace2.n2];
-                                    newViewerFace2.n3 = normals[newFace2.n3];
+                                    if (normals != null && normals.Count > 0)
+                                    {
+                                        if (nIndex1 < 0 || nIndex1 >= normals.Count) nIndex1 = 0;
+                                        if (nIndex2 < 0 || nIndex2 >= normals.Count) nIndex2 = 0;
+                                        if (nIndex3 < 0 || nIndex3 >= normals.Count) nIndex3 = 0;
+
+                                        vf1.n1 = normals[nIndex1]; vf1.n2 = normals[nIndex2]; vf1.n3 = normals[nIndex3];
+
+                                        nIndex1 = newFace2.n1; nIndex2 = newFace2.n2; nIndex3 = newFace2.n3;
+                                        if (nIndex1 < 0 || nIndex1 >= normals.Count) nIndex1 = 0;
+                                        if (nIndex2 < 0 || nIndex2 >= normals.Count) nIndex2 = 0;
+                                        if (nIndex3 < 0 || nIndex3 >= normals.Count) nIndex3 = 0;
+
+                                        vf2.n1 = normals[nIndex1]; vf2.n2 = normals[nIndex2]; vf2.n3 = normals[nIndex3];
+                                    }
+                                    else
+                                    {
+                                        // fallback: compute normals from coords
+                                        vf1.CalcSurfaceNormal(); vf2.CalcSurfaceNormal();
+                                    }
                                 }
                             }
 
-                            viewerFaces.Add(newViewerFace1);
-                            viewerFaces.Add(newViewerFace2);
+                            viewerFaces.Add(vf1); viewerFaces.Add(vf2);
                         }
                     }
-                }
 
-                lastCutNormal1 = newLayer.cutNormal1;
-                lastCutNormal2 = newLayer.cutNormal2;
-                lastV = thisV;
+                    lastCutNormal1 = profile.cutNormal1; lastCutNormal2 = profile.cutNormal2; lastV = thisV;
 
-                if (needEndFaces && nodeIndex == path.pathNodes.Count - 1 && viewerMode)
-                {
-                    // add the top faces to the viewerFaces list here
-                    var faceNormal = newLayer.faceNormal;
-                    var newViewerFace = new ViewerFace(0);
-                    var numFaces = newLayer.faces.Count;
-                    var faces = newLayer.faces;
-
-                    for (var i = 0; i < numFaces; i++)
+                    if (needEndFaces && nodeIndex == path.pathNodes.Count - 1 && viewerMode)
                     {
-                        var face = faces[i];
-                        newViewerFace.v1 = newLayer.coords[face.v1 - coordsLen];
-                        newViewerFace.v2 = newLayer.coords[face.v2 - coordsLen];
-                        newViewerFace.v3 = newLayer.coords[face.v3 - coordsLen];
-
-                        newViewerFace.coordIndex1 = face.v1 - coordsLen;
-                        newViewerFace.coordIndex2 = face.v2 - coordsLen;
-                        newViewerFace.coordIndex3 = face.v3 - coordsLen;
-
-                        newViewerFace.n1 = faceNormal;
-                        newViewerFace.n2 = faceNormal;
-                        newViewerFace.n3 = faceNormal;
-
-                        newViewerFace.uv1 = newLayer.faceUVs[face.v1 - coordsLen];
-                        newViewerFace.uv2 = newLayer.faceUVs[face.v2 - coordsLen];
-                        newViewerFace.uv3 = newLayer.faceUVs[face.v3 - coordsLen];
-
-                        if (pathType == PathType.Linear)
+                        var faceNormal = profile.faceNormal;
+                        for (var fi = 0; fi < profile.faces.Count; fi++)
                         {
-                            newViewerFace.uv1.Flip();
-                            newViewerFace.uv2.Flip();
-                            newViewerFace.uv3.Flip();
-                        }
+                            var f = profile.faces[fi];
 
-                        viewerFaces.Add(newViewerFace);
+                            // profile.faces use indices relative to profile.coords (0..profileCount-1).
+                            // tmp[] contains the transformed profile.coords in the same order, so index tmp by f.v* directly.
+                            var nv = new ViewerFace(0);
+                            nv.v1 = tmp[f.v1];
+                            nv.v2 = tmp[f.v2];
+                            nv.v3 = tmp[f.v3];
+
+                            // coordIndex should be the absolute index in the global coords list (coordsLen + profile-local index)
+                            nv.coordIndex1 = f.v1 + coordsLen;
+                            nv.coordIndex2 = f.v2 + coordsLen;
+                            nv.coordIndex3 = f.v3 + coordsLen;
+
+                            nv.n1 = faceNormal;
+                            nv.n2 = faceNormal;
+                            nv.n3 = faceNormal;
+
+                            // faceUVs are parallel to profile.coords, so index by the profile-local indices
+                            nv.uv1 = profile.faceUVs[f.v1];
+                            nv.uv2 = profile.faceUVs[f.v2];
+                            nv.uv3 = profile.faceUVs[f.v3];
+
+                            if (pathType == PathType.Linear)
+                            {
+                                nv.uv1.Flip();
+                                nv.uv2.Flip();
+                                nv.uv3.Flip();
+                            }
+
+                            viewerFaces.Add(nv);
+                        }
                     }
                 }
-            } // for (int nodeIndex = 0; nodeIndex < path.pathNodes.Count; nodeIndex++)
+                finally { pool.Return(tmp); }
+            }
         }
 
-
         /// <summary>
-        ///     DEPRICATED - use Extrude(PathType.Linear) instead
         ///     Extrudes a profile along a straight line path. Used for prim types box, cylinder, and prism.
         /// </summary>
+        [Obsolete("Use Extrude(PathType.Linear")]
         public void ExtrudeLinear()
         {
             Extrude(PathType.Linear);
         }
 
-
         /// <summary>
-        ///     DEPRICATED - use Extrude(PathType.Circular) instead
         ///     Extrude a profile into a circular path prim mesh. Used for prim types torus, tube, and ring.
         /// </summary>
+        [Obsolete("Use Extrude(PathType.Circular")]
         public void ExtrudeCircular()
         {
             Extrude(PathType.Circular);
         }
 
-
-        private Coord SurfaceNormal(Coord c1, Coord c2, Coord c3)
+        private static Coord SurfaceNormal(Coord c1, Coord c2, Coord c3)
         {
             var edge1 = new Coord(c2.X - c1.X, c2.Y - c1.Y, c2.Z - c1.Z);
             var edge2 = new Coord(c3.X - c1.X, c3.Y - c1.Y, c3.Z - c1.Z);
@@ -2149,10 +2133,10 @@ namespace LibreMetaverse.PrimMesher
                 viewerMode = viewerMode,
                 numPrimFaces = numPrimFaces,
                 errorMessage = errorMessage,
-                coords = new List<Coord>(coords),
-                faces = new List<Face>(faces),
-                viewerFaces = new List<ViewerFace>(viewerFaces),
-                normals = new List<Coord>(normals)
+                coords = coords != null ? new List<Coord>(coords) : null,
+                faces = faces != null ? new List<Face>(faces) : null,
+                viewerFaces = viewerFaces != null ? new List<ViewerFace>(viewerFaces) : null,
+                normals = normals != null ? new List<Coord>(normals) : null
             };
 
 
@@ -2172,7 +2156,7 @@ namespace LibreMetaverse.PrimMesher
             var numFaces = faces.Count;
 
             if (!calcVertexNormals)
-                normals = new List<Coord>();
+                normals = new List<Coord>(numFaces);
 
             for (var i = 0; i < numFaces; i++)
             {
@@ -2197,13 +2181,11 @@ namespace LibreMetaverse.PrimMesher
         /// <param name="z"></param>
         public void AddPos(float x, float y, float z)
         {
-            int i;
             var numVerts = coords.Count;
-            Coord vert;
 
-            for (i = 0; i < numVerts; i++)
+            for (var i = 0; i < numVerts; i++)
             {
-                vert = coords[i];
+                var vert = coords[i];
                 vert.X += x;
                 vert.Y += y;
                 vert.Z += z;
@@ -2214,7 +2196,7 @@ namespace LibreMetaverse.PrimMesher
             {
                 var numViewerFaces = viewerFaces.Count;
 
-                for (i = 0; i < numViewerFaces; i++)
+                for (var i = 0; i < numViewerFaces; i++)
                 {
                     var v = viewerFaces[i];
                     v.AddPos(x, y, z);
@@ -2229,16 +2211,15 @@ namespace LibreMetaverse.PrimMesher
         /// <param name="q"></param>
         public void AddRot(Quat q)
         {
-            int i;
             var numVerts = coords.Count;
 
-            for (i = 0; i < numVerts; i++)
+            for (var i = 0; i < numVerts; i++)
                 coords[i] *= q;
 
             if (normals != null)
             {
                 var numNormals = normals.Count;
-                for (i = 0; i < numNormals; i++)
+                for (var i = 0; i < numNormals; i++)
                     normals[i] *= q;
             }
 
@@ -2246,7 +2227,7 @@ namespace LibreMetaverse.PrimMesher
             {
                 var numViewerFaces = viewerFaces.Count;
 
-                for (i = 0; i < numViewerFaces; i++)
+                for (var i = 0; i < numViewerFaces; i++)
                 {
                     var v = viewerFaces[i];
                     v.v1 *= q;
@@ -2261,14 +2242,12 @@ namespace LibreMetaverse.PrimMesher
             }
         }
 
-#if VERTEX_INDEXER
         public VertexIndexer GetVertexIndexer()
         {
-            if (viewerMode && viewerFaces.Count > 0)
+            if (viewerMode && viewerFaces != null && viewerFaces.Count > 0)
                 return new VertexIndexer(this);
             return null;
         }
-#endif
 
         /// <summary>
         ///     Scales the mesh
@@ -2278,18 +2257,16 @@ namespace LibreMetaverse.PrimMesher
         /// <param name="z"></param>
         public void Scale(float x, float y, float z)
         {
-            int i;
             var numVerts = coords.Count;
-            //Coord vert;
 
             var m = new Coord(x, y, z);
-            for (i = 0; i < numVerts; i++)
+            for (var i = 0; i < numVerts; i++)
                 coords[i] *= m;
 
             if (viewerFaces != null)
             {
                 var numViewerFaces = viewerFaces.Count;
-                for (i = 0; i < numViewerFaces; i++)
+                for (var i = 0; i < numViewerFaces; i++)
                 {
                     var v = viewerFaces[i];
                     v.v1 *= m;
@@ -2312,18 +2289,17 @@ namespace LibreMetaverse.PrimMesher
                 return;
             var fileName = name + "_" + title + ".raw";
             var completePath = System.IO.Path.Combine(path, fileName);
-            var sw = new StreamWriter(completePath);
-
-            for (var i = 0; i < faces.Count; i++)
+            using (var sw = new StreamWriter(completePath))
             {
-                var s = coords[faces[i].v1].ToString();
-                s += " " + coords[faces[i].v2];
-                s += " " + coords[faces[i].v3];
+                for (var i = 0; i < faces.Count; i++)
+                {
+                    var s = coords[faces[i].v1].ToString();
+                    s += " " + coords[faces[i].v2];
+                    s += " " + coords[faces[i].v3];
 
-                sw.WriteLine(s);
+                    sw.WriteLine(s);
+                }
             }
-
-            sw.Close();
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -97,12 +97,12 @@ namespace OpenMetaverse.Assets
             }
             catch (Exception e)
             {
-                Logger.Log("[OarFile] Error loading OAR file: " + e.Message, Helpers.LogLevel.Error);
+                Logger.Error("[OarFile] Error loading OAR file: " + e.Message);
                 return;
             }
 
             if (failedAssetRestores > 0)
-                Logger.Log($"[OarFile]: Failed to load {failedAssetRestores} assets", Helpers.LogLevel.Warning);
+                Logger.Warn($"[OarFile]: Failed to load {failedAssetRestores} assets");
         }
 
         private static bool LoadAsset(string assetPath, byte[] data, AssetLoadedCallback assetCallback, long bytesRead, long totalBytes)
@@ -113,9 +113,8 @@ namespace OpenMetaverse.Assets
 
             if (i == -1)
             {
-                Logger.Log(
-                    $"[OarFile]: Could not find extension information in asset path {assetPath} since it's missing the separator " +
-                    $"{ArchiveConstants.ASSET_EXTENSION_SEPARATOR}.  Skipping", Helpers.LogLevel.Warning);
+                Logger.Warn($"[OarFile]: Could not find extension information in asset path {assetPath} since it's missing the separator " +
+                    $"{ArchiveConstants.ASSET_EXTENSION_SEPARATOR}.  Skipping");
                 return false;
             }
 
@@ -163,7 +162,7 @@ namespace OpenMetaverse.Assets
                         asset = new AssetTexture(uuid, data);
                         break;
                     default:
-                        Logger.Log("[OarFile] Unhandled asset type " + assetType, Helpers.LogLevel.Error);
+                        Logger.Error("[OarFile] Unhandled asset type " + assetType);
                         break;
                 }
 
@@ -174,7 +173,7 @@ namespace OpenMetaverse.Assets
                 }
             }
 
-            Logger.Log("[OarFile] Failed to load asset", Helpers.LogLevel.Warning);
+            Logger.Warn("[OarFile] Failed to load asset");
             return false;
         }
 
@@ -191,7 +190,7 @@ namespace OpenMetaverse.Assets
             }
             catch (Exception ex)
             {
-                Logger.Log("[OarFile] Failed to parse region settings file " + filePath + ": " + ex.Message, Helpers.LogLevel.Warning);
+                Logger.Warn("[OarFile] Failed to parse region settings file " + filePath + ": " + ex.Message);
             }
 
             // Parse the region name out of the filename
@@ -230,10 +229,11 @@ namespace OpenMetaverse.Assets
                     }
                     else
                     {
-                        Logger.Log("[OarFile] RAW32 terrain file " + filePath + " has the wrong number of bytes: " + data.Length,
-                            Helpers.LogLevel.Warning);
+                        Logger.Warn("[OarFile] RAW32 terrain file " + filePath + " has the wrong number of bytes: " + data.Length);
                     }
                     break;
+            // commented out - maybe for later
+            /*                  
                 case ".ter":
                     // Terragen
                 case ".raw":
@@ -250,8 +250,9 @@ namespace OpenMetaverse.Assets
                 case ".tif":
                 case ".tiff":
                     // TIFF
+            */
                 default:
-                    Logger.Log("[OarFile] Unrecognized terrain format in " + filePath, Helpers.LogLevel.Warning);
+                    Logger.Warn("[OarFile] Unrecognized terrain format in " + filePath);
                     break;
             }
 
@@ -278,15 +279,13 @@ namespace OpenMetaverse.Assets
                 foreach (XmlNode node in rootNode.ChildNodes)
                 {
                     AssetPrim linkset = new AssetPrim(node.OuterXml);
-                    if (linkset != null)
-                        objectCallback(linkset, bytesRead, totalBytes);
+                    objectCallback(linkset, bytesRead, totalBytes);
                 }
             }
             else
             {
                 AssetPrim linkset = new AssetPrim(rootNode.OuterXml);
-                if (linkset != null)
-                    objectCallback(linkset, bytesRead, totalBytes);
+                objectCallback(linkset, bytesRead, totalBytes);
             }
         }
 
@@ -335,9 +334,9 @@ namespace OpenMetaverse.Assets
         {
             if (Directory.Exists(terrainPath))
                 Directory.Delete(terrainPath, true);
-            Thread.Sleep(100);
+
             Directory.CreateDirectory(terrainPath);
-            Thread.Sleep(100);
+
             FileInfo file = new FileInfo(Path.Combine(terrainPath, sim.Name + ".r32"));
             FileStream s = file.Open(FileMode.Create, FileAccess.Write);
             SaveTerrainStream(s, sim);
@@ -368,9 +367,9 @@ namespace OpenMetaverse.Assets
         {
             if (Directory.Exists(parcelPath))
                 Directory.Delete(parcelPath, true);
-            Thread.Sleep(100);
+
             Directory.CreateDirectory(parcelPath);
-            Thread.Sleep(100);
+
             sim.Parcels.ForEach(parcel =>
                 {
                     UUID globalID = UUID.Random();
@@ -451,10 +450,9 @@ namespace OpenMetaverse.Assets
         {
             if (Directory.Exists(settingsPath))
                 Directory.Delete(settingsPath, true);
-            Thread.Sleep(100);
-            Directory.CreateDirectory(settingsPath);
-            Thread.Sleep(100);
 
+            Directory.CreateDirectory(settingsPath);
+            
             RegionSettings settings = new RegionSettings();
             //settings.AgentLimit;
             settings.AllowDamage = (sim.Flags & RegionFlags.AllowDamage) == RegionFlags.AllowDamage;
@@ -495,16 +493,15 @@ namespace OpenMetaverse.Assets
             // Delete all old linkset files
             try { Directory.Delete(primsPath, true); }
             catch (Exception) { }
-
-            Thread.Sleep(100);
+            
             // Create a new folder for the linkset files
             try { Directory.CreateDirectory(primsPath); }
             catch (Exception ex)
             {
-                Logger.Log("Failed saving prims: " + ex.Message, Helpers.LogLevel.Error);
+                Logger.Error("Failed saving prims: " + ex.Message);
                 return;
             }
-            Thread.Sleep(100);
+
             try
             {
                 foreach (AssetPrim assetPrim in prims)
@@ -552,16 +549,13 @@ namespace OpenMetaverse.Assets
             // Delete the assets folder
             try { Directory.Delete(assetsPath, true); }
             catch (Exception) { }
-            Thread.Sleep(100);
 
             // Create a new assets folder
             try { Directory.CreateDirectory(assetsPath); }
             catch (Exception ex)
             {
-                Logger.Log("Failed saving assets: " + ex.Message, Helpers.LogLevel.Error);
-                return;
+                Logger.Error("Failed saving assets: " + ex.Message);
             }
-            Thread.Sleep(100);
         }
 
         public static void SaveAssets(AssetManager assetManager, AssetType assetType, IList<UUID> assets, string assetsPath)
@@ -624,7 +618,7 @@ namespace OpenMetaverse.Assets
             }
             AllPropertiesReceived.WaitOne(5000 + 350 * assets.Count);
 
-            Logger.Log("Copied " + count + " textures to the asset archive folder", Helpers.LogLevel.Info);
+            Logger.Info("Copied " + count + " textures to the asset archive folder");
         }
 
         public static void SaveSimAssets(AssetManager assetManager, AssetType assetType, UUID assetID, UUID itemID, UUID primID, string assetsPath)
@@ -650,7 +644,7 @@ namespace OpenMetaverse.Assets
             });
             AllPropertiesReceived.WaitOne(5000);
 
-            Logger.Log("Copied " + count + " textures to the asset archive folder", Helpers.LogLevel.Info);
+            Logger.Info("Copied " + count + " textures to the asset archive folder");
         }
 
         static void SavePrim(AssetPrim prim, string filename)
@@ -669,7 +663,7 @@ namespace OpenMetaverse.Assets
             }
             catch (Exception ex)
             {
-                Logger.Log("Failed saving linkset: " + ex.Message, Helpers.LogLevel.Error);
+                Logger.Error("Failed saving linkset: " + ex.Message);
             }
         }
 
@@ -745,7 +739,7 @@ namespace OpenMetaverse.Assets
             WriteUUID(writer, "UUID", prim.ID);
             writer.WriteElementString("LocalId", prim.LocalID.ToString());
             writer.WriteElementString("Name", prim.Name);
-            writer.WriteElementString("Material", ((int)prim.Material).ToString());
+            writer.WriteElementString("Material", (prim.Material).ToString());
             writer.WriteElementString("RegionHandle", prim.RegionHandle.ToString());
             writer.WriteElementString("ScriptAccessPin", prim.RemoteScriptAccessPIN.ToString());
 
@@ -833,7 +827,7 @@ namespace OpenMetaverse.Assets
             writer.WriteElementString("CreationDate", ((int)Utils.DateTimeToUnixTime(prim.CreationDate)).ToString());
             writer.WriteElementString("Category", "0");
             writer.WriteElementString("SalePrice", prim.SalePrice.ToString());
-            writer.WriteElementString("ObjectSaleType", ((int)prim.SaleType).ToString());
+            writer.WriteElementString("ObjectSaleType", (prim.SaleType).ToString());
             writer.WriteElementString("OwnershipCost", "0");
             WriteUUID(writer, "GroupID", prim.GroupID);
             WriteUUID(writer, "OwnerID", prim.OwnerID);
@@ -878,3 +872,4 @@ namespace OpenMetaverse.Assets
         #endregion Archive Saving
     }
 }
+

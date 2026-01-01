@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2006-2016, openmetaverse.co
- * Copyright (c) 2021-2024, Sjofn LLC.
+ * Copyright (c) 2021-2025, Sjofn LLC.
  * All rights reserved.
  *
  * - Redistribution and use in source and binary forms, with or without 
@@ -31,14 +31,13 @@ using System.Net.Sockets;
 using System.Text;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Xml;
 using OpenMetaverse.StructuredData;
 using OpenMetaverse;
-using OpenMetaverse.Http;
 using OpenMetaverse.Interfaces;
 using OpenMetaverse.Messages.Linden;
 using System.Net.Http;
-using System.Threading.Tasks;
 
 namespace LibreMetaverse.Voice.Vivox
 {
@@ -68,7 +67,7 @@ namespace LibreMetaverse.Voice.Vivox
         TypeC
     }
 
-    public partial class VoiceManager
+    public partial class VoiceManager : IDisposable
     {
         public const int VOICE_MAJOR_VERSION = 1;
         public const string DAEMON_ARGS = " -p tcp -h -c -ll ";
@@ -248,7 +247,7 @@ namespace LibreMetaverse.Voice.Vivox
 
                 return _commandCookie - 1;
             }
-            Logger.Log("VoiceManager.RequestCaptureDevices() called when the daemon pipe is disconnected", Helpers.LogLevel.Error, _client);
+            Logger.Error("VoiceManager.RequestCaptureDevices() called when the daemon pipe is disconnected", _client);
             return -1;
         }
 
@@ -261,7 +260,7 @@ namespace LibreMetaverse.Voice.Vivox
 
                 return _commandCookie - 1;
             }
-            Logger.Log("VoiceManager.RequestRenderDevices() called when the daemon pipe is disconnected", Helpers.LogLevel.Error, _client);
+            Logger.Error("VoiceManager.RequestRenderDevices() called when the daemon pipe is disconnected", _client);
             return -1;
         }
 
@@ -299,12 +298,12 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.CreateConnector() called when the daemon pipe is disconnected", Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.CreateConnector() called when the daemon pipe is disconnected", _client);
                 return -1;
             }
         }
 
-        private bool RequestVoiceInternal(string me, DownloadCompleteHandler callback, string capsName)
+        private bool RequestVoiceInternal(string me, Func<HttpResponseMessage, byte[], Task> callbackAsync, string capsName)
         {
             if (_enabled && _client.Network.Connected)
             {
@@ -314,21 +313,48 @@ namespace LibreMetaverse.Voice.Vivox
 
                     if (cap != null)
                     {
-                        var req = _client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, new OSDMap(),
-                            CancellationToken.None, callback);
+                        // Use the newer Task-based PostAsync overload and invoke the modern async callback when complete
+                        Task.Run(async () =>
+                        {
+                            try
+                            {
+                                var result = await _client.HttpCapsClient.PostAsync(cap, OSDFormat.Xml, new OSDMap(), CancellationToken.None).ConfigureAwait(false);
+                                try
+                                {
+                                    if (callbackAsync != null)
+                                        await callbackAsync(result.response, result.data).ConfigureAwait(false);
+                                }
+                                catch (Exception cbEx)
+                                {
+                                    Logger.Warn($"VoiceManager.{me}(): callback threw an exception: {cbEx}", cbEx, _client);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                // Post failed � try to invoke callback with nulls so it can handle the failure if desired
+                                try
+                                {
+                                    if (callbackAsync != null)
+                                        await callbackAsync(null, null).ConfigureAwait(false);
+                                }
+                                catch (Exception cbEx)
+                                {
+                                    Logger.Warn($"VoiceManager.{me}(): callback threw an exception after failed POST: {cbEx}", cbEx, _client);
+                                }
+
+                                Logger.Warn($"VoiceManager.{me}(): POST failed: {ex.Message}", ex, _client);
+                            }
+                        }, CancellationToken.None);
 
                         return true;
                     }
-                    Logger.Log($"VoiceManager.{me}(): {capsName} capability is missing",
-                        Helpers.LogLevel.Info, _client);
+                    Logger.Info($"VoiceManager.{me}(): {capsName} capability is missing", _client);
                     return false;
                 }
             }
 
-            Logger.Log("VoiceManager.RequestVoiceInternal(): Voice system is currently disabled", 
-                       Helpers.LogLevel.Info, _client);
+            Logger.Info("VoiceManager.RequestVoiceInternal(): Voice system is currently disabled", _client);
             return false;
-            
         }
 
         public bool RequestProvisionAccount()
@@ -339,6 +365,60 @@ namespace LibreMetaverse.Voice.Vivox
         public bool RequestParcelVoiceInfo()
         {
             return RequestVoiceInternal("RequestParcelVoiceInfo", ParcelVoiceInfoResponse, "ParcelVoiceInfoRequest");
+        }
+
+        private async Task ProvisionCapsResponse(HttpResponseMessage httpResponse, byte[] responseData)
+        {
+            if (httpResponse == null || responseData == null)
+            {
+                Logger.Warn("Failed to provision voice capability: empty response", _client);
+                return;
+            }
+
+            try
+            {
+                var response = OSDParser.Deserialize(responseData);
+                if (!(response is OSDMap respMap)) return;
+
+                if (OnProvisionAccount == null) return;
+                try { OnProvisionAccount(respMap["username"].AsString(), respMap["password"].AsString()); }
+                catch (Exception e) { Logger.Error(e.Message, e, _client); }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("Failed to provision voice capability: " + ex.Message, ex, _client);
+            }
+        }
+
+        private async Task ParcelVoiceInfoResponse(HttpResponseMessage httpResponse, byte[] responseData)
+        {
+            if (httpResponse == null || responseData == null)
+            {
+                Logger.Warn("Failed to retrieve voice info: empty response", _client);
+                return;
+            }
+
+            try
+            {
+                var response = OSDParser.Deserialize(responseData);
+                if (!(response is OSDMap respMap)) return;
+
+                var regionName = respMap["region_name"].AsString();
+                var localId = respMap["parcel_local_id"].AsInteger();
+
+                string channelUri = null;
+                if (respMap["voice_credentials"] is OSDMap)
+                {
+                    var creds = (OSDMap)respMap["voice_credentials"];
+                    channelUri = creds["channel_uri"].AsString();
+                }
+
+                OnParcelVoiceInfo?.Invoke(regionName, localId, channelUri);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn("Failed to retrieve voice info: " + ex.Message, ex, _client);
+            }
         }
 
         public int RequestLogin(string accountName, string password, string connHandle)
@@ -363,8 +443,7 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.Login() called when the daemon pipe is disconnected", 
-                    Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.Login() called when the daemon pipe is disconnected", _client);
                 return -1;
             }
         }
@@ -380,7 +459,7 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.RequestSetRenderDevice() called when the daemon pipe is disconnected", Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.RequestSetRenderDevice() called when the daemon pipe is disconnected", _client);
                 return -1;
             }
         }
@@ -396,8 +475,7 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.RequestStartTuningMode() called when the daemon pipe is disconnected",
-                    Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.RequestStartTuningMode() called when the daemon pipe is disconnected", _client);
                 return -1;
             }
         }
@@ -413,8 +491,7 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.RequestStopTuningMode() called when the daemon pipe is disconnected", 
-                    Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.RequestStopTuningMode() called when the daemon pipe is disconnected", _client);
                 return _commandCookie - 1;
             }
         }
@@ -433,8 +510,7 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.RequestSetSpeakerVolume() called when the daemon pipe is disconnected",
-                    Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.RequestSetSpeakerVolume() called when the daemon pipe is disconnected", _client);
                 return -1;
             }
         }
@@ -453,8 +529,7 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.RequestSetCaptureVolume() called when the daemon pipe is disconnected",
-                    Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.RequestSetCaptureVolume() called when the daemon pipe is disconnected", _client);
                 return -1;
             }
         }
@@ -477,8 +552,7 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.RequestRenderAudioStart() called when the daemon pipe is disconnected", 
-                    Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.RequestRenderAudioStart() called when the daemon pipe is disconnected", _client);
                 return -1;
             }
         }
@@ -494,8 +568,7 @@ namespace LibreMetaverse.Voice.Vivox
             }
             else
             {
-                Logger.Log("VoiceManager.RequestRenderAudioStop() called when the daemon pipe is disconnected", 
-                    Helpers.LogLevel.Error, _client);
+                Logger.Error("VoiceManager.RequestRenderAudioStop() called when the daemon pipe is disconnected", _client);
                 return -1;
             }
         }
@@ -508,52 +581,13 @@ namespace LibreMetaverse.Voice.Vivox
             
             if (VOICE_MAJOR_VERSION != msg.MajorVersion)
             {
-                Logger.Log(
-                    $"Voice version mismatch! Got {msg.MajorVersion}, expecting {VOICE_MAJOR_VERSION}. Disabling the voice manager", Helpers.LogLevel.Error, _client);
+                Logger.Error($"Voice version mismatch! Got {msg.MajorVersion}, expecting {VOICE_MAJOR_VERSION}. Disabling the voice manager", _client);
                 _enabled = false;
             }
             else
             {
                 Logger.DebugLog("Voice version " + msg.MajorVersion + " verified", _client);
             }
-        }
-
-        private void ProvisionCapsResponse(HttpResponseMessage httpResponse, byte[] responseData, Exception error)
-        {
-            if (error != null)
-            {
-                Logger.Log("Failed to provision voice capability", Helpers.LogLevel.Warning, _client, error);
-                return;
-            }
-            var response = OSDParser.Deserialize(responseData);
-            if (!(response is OSDMap respMap)) return;
-
-            if (OnProvisionAccount == null) return;
-            try { OnProvisionAccount(respMap["username"].AsString(), respMap["password"].AsString()); }
-            catch (Exception e) { Logger.Log(e.Message, Helpers.LogLevel.Error, _client, e); }
-        }
-
-        private void ParcelVoiceInfoResponse(HttpResponseMessage httpResponse, byte[] responseData, Exception error)
-        {
-            if (error != null)
-            {
-                Logger.Log("Failed to retrieve voice info", Helpers.LogLevel.Warning, _client, error);
-                return;
-            }
-            var response = OSDParser.Deserialize(responseData);
-            if (!(response is OSDMap respMap)) return;
-
-            var regionName = respMap["region_name"].AsString();
-            var localId = respMap["parcel_local_id"].AsInteger();
-
-            string channelUri = null;
-            if (respMap["voice_credentials"] is OSDMap)
-            {
-                var creds = (OSDMap)respMap["voice_credentials"];
-                channelUri = creds["channel_uri"].AsString();
-            }
-
-            OnParcelVoiceInfo?.Invoke(regionName, localId, channelUri);
         }
 
         private static void _DaemonPipe_OnDisconnected(SocketException se)
@@ -612,9 +646,7 @@ namespace LibreMetaverse.Voice.Vivox
 
                                     if (_cookie == -1)
                                     {
-                                        Logger.Log(
-                                            "VoiceManager._DaemonPipe_OnReceiveLine(): Failed to parse InputXml for the cookie",
-                                            Helpers.LogLevel.Warning, _client);
+                                        Logger.Warn("VoiceManager._DaemonPipe_OnReceiveLine(): Failed to parse InputXml for the cookie", _client);
                                     }
                                     break;
                                 case "CaptureDevices":
@@ -753,7 +785,7 @@ namespace LibreMetaverse.Voice.Vivox
                     case XmlNodeType.XmlDeclaration:
                         break;
                     default:
-                        throw new ArgumentOutOfRangeException();
+                        throw new ArgumentOutOfRangeException(nameof(reader.NodeType));
                 }
             }
 
@@ -829,5 +861,64 @@ namespace LibreMetaverse.Voice.Vivox
         }
 
         #endregion Callbacks
+
+        #region IDisposable
+        private bool _disposed;
+
+        /// <summary>
+        /// Dispose VoiceManager and unregister callbacks and event handlers
+        /// Safe to call multiple times.
+        /// </summary>
+        protected virtual void Dispose(bool disposing)
+        {
+            if (_disposed) return;
+
+            if (disposing)
+            {
+                // Unregister network event callback
+                DisposalHelper.SafeAction(() => _client?.Network?.UnregisterEventCallback("RequiredVoiceVersion", RequiredVoiceVersionEventHandler), "Unregister RequiredVoiceVersion", (m, e) => Logger.Warn(m + ": " + e?.Message, e, _client));
+
+                // Unregister blocking callbacks
+                DisposalHelper.SafeAction(() => OnCaptureDevices -= VoiceManager_OnCaptureDevices, "Unsubscribe OnCaptureDevices", (m, e) => Logger.Warn(m + ": " + e?.Message, e, _client));
+                DisposalHelper.SafeAction(() => OnRenderDevices -= VoiceManager_OnRenderDevices, "Unsubscribe OnRenderDevices", (m, e) => Logger.Warn(m + ": " + e?.Message, e, _client));
+                DisposalHelper.SafeAction(() => OnConnectorCreated -= VoiceManager_OnConnectorCreated, "Unsubscribe OnConnectorCreated", (m, e) => Logger.Warn(m + ": " + e?.Message, e, _client));
+                DisposalHelper.SafeAction(() => OnLogin -= VoiceManager_OnLogin, "Unsubscribe OnLogin", (m, e) => Logger.Warn(m + ": " + e?.Message, e, _client));
+
+                // Detach daemon pipe handlers and dispose pipe if present
+                if (_daemonPipe != null)
+                {
+                    DisposalHelper.SafeAction(() => _daemonPipe.OnDisconnected -= _DaemonPipe_OnDisconnected, "Detach daemon OnDisconnected", (m, e) => Logger.Debug(m, e));
+                    DisposalHelper.SafeAction(() => _daemonPipe.OnReceiveLine -= _DaemonPipe_OnReceiveLine, "Detach daemon OnReceiveLine", (m, e) => Logger.Debug(m, e));
+                    DisposalHelper.SafeAction(() => _daemonPipe.Disconnect(), "Disconnect daemon pipe", (m, e) => Logger.Debug(m, e));
+                    _daemonPipe = null;
+                }
+
+                // Clear internal collections
+                DisposalHelper.SafeAction(() => _channelMap.Clear(), "Clear channel map", (m, e) => Logger.Debug(m, e));
+                DisposalHelper.SafeAction(() => _captureDevices.Clear(), "Clear capture devices", (m, e) => Logger.Debug(m, e));
+                DisposalHelper.SafeAction(() => _renderDevices.Clear(), "Clear render devices", (m, e) => Logger.Debug(m, e));
+
+                _enabled = false;
+            }
+
+            _disposed = true;
+        }
+
+        /// <summary>
+        /// Public dispose
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        ~VoiceManager()
+        {
+            Dispose(false);
+        }
+
+        #endregion
     }
 }
+

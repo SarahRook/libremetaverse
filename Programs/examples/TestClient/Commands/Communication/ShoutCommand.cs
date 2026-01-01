@@ -1,6 +1,8 @@
 using System;
+using System.Threading.Tasks;
+using OpenMetaverse;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.Communication
 {
     public class ShoutCommand : Command
     {
@@ -13,12 +15,17 @@ namespace OpenMetaverse.TestClient
 
         public override string Execute(string[] args, UUID fromAgentID)
         {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
             int channel = 0;
             int startIndex = 0;
             string message = string.Empty;
             if (args.Length < 1)
             {
-                return "usage: shout (optional channel) whatever";
+                return Task.FromResult("usage: shout (optional channel) whatever");
             }
             else if (args.Length > 1)
             {
@@ -43,7 +50,7 @@ namespace OpenMetaverse.TestClient
 
             Client.Self.Chat(message, channel, ChatType.Shout);
 
-            return "Shouted " + message;
+            return Task.FromResult("Shouted " + message);
         }
     }
 }

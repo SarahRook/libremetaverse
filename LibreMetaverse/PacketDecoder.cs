@@ -1,5 +1,6 @@
 ﻿/*
  * Copyright (c) 2006-2016, openmetaverse.co
+ * Copyright (c) 2025, Sjofn LLC.
  * All rights reserved.
  *
  * - Redistribution and use in source and binary forms, with or without
@@ -29,11 +30,27 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Reflection;
 using System.Text;
+using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 
 namespace OpenMetaverse.Packets
 {
     public static class PacketDecoder
     {
+        // Reflection caches to avoid repeated GetFields/GetProperties calls
+        private static readonly ConcurrentDictionary<Type, FieldInfo[]> _fieldsCache = new ConcurrentDictionary<Type, FieldInfo[]>();
+        private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _propertiesCache = new ConcurrentDictionary<Type, PropertyInfo[]>();
+
+        // @todo: expensive - we need it for each packet decode!! - Lazy Dict is contra productive here
+        /**
+         * better:
+            private static readonly Dictionary<string, Func<string, object, string>> Callbacks = 
+                new Dictionary<string, Func<string, object, string>> 
+                { 
+                };
+         */
+        
+        
         private static readonly Lazy<Dictionary<string, Func<string, object, string>>> Callbacks =
             new Lazy<Dictionary<string, Func<string, object, string>>>(() =>
             new Dictionary<string, Func<string, object, string>>
@@ -168,6 +185,7 @@ namespace OpenMetaverse.Packets
             byte[] block = (byte[]) fieldData;
             int i = 4;
 
+            // @todo: Use of StringBuilder capacity in general 
             StringBuilder result = new StringBuilder();
 
             // LocalID
@@ -905,6 +923,7 @@ namespace OpenMetaverse.Packets
 
         private static void GenericTypeDecoder(object obj, ref StringBuilder result)
         {
+            // @todo: expensive - caching of GetFields() per Type?
             FieldInfo[] fields = obj.GetType().GetFields();
 
             foreach (FieldInfo field in fields)
@@ -1236,32 +1255,7 @@ namespace OpenMetaverse.Packets
 
             Primitive.TextureEntry te = new Primitive.TextureEntry(block, 4, block.Length - 4);
 
-            StringBuilder result = new StringBuilder();
-
-            result.AppendFormat("{0,30}", " <TextureEntry>" + Environment.NewLine);
-            if (te.DefaultTexture != null)
-            {
-                result.AppendFormat("{0,30}", "    <DefaultTexture>" + Environment.NewLine);
-                GenericFieldsDecoder(te.DefaultTexture, ref result);
-                GenericPropertiesDecoder(te.DefaultTexture, ref result);
-                result.AppendFormat("{0,30}", "   </DefaultTexture>" + Environment.NewLine);
-            }
-
-            result.AppendFormat("{0,30}", "    <FaceTextures>" + Environment.NewLine);
-            for (int i = 0; i < te.FaceTextures.Length; i++)
-            {
-                if (te.FaceTextures[i] != null)
-                {
-                    result.AppendFormat("{0,30}[{1}]" + Environment.NewLine, "FaceTexture", i);
-                    GenericFieldsDecoder(te.FaceTextures[i], ref result);
-                    GenericPropertiesDecoder(te.FaceTextures[i], ref result);
-                }
-            }
-
-            result.AppendFormat("{0,30}", "   </FaceTextures>" + Environment.NewLine);
-            result.AppendFormat("{0,30}", "</TextureEntry>");
-
-            return result.ToString();
+            return _DecodeTextureEntryStringBuilder(ref te);
         }
 
         private static string DecodeTextureEntry(string fieldName, object fieldData)
@@ -1275,36 +1269,46 @@ namespace OpenMetaverse.Packets
                 te = new Primitive.TextureEntry(tebytes, 0, tebytes.Length);
             }
 
-            StringBuilder result = new StringBuilder();
+            return _DecodeTextureEntryStringBuilder(ref te);
+        }
 
-            result.AppendFormat("{0,30}", " <TextureEntry>" + Environment.NewLine);
+        /// <summary>
+        /// Helper: StringBuilder result - internal method for DecodeTextureEntry and DecodeTerseTextureEntry
+        /// </summary>
+        /// <param name="te"></param>
+        private static string _DecodeTextureEntryStringBuilder(ref Primitive.TextureEntry te)
+        {
+            var result = new StringBuilder(); // @todo: use of capacity for StringBuilder (in general) ??
+
+            result.AppendLine($"{" <TextureEntry>",30}");
             if (te.DefaultTexture != null)
             {
-                result.AppendFormat("{0,30}", "    <DefaultTexture>" + Environment.NewLine);
+                result.AppendLine($"{"    <DefaultTexture>",30}");
                 GenericFieldsDecoder(te.DefaultTexture, ref result);
                 GenericPropertiesDecoder(te.DefaultTexture, ref result);
-                result.AppendFormat("{0,30}", "   </DefaultTexture>" + Environment.NewLine);
+                result.AppendLine($"{"   </DefaultTexture>",30}");
             }
 
-            result.AppendFormat("{0,30}", "    <FaceTextures>" + Environment.NewLine);
+            result.AppendLine($"{"    <FaceTextures>",30}");
             for (int i = 0; i < te.FaceTextures.Length; i++)
             {
-                if (te.FaceTextures[i] != null)
-                {
-                    result.AppendFormat("{0,30}[{1}]" + Environment.NewLine, "FaceTexture", i);
-                    GenericFieldsDecoder(te.FaceTextures[i], ref result);
-                    GenericPropertiesDecoder(te.FaceTextures[i], ref result);
-                }
+                if (te.FaceTextures[i] == null) 
+                    continue;
+                
+                result.AppendLine($"{"FaceTexture",30}[{i}]");
+                GenericFieldsDecoder(te.FaceTextures[i], ref result);
+                GenericPropertiesDecoder(te.FaceTextures[i], ref result);
             }
 
-            result.AppendFormat("{0,30}", "   </FaceTextures>" + Environment.NewLine);
-            result.AppendFormat("{0,30}", "</TextureEntry>");
+            result.AppendLine($"{"   </FaceTextures>",30}");
+            result.Append($"{"</TextureEntry>",30}");
 
             return result.ToString();
         }
 
         private static void GenericFieldsDecoder(object obj, ref StringBuilder result)
         {
+            // @todo: expensive - caching of GetFields() per Type?
             Type parcelType = obj.GetType();
             FieldInfo[] fields = parcelType.GetFields();
             foreach (FieldInfo field in fields)
@@ -1328,6 +1332,7 @@ namespace OpenMetaverse.Packets
         private static void GenericPropertiesDecoder(object obj, ref StringBuilder result)
         {
             Type parcelType = obj.GetType();
+            // @todo: expensive - caching of GetProperties() per Type?
             PropertyInfo[] propertyInfos = parcelType.GetProperties();
             foreach (PropertyInfo property in propertyInfos)
             {
@@ -1433,6 +1438,19 @@ namespace OpenMetaverse.Packets
 
         #endregion
 
+        public static string InterpretOptions(Header header)
+        {
+            return "["
+                   + (header.AppendedAcks ? "Ack" : "   ")
+                   + " "
+                   + (header.Resent ? "Res" : "   ")
+                   + " "
+                   + (header.Reliable ? "Rel" : "   ")
+                   + " "
+                   + (header.Zerocoded ? "Zer" : "   ")
+                   + "]";
+        }
+
         /// <summary>
         /// Creates a formatted string containing the values of a Packet
         /// </summary>
@@ -1440,6 +1458,22 @@ namespace OpenMetaverse.Packets
         /// <returns>A formatted string of values of the nested items in the Packet object</returns>
         public static string PacketToString(Packet packet)
         {
+            if (packet == null) return string.Empty;
+
+            // If logging isn't enabled at Trace, avoid building the entire string
+            if (!Logger.IsEnabled(LogLevel.Trace))
+            {
+                // Provide a short summary instead
+                try
+                {
+                    return $"Packet Type: {packet.Type} Sequence: {packet.Header.Sequence}";
+                }
+                catch
+                {
+                    return $"Packet Type: {packet?.Type}";
+                }
+            }
+
             StringBuilder result = new StringBuilder();
 
             result.AppendFormat(
@@ -1453,7 +1487,8 @@ namespace OpenMetaverse.Packets
 
             result.AppendLine("[Packet Payload]");
 
-            FieldInfo[] fields = packet.GetType().GetFields();
+            // use cached fields
+            FieldInfo[] fields = _fieldsCache.GetOrAdd(packet.GetType(), t => t.GetFields());
 
             foreach (var t in fields)
             {
@@ -1476,20 +1511,6 @@ namespace OpenMetaverse.Packets
             return result.ToString();
         }
 
-        public static string InterpretOptions(Header header)
-        {
-            return "["
-                   + (header.AppendedAcks ? "Ack" : "   ")
-                   + " "
-                   + (header.Resent ? "Res" : "   ")
-                   + " "
-                   + (header.Reliable ? "Rel" : "   ")
-                   + " "
-                   + (header.Zerocoded ? "Zer" : "   ")
-                   + "]"
-                ;
-        }
-
         private static void RecursePacketArray(FieldInfo fieldInfo, object packet, ref StringBuilder result)
         {
             var packetDataObject = fieldInfo.GetValue(packet) as Array;
@@ -1498,7 +1519,8 @@ namespace OpenMetaverse.Packets
 
             foreach (object nestedArrayRecord in packetDataObject)
             {
-                FieldInfo[] fields = nestedArrayRecord.GetType().GetFields();
+                // use cached fields
+                FieldInfo[] fields = _fieldsCache.GetOrAdd(nestedArrayRecord.GetType(), t => t.GetFields());
 
                 foreach (FieldInfo t in fields)
                 {
@@ -1510,7 +1532,7 @@ namespace OpenMetaverse.Packets
                     }
                     else if (t.FieldType.IsArray) // default for an array (probably a byte[])
                     {
-                        result.AppendFormat("{0,30}: {1,-40} [{2}]" + Environment.NewLine,
+                        result.AppendFormat("{0,30: } {1,-40} [{2}]" + Environment.NewLine,
                             t.Name,
                             Utils.BytesToString((byte[]) t.GetValue(nestedArrayRecord)),
                             /*fields[i].GetValue(nestedArrayRecord).GetType().Name*/ "String");
@@ -1524,8 +1546,8 @@ namespace OpenMetaverse.Packets
                     }
                 }
 
-                // Handle Properties
-                foreach (PropertyInfo propertyInfo in nestedArrayRecord.GetType().GetProperties())
+                // Handle Properties with cache
+                foreach (PropertyInfo propertyInfo in _propertiesCache.GetOrAdd(nestedArrayRecord.GetType(), t => t.GetProperties()))
                 {
                     if (propertyInfo.Name.Equals("Length"))
                         continue;
@@ -1539,7 +1561,6 @@ namespace OpenMetaverse.Packets
                     }
                     else
                     {
-                        /* Leave the c for now at the end, it signifies something useful that still needs to be done i.e. a decoder written */
                         result.AppendFormat("{0, 30}: {1,-40} [{2}]c" + Environment.NewLine,
                             propertyInfo.Name,
                             Utils.BytesToString((byte[]) propertyInfo.GetValue(nestedArrayRecord, null)),
@@ -1556,7 +1577,7 @@ namespace OpenMetaverse.Packets
             object packetDataObject = fieldInfo.GetValue(packet);
 
             // handle Fields
-            foreach (FieldInfo packetValueField in fieldInfo.GetValue(packet).GetType().GetFields())
+            foreach (FieldInfo packetValueField in _fieldsCache.GetOrAdd(packetDataObject.GetType(), t => t.GetFields()))
             {
                 string special;
                 if (SpecialDecoder(packet.GetType().Name + "." + fieldInfo.Name + "." + packetValueField.Name,
@@ -1581,7 +1602,7 @@ namespace OpenMetaverse.Packets
             }
 
             // Handle Properties
-            foreach (PropertyInfo propertyInfo in packetDataObject.GetType().GetProperties())
+            foreach (PropertyInfo propertyInfo in _propertiesCache.GetOrAdd(packetDataObject.GetType(), t => t.GetProperties()))
             {
                 if (propertyInfo.Name.Equals("Length"))
                     continue;
@@ -1617,19 +1638,17 @@ namespace OpenMetaverse.Packets
             string[] keyList = {decoderKey, decoderKey.Replace("Packet", ""), keys[1] + "." + keys[2], keys[2]};
             foreach (string key in keyList)
             {
-                if (fieldData is byte[] fd)
+                if (fieldData is byte[] fd && fd.Length == 0)
                 {
-                    if (!(fd.Length > 0))
-                    {
-                        // bypass the decoder since we were passed an empty byte array
-                        result = $"{keys[2],30}:";
-                        return true;
-                    }
+                    // bypass the decoder since we were passed an empty byte array
+                    result = $"{keys[2],30}:";
+                    return true;
                 }
 
-                if (Callbacks.Value.ContainsKey(key)) // fieldname e.g: Plane
+                // fieldname e.g: Plane
+                if (Callbacks.Value.TryGetValue(key, out var callback))
                 {
-                    result = Callbacks.Value[key](keys[2], fieldData);
+                    result = callback(keys[2], fieldData);
                     return true;
                 }
             }
@@ -1662,7 +1681,7 @@ namespace OpenMetaverse.Packets
             }
 
             recurseLevel++;
-
+            // @todo: expensive - caching of GetFields() per Type?
             foreach (FieldInfo messageField in message.GetType().GetFields())
             {
                 // an abstract message class
@@ -1702,6 +1721,7 @@ namespace OpenMetaverse.Packets
                                 "-- " + nestedArrayObject.GetType().Name + " --");
                         }
 
+                        // @todo: expensive - caching of GetFields() per Type?
                         foreach (FieldInfo nestedField in nestedArrayObject.GetType().GetFields())
                         {
                             if (nestedField.FieldType.IsEnum)

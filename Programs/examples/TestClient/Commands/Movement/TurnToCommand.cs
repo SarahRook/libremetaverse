@@ -23,8 +23,11 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-using System;
-namespace OpenMetaverse.TestClient.Commands.Movement
+
+using System.Threading.Tasks;
+using OpenMetaverse;
+
+namespace TestClient.Commands.Movement
 {
     class TurnToCommand : Command
     {
@@ -36,14 +39,18 @@ namespace OpenMetaverse.TestClient.Commands.Movement
         }
         public override string Execute(string[] args, UUID fromAgentID)
         {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
             if (args.Length != 3)
-                return "Usage: turnto x y z";
-            double x, y, z;
-            if (!double.TryParse(args[0], out x) ||
-                !double.TryParse(args[1], out y) ||
-                !double.TryParse(args[2], out z))
+                return Task.FromResult("Usage: turnto x y z");
+            if (!double.TryParse(args[0], out var x) ||
+                !double.TryParse(args[1], out var y) ||
+                !double.TryParse(args[2], out var z))
             {
-                return "Usage: turnto x y z";
+                return Task.FromResult("Usage: turnto x y z");
             }
 
             Vector3 newDirection;
@@ -52,7 +59,7 @@ namespace OpenMetaverse.TestClient.Commands.Movement
             newDirection.Z = (float)z;
             Client.Self.Movement.TurnToward(newDirection);
             Client.Self.Movement.SendUpdate(false);
-            return "Turned to ";
+            return Task.FromResult("Turned to ");
         }
     }
 }

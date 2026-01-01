@@ -1,4 +1,7 @@
-﻿namespace OpenMetaverse.TestClient
+﻿using System.Threading.Tasks;
+using OpenMetaverse;
+
+namespace TestClient.Commands.Inventory
 {
     public class EmptyTrashCommand : Command
     {
@@ -14,15 +17,27 @@
         }
 
         /// <summary>
-        /// Exectute the command
+        /// Execute the command
         /// </summary>
         /// <param name="args"></param>
         /// <param name="fromAgentID"></param>
         /// <returns></returns>
         public override string Execute(string[] args, UUID fromAgentID)
         {
-            Client.Inventory.EmptyTrash();
-            return "Trash Emptied";
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
+        {
+            try
+            {
+                await Client.Inventory.EmptyTrashAsync();
+                return "Trash Emptied";
+            }
+            catch
+            {
+                return "Failed to empty trash";
+            }
         }
     }
 }

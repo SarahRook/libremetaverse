@@ -1,7 +1,8 @@
-using System;
+using System.Threading.Tasks;
+using OpenMetaverse;
 using OpenMetaverse.Packets;
 
-namespace OpenMetaverse.TestClient
+namespace TestClient.Commands.System
 {
     public class SleepCommand : Command
     {
@@ -15,6 +16,11 @@ namespace OpenMetaverse.TestClient
         }
 
         public override string Execute(string[] args, UUID fromAgentID)
+        {
+            return ExecuteAsync(args, fromAgentID).GetAwaiter().GetResult();
+        }
+
+        public override async Task<string> ExecuteAsync(string[] args, UUID fromAgentID)
         {
             int seconds;
             if (args.Length != 1 || !int.TryParse(args[0], out seconds))
@@ -32,8 +38,8 @@ namespace OpenMetaverse.TestClient
 
             Client.Network.SendPacket(pause);
 
-            // Sleep
-            System.Threading.Thread.Sleep(seconds * 1000);
+            // Async sleep
+            await Task.Delay(seconds * 1000).ConfigureAwait(false);
 
             AgentResumePacket resume = new AgentResumePacket
             {
