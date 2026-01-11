@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2016, openmetaverse.co
+ * Copyright (c) 2026, Sjofn LLC.
  * All rights reserved.
  *
  * - Redistribution and use in source and binary forms, with or without 
@@ -912,7 +912,7 @@ namespace OpenMetaverse
                 : Array.Empty<Primitive>();
         }
 
-#endregion Public Members
+        #endregion Public Members
 
         #region Properties
 
@@ -1001,6 +1001,7 @@ namespace OpenMetaverse
             MediaURL = string.Empty;
             // Default scale to 1,1,1
             Scale = Vector3.One;
+            PrimData = new ConstructionData();
         }
 
         public Primitive(Primitive prim)
@@ -1072,6 +1073,7 @@ namespace OpenMetaverse
 
         public virtual OSD GetOSD()
         {
+            if (PrimData == null) PrimData = new ConstructionData();
             OSDMap path = new OSDMap(14);
             path["begin"] = OSD.FromReal(PrimData.PathBegin);
             path["curve"] = OSD.FromInteger((int)PrimData.PathCurve);
