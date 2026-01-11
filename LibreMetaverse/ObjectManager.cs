@@ -2689,7 +2689,7 @@ namespace OpenMetaverse
         {
             if (Client.Settings.OBJECT_TRACKING)
             {
-                if (simulator.ObjectsPrimitives.TryGetValue(localID, out var prim))
+                if (simulator.ObjectsPrimitives.TryGetValue(localID, out var prim) && prim != null)
                 {
                     return prim;
                 }
@@ -2868,4 +2868,3 @@ namespace OpenMetaverse
         }
     }
 }
-

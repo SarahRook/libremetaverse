@@ -683,6 +683,8 @@ namespace OpenMetaverse
 
                     var prim = GetPrimitive(simulator, LocalID, FullID);
 
+                    if (prim == null) { continue; }
+
                     prim.LocalID = LocalID;
                     prim.ID = FullID;
                     prim.Flags = (PrimFlags)block.UpdateFlags;
