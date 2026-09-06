@@ -25,20 +25,19 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.Packets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Packets;
+using LibreMetaverse.StructuredData;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     #region Enums
 
@@ -103,53 +102,53 @@ namespace OpenMetaverse
     public class LoginParams
     {
         /// <summary>The URL of the Login Server</summary>
-        public string URI;
+        public string URI = string.Empty;
         /// <summary>The number of milliseconds to wait before a login is considered
         /// failed due to timeout</summary>
         public int Timeout;
         /// <summary>The request method</summary>
         /// <remarks>login_to_simulator is currently the only supported method</remarks>
-        public string MethodName;
+        public string MethodName = string.Empty;
         /// <summary>The Agents First name</summary>
-        public string FirstName;
+        public string FirstName = string.Empty;
         /// <summary>The Agents Last name</summary>
-        public string LastName;
+        public string LastName = string.Empty;
         /// <summary>A md5 hashed password</summary>
         /// <remarks>plaintext password will be automatically hashed</remarks>
-        public string Password;
+        public string Password = string.Empty;
         /// <summary>The user's entered Time based One Time Password (TOTP) token.</summary>
         /// <remarks>This should be the empty string for login attempts that are not responding to an MFA challenge.</remarks>
-        public string Token;
+        public string Token = string.Empty;
         /// <summary>The saved hash value and timestamp from a previously successfully answered MFA challenge.</summary>
         /// <remarks>This should be the empty string initially.</remarks>
-        public string MfaHash;
+        public string MfaHash = string.Empty;
         /// <summary>The agents starting location home or last</summary>
         /// <remarks>Either "last", "home", or a string encoded URI 
         /// containing the simulator name and x/y/z coordinates e.g: uri:hooper&amp;128&amp;152&amp;17</remarks>
-        public string Start;
+        public string Start = string.Empty;
         /// <summary>A string containing the client software channel information</summary>
         /// <example>Second Life Release</example>
-        public string Channel;
+        public string Channel = string.Empty;
         /// <summary>The client software version information</summary>
         /// <remarks>The official viewer uses: Second Life Release n.n.n.n 
         /// where n is replaced with the current version of the viewer</remarks>
-        public string Version;
+        public string Version = string.Empty;
         /// <summary>A string containing the platform information the agent is running on</summary>
-        public string Platform;
+        public string Platform = string.Empty;
         /// <summary>A string containing version number for OS the agent is running on</summary>
-        public string PlatformVersion;
+        public string PlatformVersion = string.Empty;
         /// <summary>A string hash of the network cards Mac Address</summary>
-        public string MAC;
+        public string MAC = string.Empty;
         /// <summary>Unknown or deprecated</summary>
-        public string ViewerDigest;
+        public string ViewerDigest = string.Empty;
         /// <summary>A string hash of the first disk drives ID used to identify this clients uniqueness</summary>
-        public string ID0;
+        public string ID0 = string.Empty;
         /// <summary>A string containing the viewers Software, this is not directly sent to the login server but 
         /// instead is used to generate the Version string</summary>
-        public string UserAgent;
+        public string UserAgent = string.Empty;
         /// <summary>A string representing the software creator. This is not directly sent to the login server but
         /// is used by the library to generate the Version information</summary>
-        public string Author;
+        public string Author = string.Empty;
         /// <summary>If true, this agent agrees to the Terms of Service of the grid it is connecting to</summary>
         public bool AgreeToTos;
         /// <summary>Unknown</summary>
@@ -166,7 +165,7 @@ namespace OpenMetaverse
 
         /// <summary>LoginLocation used to set the starting region and location (overrides Start) example: "Tentacles/128/64/109"</summary>
         /// <remarks>Leave empty to use the starting location</remarks>
-        public string LoginLocation;
+        public string LoginLocation = string.Empty;
 
         /// <summary>
         /// Is the client Multi-Factor Authentication enabled
@@ -244,9 +243,9 @@ namespace OpenMetaverse
         public LoginParams(GridClient client, LoginCredential credential, string channel, string version)
             : this()
         {
-            URI = client.Settings.LOGIN_SERVER;
-            Timeout = client.Settings.LOGIN_TIMEOUT;
-            MfaEnabled = client.Settings.MFA_ENABLED;
+            URI = client.Settings.Connection.LoginServer;
+            Timeout = client.Settings.Timing.LoginTimeout;
+            MfaEnabled = client.Settings.Connection.MfaEnabled;
             FirstName = credential.FirstName;
             LastName = credential.LastName;
             Password = credential.Password;
@@ -284,8 +283,8 @@ namespace OpenMetaverse
             string channel, string version)
             : this()
         {
-            URI = client.Settings.LOGIN_SERVER;
-            Timeout = client.Settings.LOGIN_TIMEOUT;
+            URI = client.Settings.Connection.LoginServer;
+            Timeout = client.Settings.Timing.LoginTimeout;
             FirstName = firstName;
             LastName = lastName;
             Password = password;
@@ -570,7 +569,7 @@ namespace OpenMetaverse
         #region Delegates
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<LoginProgressEventArgs> m_LoginProgress;
+        private EventHandler<LoginProgressEventArgs>? m_LoginProgress;
 
         ///<summary>Raises the LoginProgress Event</summary>
         /// <param name="e">A LoginProgressEventArgs object containing
@@ -599,7 +598,7 @@ namespace OpenMetaverse
         /// <param name="replyData"></param>
         /// <param name="message"></param>
         /// <param name="reason"></param>
-        public delegate void LoginResponseCallback(bool loginSuccess, bool redirect, string message, string reason, LoginResponseData replyData);
+        public delegate void LoginResponseCallback(bool loginSuccess, bool redirect, string message, string reason, LoginResponseData? replyData);
 
         #endregion Delegates
 
@@ -607,14 +606,14 @@ namespace OpenMetaverse
 
         /// <summary>Called when a reply is received from the login server, the
         /// login sequence will block until this event returns</summary>
-        private event LoginResponseCallback OnLoginResponse;
+        private event LoginResponseCallback? OnLoginResponse;
 
         #endregion Events
 
         #region Public Members
 
         /// <summary>Seed CAPS URI returned from the login server</summary>
-        public Uri LoginSeedCapability { get; private set; } = null;
+        public Uri? LoginSeedCapability { get; private set; } = null;
         /// <summary>Current state of logging in</summary>
         public LoginStatus LoginStatusCode { get; private set; } = LoginStatus.None;
 
@@ -629,26 +628,40 @@ namespace OpenMetaverse
         public string LoginMessage { get; private set; } = string.Empty;
 
         /// <summary>Parsed login response data</summary>
-        public LoginResponseData LoginResponseData;
+        public LoginResponseData? LoginResponseData;
 
-        /// <summary>Maximum number of groups an agent can belong to, -1 for unlimited</summary>
-        public int MaxAgentGroups => LoginResponseData?.MaxAgentGroups ?? -1;
+        /// <summary>
+        /// Maximum number of groups an agent can belong to, -1 for unlimited.
+        /// Prefers <see cref="AccountLevelBenefits.GroupMembershipLimit"/> when available,
+        /// falling back to the <c>max-agent-groups</c> login response field.
+        /// </summary>
+        public int MaxAgentGroups
+        {
+            get
+            {
+                if (LoginResponseData == null) return -1;
+                var benefitsLimit = LoginResponseData.AccountLevelBenefits?.GroupMembershipLimit ?? -1;
+                return benefitsLimit > 0 ? benefitsLimit : LoginResponseData.MaxAgentGroups;
+            }
+        }
+        /// <summary>Account level benefits returned from the login server, or null if not yet available</summary>
+        public AccountLevelBenefits? AccountLevelBenefits => LoginResponseData?.AccountLevelBenefits;
         /// <summary>Server side baking service URL</summary>
-        public string AgentAppearanceServiceURL => LoginResponseData?.AgentAppearanceServiceURL;
+        public string? AgentAppearanceServiceURL => LoginResponseData?.AgentAppearanceServiceURL;
 
         #endregion Public Members
 
         #region Private Members
         
-        private LoginParams CurrentContext = null;
+        private LoginParams? CurrentContext = null;
         // Cancellation token source for the active login request
-        private CancellationTokenSource loginCts;
+        private CancellationTokenSource? loginCts;
         // TaskCompletionSource used for async login waiting
-        private TaskCompletionSource<bool> loginTcs;
+        private TaskCompletionSource<bool>? loginTcs;
         // Carries the parsed LoginResponseData result for the async API
-        private TaskCompletionSource<LoginResponseData> loginResultTcs;
+        private TaskCompletionSource<LoginResponseData?>? loginResultTcs;
 
-        private readonly Dictionary<LoginResponseCallback, string[]> CallbackOptions = new Dictionary<LoginResponseCallback, string[]>();
+        private readonly Dictionary<LoginResponseCallback, string[]?> CallbackOptions = new Dictionary<LoginResponseCallback, string[]?>();
 
         /// <summary>A list of packets obtained during the login process which 
         /// NetworkManager will log but not process</summary>
@@ -656,7 +669,7 @@ namespace OpenMetaverse
 
         // MAC Caching
         private static readonly object s_macLock = new object();
-        private static string s_cachedMac = null;
+        private static string? s_cachedMac = null;
         private static DateTime s_cachedMacTimestamp = DateTime.MinValue;
         /// <summary>Cache TTL in seconds</summary>
         private const int MAC_CACHE_TTL_SECONDS = 300;
@@ -681,23 +694,6 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Simplified login that takes the most common and required fields
-        /// </summary>
-        /// <param name="firstName">Account first name</param>
-        /// <param name="lastName">Account last name</param>
-        /// <param name="password">Account password</param>
-        /// <param name="channel">Client application name (channel)</param>
-        /// <param name="version">Version string (typically x.x.x)</param>
-        /// <returns>Whether the login was successful or not. On failure the
-        /// LoginErrorKey string will contain the error code and LoginMessage
-        /// will contain a description of the error</returns>
-        [Obsolete("Use LoginAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public bool Login(string firstName, string lastName, string password, string channel, string version)
-        {
-            return Login(firstName, lastName, password, channel, "last", version);
-        }
-
-        /// <summary>
         /// Login that works via an existing login response
         /// </summary>
         /// <returns>Whether we are able to connect to a simulator using this data</returns>
@@ -707,11 +703,12 @@ namespace OpenMetaverse
 
             Client.Network.CircuitCode = (uint)response.CircuitCode;
 
-            LoginSeedCapability = new Uri(response.SeedCapability);
+            LoginSeedCapability = !string.IsNullOrEmpty(response.SeedCapability) ? new Uri(response.SeedCapability) : null;
 
             var handle = Utils.UIntsToLong(response.RegionX, response.RegionY);
 
-            if (Connect(response.SimIP, response.SimPort, handle, true, LoginSeedCapability) != null)
+            if (response.SimIP != null && Connect(response.SimIP, response.SimPort, handle, true, LoginSeedCapability,
+                    response.RegionSizeX, response.RegionSizeY) != null)
             {
                 SendPacket(new EconomyDataRequestPacket());
 
@@ -721,123 +718,6 @@ namespace OpenMetaverse
             else
             {
                 UpdateLoginStatus(LoginStatus.Failed, "Unable to connect to simulator");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Login that works via a SeedCap to allow logins to occur on another host with the details passed in here.
-        /// </summary>
-        /// <returns>Whether we are able to connect to a simulator using this data</returns>
-        [Obsolete("Use LoginWithResponseAsync or LoginAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public bool Login(string fullLLSD, string seedcap, string username, UUID agentID, UUID sessionID,
-                          UUID secureSessionID, string host, uint port, int circuitCode, uint regionX, uint regionY)
-        {
-            if (string.IsNullOrEmpty(fullLLSD))
-            {
-                LoginResponseData = new LoginResponseData
-                {
-                    AgentID = agentID, SessionID = sessionID, SecureSessionID = secureSessionID,
-                    CircuitCode = circuitCode,
-                    RegionX = regionX, RegionY = regionY, SeedCapability = seedcap, SimIP = IPAddress.Parse(host),
-                    SimPort = (ushort)port, Login = LoginState.True
-                 };
-            }
-            else
-            {
-                LoginResponseData = new LoginResponseData();
-                LoginResponseData.Parse(OSDParser.DeserializeLLSDXml(fullLLSD) as OSDMap);
-            }
-
-            // Login succeeded
-
-            // Fire the login callback
-            if (OnLoginResponse != null)
-            {
-                try { OnLoginResponse(LoginResponseData.Success, false, "Login Message", LoginResponseData.Reason, LoginResponseData); }
-                catch (Exception ex) { Logger.Error(ex.Message, ex, Client); }
-            }
-
-            // These parameters are stored in NetworkManager, so instead of registering
-            // another callback for them, we set the values here
-            Client.Network.CircuitCode = (uint)circuitCode;
-            LoginSeedCapability = new Uri(seedcap);
-
-            UpdateLoginStatus(LoginStatus.ConnectingToSim, "Connecting to simulator...");
-
-            var handle = Utils.UIntsToLong(regionX, regionY);
-
-            if (LoginResponseData.SimIP != null && LoginResponseData.SimPort != 0)
-            {
-                // Connect to the sim given in the login reply
-                if (Connect(LoginResponseData.SimIP, LoginResponseData.SimPort, handle, true, LoginSeedCapability) != null)
-                {
-                    // Request the economy data right after login
-                    SendPacket(new EconomyDataRequestPacket());
-
-                    // Update the login message with the MOTD returned from the server
-                    UpdateLoginStatus(LoginStatus.Success, "Login Success");
-                    return true;
-                }
-                else
-                {
-                    UpdateLoginStatus(LoginStatus.Failed,
-                                      "Unable to establish a UDP connection to the simulator");
-                    return false;
-                }
-            }
-            else
-            {
-                UpdateLoginStatus(LoginStatus.Failed,
-                                  "Login server did not return a simulator address");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Simplified login that takes the most common fields along with a
-        /// starting location URI, and can accept an MD5 string instead of a
-        /// plaintext password
-        /// </summary>
-        /// <param name="firstName">Account first name</param>
-        /// <param name="lastName">Account last name</param>
-        /// <param name="password">Account password or MD5 hash of the password
-        /// such as $1$1682a1e45e9f957dcdf0bb56eb43319c</param>
-        /// <param name="channel">Client application name (channel)</param>
-        /// <param name="start">Starting location URI that can be built with
-        /// StartLocation()</param>
-        /// <param name="version">Version string (typically x.x.x)</param>
-        /// <returns>Whether the login was successful or not. On failure the
-        /// LoginErrorKey string will contain the error code and LoginMessage
-        /// will contain a description of the error</returns>
-        [Obsolete("Use LoginAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public bool Login(string firstName, string lastName, string password, string channel, string start,
-            string version)
-        {
-            var loginParams = DefaultLoginParams(firstName, lastName, password, channel, version);
-            loginParams.Start = start;
-
-            return Login(loginParams);
-        }
-
-        /// <summary>
-        /// Login that takes a struct of all the values that will be passed to
-        /// the login server
-        /// </summary>
-        /// <param name="loginParams">The values that will be passed to the login
-        /// server, all fields must be set even if they are String.Empty</param>
-        /// <returns>Whether the login was successful or not. On failure the
-        /// LoginErrorKey string will contain the error code and LoginMessage
-        /// will contain a description of the error</returns>
-        [Obsolete("Use LoginAsync(LoginParams) or LoginWithResponseAsync(LoginParams) instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public bool Login(LoginParams loginParams)
-        {
-            try
-            {
-                return LoginAsync(loginParams).GetAwaiter().GetResult();
-            }
-            catch
-            {
                 return false;
             }
         }
@@ -852,7 +732,7 @@ namespace OpenMetaverse
             loginTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             loginResultTcs?.TrySetCanceled();
-            loginResultTcs = new TaskCompletionSource<LoginResponseData>(TaskCreationOptions.RunContinuationsAsynchronously);
+            loginResultTcs = new TaskCompletionSource<LoginResponseData?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             CurrentContext = loginParams;
 
@@ -875,7 +755,7 @@ namespace OpenMetaverse
 
             try
             {
-                var parsed = await loginResultTcs.Task.ConfigureAwait(false);
+                var parsed = await loginResultTcs!.Task.ConfigureAwait(false);
                 return parsed != null && parsed.Success;
             }
             catch (OperationCanceledException)
@@ -894,7 +774,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Async convenience overload that returns the parsed LoginResponseData.
         /// </summary>
-        public async Task<LoginResponseData> LoginWithResponseAsync(LoginParams loginParams, CancellationToken cancellationToken = default)
+        public async Task<LoginResponseData?> LoginWithResponseAsync(LoginParams loginParams, CancellationToken cancellationToken = default)
         {
             // Create or replace the per-login cancellation source, linking caller token
             loginCts?.Dispose();
@@ -905,7 +785,7 @@ namespace OpenMetaverse
 
             try
             {
-                return await loginResultTcs.Task.ConfigureAwait(false);
+                return await loginResultTcs!.Task.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -951,7 +831,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Async convenience overload with explicit start location that returns the parsed LoginResponseData.
         /// </summary>
-        public Task<LoginResponseData> LoginWithResponseAsync(string firstName, string lastName, string password, string channel, string start, string version, CancellationToken cancellationToken = default)
+        public Task<LoginResponseData?> LoginWithResponseAsync(string firstName, string lastName, string password, string channel, string start, string version, CancellationToken cancellationToken = default)
         {
             var loginParams = DefaultLoginParams(firstName, lastName, password, channel, version);
             loginParams.Start = start;
@@ -961,7 +841,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Async convenience overload that accepts a pre-built LoginCredential instance and returns parsed LoginResponseData.
         /// </summary>
-        public Task<LoginResponseData> LoginWithResponseAsync(LoginCredential credential, string channel, string version, CancellationToken cancellationToken = default)
+        public Task<LoginResponseData?> LoginWithResponseAsync(LoginCredential credential, string channel, string version, CancellationToken cancellationToken = default)
         {
             var loginParams = new LoginParams(Client, credential, channel, version);
             return LoginWithResponseAsync(loginParams, cancellationToken);
@@ -970,7 +850,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Async convenience overload that accepts a pre-built LoginCredential instance with explicit start location and returns parsed LoginResponseData.
         /// </summary>
-        public Task<LoginResponseData> LoginWithResponseAsync(LoginCredential credential, string channel, string start, string version, CancellationToken cancellationToken = default)
+        public Task<LoginResponseData?> LoginWithResponseAsync(LoginCredential credential, string channel, string start, string version, CancellationToken cancellationToken = default)
         {
             var loginParams = new LoginParams(Client, credential, channel, version);
             loginParams.Start = start;
@@ -983,7 +863,7 @@ namespace OpenMetaverse
         }
 
 
-        public void RegisterLoginResponseCallback(LoginResponseCallback callback, string[] options)
+        public void RegisterLoginResponseCallback(LoginResponseCallback callback, string[]? options)
         {
             CallbackOptions.Add(callback, options);
             OnLoginResponse += callback;
@@ -1039,7 +919,7 @@ namespace OpenMetaverse
 
         private void BeginLogin()
         {
-            var loginParams = CurrentContext;
+            var loginParams = CurrentContext ?? new LoginParams();
             // Generate a random ID to identify this login attempt
             loginParams.LoginID = UUID.Random();
             CurrentContext = loginParams;
@@ -1060,7 +940,7 @@ namespace OpenMetaverse
             }
             if (loginParams.UserAgent == null)
             {
-                loginParams.UserAgent = Settings.USER_AGENT;
+                loginParams.UserAgent = Settings.UserAgent;
             }
             if (loginParams.Platform == null)
             {
@@ -1086,7 +966,7 @@ namespace OpenMetaverse
             if (string.IsNullOrEmpty(loginParams.Channel))
             {
                 Logger.Warn("Viewer channel not set.");
-                loginParams.Channel = $"{Settings.USER_AGENT}";
+                loginParams.Channel = $"{Settings.UserAgent}";
             }
 
             if (string.IsNullOrEmpty((loginParams.Version)))
@@ -1097,7 +977,7 @@ namespace OpenMetaverse
 
             if (!string.IsNullOrEmpty(loginParams.LoginLocation))
             {
-                var startLoc = new LocationParser(loginParams.LoginLocation.Trim());
+                var startLoc = new SlurlParser(loginParams.LoginLocation.Trim());
                 loginParams.Start = startLoc.GetStartLocationUri();
             } 
             else
@@ -1108,7 +988,7 @@ namespace OpenMetaverse
                     case "last":
                         break;
                     default:
-                        var startLoc = new LocationParser(loginParams.Start.Trim());
+                        var startLoc = new SlurlParser(loginParams.Start.Trim());
                         loginParams.Start = startLoc.GetStartLocationUri();
                         break;
                 }
@@ -1260,13 +1140,27 @@ namespace OpenMetaverse
         /// <param name="response">Server response as <see cref="HttpResponseMessage"/></param>
         /// <param name="responseData">Payload response data</param>
         /// <param name="error">Any <see cref="Exception"/> returned from the request</param>
-        private async Task LoginReplyLLSDHandler(HttpResponseMessage response, byte[] responseData, Exception error)
+        private async Task LoginReplyLLSDHandler(HttpResponseMessage? response, byte[]? responseData, Exception? error)
         {
             if (error != null)
             {
                 // Connection error
                 LoginErrorKey = "no connection";
                 UpdateLoginStatus(LoginStatus.Failed, error.Message);
+                return;
+            }
+
+            if (responseData == null)
+            {
+                // No response data
+                LoginErrorKey = "bad response";
+                UpdateLoginStatus(LoginStatus.Failed, "Empty or corrupt login response");
+
+                if (loginResultTcs != null)
+                {
+                    loginResultTcs.TrySetResult(LoginStatusCode == LoginStatus.Success ? LoginResponseData : null);
+                }
+
                 return;
             }
 
@@ -1293,7 +1187,10 @@ namespace OpenMetaverse
                         UpdateLoginStatus(LoginStatus.Redirecting, data.Message);
 
                         var loginParams = CurrentContext;
-                        loginParams.URI = LoginResponseData.ParseString("next_url", resMap);
+                        if (loginParams != null)
+                        {
+                            loginParams.URI = LoginResponseData.ParseString("next_url", resMap);
+                        }
 
                         // Sleep for some amount of time while the servers work
                         var seconds = (int)LoginResponseData.ParseUInt("next_duration", resMap);
@@ -1337,7 +1234,8 @@ namespace OpenMetaverse
                         if (data.SimIP != null && data.SimPort != 0)
                         {
                             // Connect to the sim given in the login reply
-                            if (Connect(data.SimIP, data.SimPort, handle, true, LoginSeedCapability) != null)
+                            if (Connect(data.SimIP, data.SimPort, handle, true, LoginSeedCapability,
+                                    data.RegionSizeX, data.RegionSizeY) != null)
                             {
                                 // Request the economy data right after login
                                 SendPacket(new EconomyDataRequestPacket());
@@ -1443,7 +1341,7 @@ namespace OpenMetaverse
                     {
                         foreach (var t in nics)
                         {
-                            var adapterMac = t.GetPhysicalAddress().ToString().ToUpper();
+                            var adapterMac = t.GetPhysicalAddress().ToString().ToUpperInvariant();
                             if (adapterMac.Length == 12 && adapterMac != "000000000000")
                             {
                                 mac = adapterMac;

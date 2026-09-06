@@ -26,9 +26,9 @@
  */
 
 using System.Collections.Generic;
-using SkiaSharp;
+using LibreMetaverse.Imaging;
 
-namespace OpenMetaverse.Rendering
+namespace LibreMetaverse.Rendering
 {
     [RendererName("Simple Cube Renderer")]
     public class SimpleRenderer : IRendering
@@ -50,7 +50,7 @@ namespace OpenMetaverse.Rendering
             return mesh;
         }
 
-        public SimpleMesh GenerateSimpleSculptMesh(Primitive prim, SKBitmap sculptTexture, DetailLevel lod)
+        public SimpleMesh GenerateSimpleSculptMesh(Primitive prim, ManagedImage sculptTexture, DetailLevel lod)
         {
             return GenerateSimpleMesh(prim, lod);
         }
@@ -69,7 +69,7 @@ namespace OpenMetaverse.Rendering
             return mesh;
         }
 
-        public FacetedMesh GenerateFacetedSculptMesh(Primitive prim, SKBitmap sculptTexture, DetailLevel lod)
+        public FacetedMesh GenerateFacetedSculptMesh(Primitive prim, ManagedImage sculptTexture, DetailLevel lod)
         {
             return GenerateFacetedMesh(prim, lod);
         }
@@ -144,11 +144,11 @@ namespace OpenMetaverse.Rendering
             return new List<ushort>(indices);
         }
 
-        private List<Face> GenerateFaces(Primitive.TextureEntry te)
+        private List<Face> GenerateFaces(Primitive.TextureEntry? te)
         {
             Face face = new Face();
             face.Edge = new List<int>();
-            face.TextureFace = te.DefaultTexture;
+            face.TextureFace = te?.DefaultTexture ?? new Primitive.TextureEntryFace(null);
             face.Vertices = GenerateVertices();
             face.Indices = GenerateIndices();
 

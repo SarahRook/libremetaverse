@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2019-2025, Sjofn LLC
  * All rights reserved.
  *
@@ -25,7 +25,6 @@
  */
 
 using NUnit.Framework;
-using OpenMetaverse;
 
 namespace LibreMetaverse.Tests
 {

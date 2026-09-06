@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2024, Sjofn LLC
  * All rights reserved.
  *
@@ -34,7 +34,7 @@ namespace LibreMetaverse.Threading.Disposers
 	public struct OptimisticUpgradeableLock:
 		IUpgradeableLock
 	{
-		private OptimisticReaderWriterLock _lock;
+		private OptimisticReaderWriterLock? _lock;
 		private bool _upgraded;
 
 		internal OptimisticUpgradeableLock(OptimisticReaderWriterLock yieldLock)

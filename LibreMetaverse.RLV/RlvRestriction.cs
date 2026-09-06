@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -519,7 +519,7 @@ namespace LibreMetaverse.RLV
             }
         }
 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return obj is RlvRestriction restriction &&
                    Behavior == restriction.Behavior &&

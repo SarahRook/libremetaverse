@@ -29,7 +29,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace OpenMetaverse.Utilities
+namespace LibreMetaverse.Utilities
 {
     /// <summary>
     /// 
@@ -66,7 +66,7 @@ namespace OpenMetaverse.Utilities
         /// <returns></returns>
         public static bool Shoot(GridClient client)
         {
-            if (client.Settings.SEND_AGENT_UPDATES)
+            if (client.Settings.Agent.SendUpdates)
             {
                 client.Self.Movement.Mouselook = true;
                 client.Self.Movement.MLButtonDown = true;
@@ -170,8 +170,8 @@ namespace OpenMetaverse.Utilities
         private readonly GridClient _client;
         private ulong _simHandle;
         private Vector3 _position = Vector3.Zero;
-        private CancellationTokenSource _checkCts;
-        private Task _checkTask;
+        private CancellationTokenSource? _checkCts;
+        private Task? _checkTask;
         private readonly int _timerFrequency;
 
         public ConnectionManager(GridClient client, int timerFrequency)
@@ -181,54 +181,55 @@ namespace OpenMetaverse.Utilities
             _timerFrequency = timerFrequency;
         }
 
-        public static bool PersistentLogin(GridClient client, string firstName, string lastName, string password,
+        public static async Task<bool> PersistentLogin(GridClient client, string firstName, string lastName, string password,
             string userAgent, string start, string author)
         {
             int unknownLogins = 0;
 
-        Start:
-
-            if (client.Network.Login(firstName, lastName, password, userAgent, start, author))
+            while (true)
             {
-                Logger.Info("Logged in to " + client.Network.CurrentSim, client);
-                return true;
-            }
-            switch (client.Network.LoginErrorKey)
-            {
-                case "god":
-                    Logger.Warn("Grid is down, waiting 10 minutes", client);
-                    LoginWait(10);
-                    goto Start;
-                case "key":
-                    Logger.Error("Bad username or password, giving up on login", client);
-                    return false;
-                case "presence":
-                    Logger.Warn("Server is still logging us out, waiting 1 minute", client);
-                    LoginWait(1);
-                    goto Start;
-                case "disabled":
-                    Logger.Error("This account has been banned! Giving up on login", client);
-                    return false;
-                case "timed out":
-                case "no connection":
-                    Logger.Warn("Login request timed out, waiting 1 minute", client);
-                    LoginWait(1);
-                    goto Start;
-                case "bad response":
-                    Logger.Warn("Login server returned unparsable result", client);
-                    LoginWait(1);
-                    goto Start;
-                default:
-                    ++unknownLogins;
+                if (await client.Network.LoginAsync(firstName, lastName, password, userAgent, start, author))
+                {
+                    Logger.Info("Logged in to " + client.Network.CurrentSim, client);
+                    return true;
+                }
+                switch (client.Network.LoginErrorKey)
+                {
+                    case "god":
+                        Logger.Warn("Grid is down, waiting 10 minutes", client);
+                        LoginWait(10);
+                        break;
+                    case "key":
+                        Logger.Error("Bad username or password, giving up on login", client);
+                        return false;
+                    case "presence":
+                        Logger.Warn("Server is still logging us out, waiting 1 minute", client);
+                        LoginWait(1);
+                        break;
+                    case "disabled":
+                        Logger.Error("This account has been banned! Giving up on login", client);
+                        return false;
+                    case "timed out":
+                    case "no connection":
+                        Logger.Warn("Login request timed out, waiting 1 minute", client);
+                        LoginWait(1);
+                        break;
+                    case "bad response":
+                        Logger.Warn("Login server returned unparsable result", client);
+                        LoginWait(1);
+                        break;
+                    default:
+                        ++unknownLogins;
 
-                    if (unknownLogins < 5)
-                    {
-                        Logger.Warn("Unknown login error, waiting 2 minutes: " + client.Network.LoginErrorKey, client);
-                        LoginWait(2);
-                        goto Start;
-                    }
-                    Logger.Error("Too many unknown login error codes, giving up", client);
-                    return false;
+                        if (unknownLogins < 5)
+                        {
+                            Logger.Warn("Unknown login error, waiting 2 minutes: " + client.Network.LoginErrorKey, client);
+                            LoginWait(2);
+                            break;
+                        }
+                        Logger.Error("Too many unknown login error codes, giving up", client);
+                        return false;
+                }
             }
         }
 
@@ -252,11 +253,15 @@ namespace OpenMetaverse.Utilities
                     {
                         try
                         {
-                            if (_simHandle != 0 && _client?.Network?.CurrentSim?.Handle != 0 && _client.Network.CurrentSim.Handle != _simHandle)
+                            if (_simHandle != 0)
                             {
-                                // Attempt to move to our target sim
-                                _client.Self.Teleport(_simHandle, _position);
-                             }
+                                var currentHandle = _client?.Network?.CurrentSim?.Handle ?? 0UL;
+                                if (currentHandle != 0 && currentHandle != _simHandle)
+                                {
+                                    // Attempt to move to our target sim
+                                    try { await (_client?.Self?.TeleportAsync(_simHandle, _position) ?? Task.FromResult(false)).ConfigureAwait(false); } catch { }
+                                }
+                            }
                         }
                         catch (Exception) { }
 
@@ -269,7 +274,7 @@ namespace OpenMetaverse.Utilities
 
         public void Stop()
         {
-            LibreMetaverse.DisposalHelper.SafeCancelAndDispose(_checkCts, (m, ex) => Logger.Debug(m, ex));
+            LibreMetaverse.DisposalHelper.SafeCancelAndDispose(_checkCts, (m, ex) => Logger.Debug(m, ex ?? new Exception("(no exception)")));
             _checkCts = null;
             _checkTask = null;
         }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -26,7 +26,7 @@
 
 using System;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Attribute class that allows extra attributes to be attached to ENUMs
@@ -297,10 +297,18 @@ namespace OpenMetaverse
         Gesture = 20,
         /// <summary></summary>
         Mesh = 22,
-        /// <summary></summary>
-        Settings = 23,
-        /// <summary></summary>
-        Material = 24,
+        /// <summary>Widget</summary>
+        Widget = 23,
+        /// <summary>Person</summary>
+        Person = 24,
+        /// <summary>Settings</summary>
+        Settings = 25,
+        /// <summary>Render material</summary>
+        Material = 26,
+        /// <summary>glTF asset</summary>
+        GLTF = 27,
+        /// <summary>Binary glTF asset</summary>
+        GLTFBin = 28,
     }
 
     /// <summary>
@@ -393,7 +401,9 @@ namespace OpenMetaverse
             var type = value.GetType();
             var name = Enum.GetName(type, value);
             if (name == null) { return string.Empty; }
+#pragma warning disable IL2075 // Enum members are preserved by the trimmer; GetMember is safe here.
             var mem = type.GetMember(name);
+#pragma warning restore IL2075
             if (mem.Length <= 0) { return string.Empty; }
 
             var attrs = mem[0].GetCustomAttributes(typeof(EnumInfoAttribute), false);

@@ -28,13 +28,12 @@
 using System;
 using System.Text;
 using System.Text.RegularExpressions;
-using OpenMetaverse;
 
 namespace LibreMetaverse.Voice.Vivox
 {
     public class VoiceParticipant
     {
-        private string AvatarName { get; set; }
+        private string? AvatarName { get; set; }
 
         private bool _muted;
         private int _volume;
@@ -78,9 +77,7 @@ namespace LibreMetaverse.Voice.Vivox
                 temp = temp.Replace('_', '/');
 
                 byte[] binary = Convert.FromBase64String(temp.Substring(1));
-                UUID u = UUID.Zero;
-                u.FromBytes(binary, 0);
-                return u;
+                return new UUID(binary, 0);
             }
 
             return UUID.Zero;
@@ -97,7 +94,7 @@ namespace LibreMetaverse.Voice.Vivox
             //            return System.Text.Encoding.UTF8.GetString(decbuff);
         }
 
-        private static string nameFromsipURI(string uri)
+        private static string? nameFromsipURI(string uri)
         {
             Regex sip = new Regex("^sip:([^@]*)@.*$");
             Match m = sip.Match(uri);
@@ -110,7 +107,7 @@ namespace LibreMetaverse.Voice.Vivox
 
         public string Name
         {
-            get => AvatarName;
+            get => AvatarName ?? string.Empty;
             set => AvatarName = value;
         }
 

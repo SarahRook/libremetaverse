@@ -26,7 +26,6 @@
  */
 
 using System;
-using System.Reflection;
 using Microsoft.Extensions.Logging;
 using System.Threading;
 using System.Threading.Tasks;
@@ -34,7 +33,7 @@ using System.Threading.Tasks;
 using ZLogger;
 #endif
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Singleton logging class for the entire library
@@ -51,32 +50,12 @@ namespace OpenMetaverse
 
         /// <summary>Triggered whenever a message is logged. If this is left
         /// null, log messages will go to the console</summary>
-        public static event LogCallback OnLogMessage;
+        public static event LogCallback? OnLogMessage;
 
         /// <summary>Logger instance</summary>
-        private static ILogger _logger;
-        private static ILoggerFactory _loggerFactory;
+        private static ILogger? _logger;
+        private static ILoggerFactory? _loggerFactory;
         private static readonly object _sync = new object();
-
-#pragma warning disable CS0618 // Type or member is obsolete
-        // Map library log levels to Microsoft.Extensions.Logging.LogLevel
-        private static LogLevel MapLevel(Helpers.LogLevel level)
-        {
-            switch (level)
-            {
-                case Helpers.LogLevel.Debug:
-                    return LogLevel.Debug;
-                case Helpers.LogLevel.Info:
-                    return LogLevel.Information;
-                case Helpers.LogLevel.Warning:
-                    return LogLevel.Warning;
-                case Helpers.LogLevel.Error:
-                    return LogLevel.Error;
-                default:
-                    return LogLevel.Trace;
-            }
-        }
-#pragma warning restore CS0618 // Type or member is obsolete
 
         static Logger()
         {
@@ -93,8 +72,8 @@ namespace OpenMetaverse
                 try
                 {
                     _loggerFactory = CreateDefaultConsoleLoggerFactory();
-                    _logger = _loggerFactory.CreateLogger(MethodBase.GetCurrentMethod()?.DeclaringType?.FullName ?? "LibreMetaverse");
-                    if (Settings.LOG_LEVEL != LogLevel.None)
+                    _logger = _loggerFactory.CreateLogger(typeof(Logger).FullName ?? "LibreMetaverse");
+                    if (Settings.LogLevel != LogLevel.None)
                     {
                         _logger.LogInformation("Default console logger initialized");
                     }
@@ -192,7 +171,7 @@ namespace OpenMetaverse
         public static async Task<bool> ShutdownAsync(TimeSpan? timeout = null, CancellationToken cancellationToken = default)
 #pragma warning restore CS1998 // Async method lacks 'await' operators and will run synchronously
         {
-            ILoggerFactory factory = null;
+            ILoggerFactory? factory = null;
 
             lock (_sync)
             {
@@ -273,7 +252,7 @@ namespace OpenMetaverse
             }
         }
 
-        private static void LogWithLevel(LogLevel level, object message, Exception exception, string clientName = null)
+        private static void LogWithLevel(LogLevel level, object message, Exception? exception, string? clientName = null)
         {
             EnsureInitialized();
             if (_logger == null) { return; }
@@ -305,33 +284,9 @@ namespace OpenMetaverse
         /// <param name="message">The log message</param>
         /// <param name="level">The severity of the log entry</param>
         /// <param name="client">Instance of the client</param>
-        [Obsolete("Use Microsoft.Extensions.Logging.LogLevel")]
-        public static void Log(object message, Helpers.LogLevel level, GridClient client = null)
-        {
-            Log(message, MapLevel(level), client, null);
-        }
-
-        /// <summary>
-        /// Send a log message to the logging engine
-        /// </summary>
-        /// <param name="message">The log message</param>
-        /// <param name="level">The severity of the log entry</param>
-        /// <param name="client">Instance of the client</param>
-        public static void Log(object message, LogLevel level, GridClient client = null)
+        public static void Log(object message, LogLevel level, GridClient? client = null)
         {
             Log(message, level, client, null);
-        }
-
-        /// <summary>
-        /// Send a log message to the logging engine
-        /// </summary>
-        /// <param name="message">The log message</param>
-        /// <param name="level">The severity of the log entry</param>
-        /// <param name="exception">Exception that was raised</param>
-        [Obsolete("Use Microsoft.Extensions.Logging.LogLevel")]
-        public static void Log(object message, Helpers.LogLevel level, Exception exception)
-        {
-            Log(message, MapLevel(level), null, exception);
         }
 
         /// <summary>
@@ -352,36 +307,23 @@ namespace OpenMetaverse
         /// <param name="level">The severity of the log entry</param>
         /// <param name="client">Instance of the client</param>
         /// <param name="exception">Exception that was raised</param>
-        [Obsolete("Use Microsoft.Extensions.Logging.LogLevel")]
-        public static void Log(object message, Helpers.LogLevel level, GridClient client, Exception exception)
+        public static void Log(object message, LogLevel level, GridClient? client, Exception? exception)
         {
-            Log(message, MapLevel(level), client, exception);
-        }
-
-        /// <summary>
-        /// Send a log message to the logging engine
-        /// </summary>
-        /// <param name="message">The log message</param>
-        /// <param name="level">The severity of the log entry</param>
-        /// <param name="client">Instance of the client</param>
-        /// <param name="exception">Exception that was raised</param>
-        public static void Log(object message, LogLevel level, GridClient client, Exception exception)
-        {
-            var clientName = (client != null && client.Settings.LOG_NAMES) ? client.Self?.Name : null;
+            var clientName = (client != null && client.Settings.Logging.LogNames) ? client.Self?.Name : null;
 
             RaiseOnLogMessage(message, level);
 
-            if (Settings.LOG_LEVEL == LogLevel.None) { return; }
+            if (Settings.LogLevel == LogLevel.None) { return; }
 
             // enforce configured log level
-            if (Settings.LOG_LEVEL > level) { return; }
+            if (Settings.LogLevel > level) { return; }
 
             LogWithLevel(level, message, exception, clientName);
         }
 
         /// <summary>
         /// If the library is compiled with TRACE defined and
-        /// <see cref="GridClient.Settings.TRACE" /> is true, an event will be
+        /// an event will be
         /// fired if a <see cref="OnLogMessage" /> handler is registered and the
         /// message will be sent to the logging engine
         /// </summary>
@@ -389,15 +331,15 @@ namespace OpenMetaverse
         /// current logging engine</param>
         /// <param name="client">Instance of the client</param>
         [System.Diagnostics.Conditional("DEBUG")]
-        public static void DebugLog(object message, GridClient client = null)
+        public static void DebugLog(object message, GridClient? client = null)
         {
-            if (Settings.LOG_LEVEL > LogLevel.Debug) { return; }
+            if (Settings.LogLevel > LogLevel.Debug) { return; }
 
-            var clientName = (client != null && client.Settings.LOG_NAMES) ? client.Self?.Name : null;
+            var clientName = (client != null && client.Settings.Logging.LogNames) ? client.Self?.Name : null;
 
-            RaiseOnLogMessage(message, Settings.LOG_LEVEL);
+            RaiseOnLogMessage(message, Settings.LogLevel);
 
-            LogWithLevel(Settings.LOG_LEVEL, message, null, clientName);
+            LogWithLevel(Settings.LogLevel, message, null, clientName);
         }
 
         /// <summary>
@@ -409,7 +351,7 @@ namespace OpenMetaverse
             if (logger == null) { return NoopScope.Instance; }
             try
             {
-                return logger.BeginScope(state);
+                return logger.BeginScope(state) ?? NoopScope.Instance;
             }
             catch
             {
@@ -425,10 +367,10 @@ namespace OpenMetaverse
             var logger = _logger;
             if (logger == null) return NoopScope.Instance;
 
-            string clientName = null;
+            string? clientName = null;
             try
             {
-                if (client?.Settings != null && client.Settings.LOG_NAMES)
+                if (client?.Settings != null && client.Settings.Logging.LogNames)
                     clientName = client.Self?.Name;
             }
             catch
@@ -442,8 +384,8 @@ namespace OpenMetaverse
             {
                 return logger.BeginScope(new System.Collections.Generic.Dictionary<string, object>
                 {
-                    { "Client", clientName }
-                });
+                    { "Client", clientName! }
+                }) ?? NoopScope.Instance;
             }
             catch
             {
@@ -459,7 +401,7 @@ namespace OpenMetaverse
             var logger = _logger;
             if (logger == null) return NoopScope.Instance;
 
-            string regionName = null;
+            string? regionName = null;
             try
             {
                 if (simulator != null)
@@ -479,8 +421,8 @@ namespace OpenMetaverse
             {
                 return logger.BeginScope(new System.Collections.Generic.Dictionary<string, object>
                 {
-                    { "Region", regionName }
-                });
+                    { "Region", regionName! }
+                }) ?? NoopScope.Instance;
             }
             catch
             {
@@ -496,7 +438,7 @@ namespace OpenMetaverse
         {
             if (action == null) { throw new ArgumentNullException(nameof(action)); }
 
-            IDisposable scope = null;
+            IDisposable? scope = null;
             try
             {
                 scope = BeginClientScope(client);
@@ -516,7 +458,7 @@ namespace OpenMetaverse
         {
             if (action == null) { throw new ArgumentNullException(nameof(action)); }
 
-            IDisposable scope = null;
+            IDisposable? scope = null;
             try
             {
                 scope = BeginRegionScope(simulator);
@@ -536,7 +478,7 @@ namespace OpenMetaverse
         {
             if (action == null) throw new ArgumentNullException(nameof(action));
 
-            IDisposable scope = null;
+            IDisposable? scope = null;
             try
             {
                 scope = BeginScope(state);
@@ -587,7 +529,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="message">Message object to log.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Trace(object message, GridClient client = null)
+        public static void Trace(object message, GridClient? client = null)
         {
             Log(message, LogLevel.Trace, client, null);
         }
@@ -598,7 +540,7 @@ namespace OpenMetaverse
         /// <param name="message">Message object to log.</param>
         /// <param name="exception">Exception to include with the log entry.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Trace(object message, Exception exception, GridClient client = null)
+        public static void Trace(object message, Exception exception, GridClient? client = null)
         {
             Log(message, LogLevel.Trace, client, exception);
         }
@@ -629,7 +571,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="message">Message object to log.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Debug(object message, GridClient client = null)
+        public static void Debug(object message, GridClient? client = null)
         {
             Log(message, LogLevel.Debug, client, null);
         }
@@ -640,7 +582,7 @@ namespace OpenMetaverse
         /// <param name="message">Message object to log.</param>
         /// <param name="exception">Exception to include with the log entry.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Debug(object message, Exception exception, GridClient client = null)
+        public static void Debug(object message, Exception exception, GridClient? client = null)
         {
             Log(message, LogLevel.Debug, client, exception);
         }
@@ -671,7 +613,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="message">Message object to log.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Info(object message, GridClient client = null)
+        public static void Info(object message, GridClient? client = null)
         {
             Log(message, LogLevel.Information, client, null);
         }
@@ -682,7 +624,7 @@ namespace OpenMetaverse
         /// <param name="message">Message object to log.</param>
         /// <param name="exception">Exception to include with the log entry.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Info(object message, Exception exception, GridClient client = null)
+        public static void Info(object message, Exception exception, GridClient? client = null)
         {
             Log(message, LogLevel.Information, client, exception);
         }
@@ -713,7 +655,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="message">Message object to log.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Warn(object message, GridClient client = null)
+        public static void Warn(object message, GridClient? client = null)
         {
             Log(message, LogLevel.Warning, client, null);
         }
@@ -724,7 +666,7 @@ namespace OpenMetaverse
         /// <param name="message">Message object to log.</param>
         /// <param name="exception">Exception to include with the log entry.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Warn(object message, Exception exception, GridClient client = null)
+        public static void Warn(object message, Exception exception, GridClient? client = null)
         {
             Log(message, LogLevel.Warning, client, exception);
         }
@@ -755,7 +697,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="message">Message object to log.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Error(object message, GridClient client = null)
+        public static void Error(object message, GridClient? client = null)
         {
             Log(message, LogLevel.Error, client, null);
         }
@@ -766,7 +708,7 @@ namespace OpenMetaverse
         /// <param name="message">Message object to log.</param>
         /// <param name="exception">Exception to include with the log entry.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Error(object message, Exception exception, GridClient client = null)
+        public static void Error(object message, Exception exception, GridClient? client = null)
         {
             Log(message, LogLevel.Error, client, exception);
         }
@@ -797,7 +739,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="message">Message object to log.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Critical(object message, GridClient client = null)
+        public static void Critical(object message, GridClient? client = null)
         {
             Log(message, LogLevel.Critical, client, null);
         }
@@ -808,7 +750,7 @@ namespace OpenMetaverse
         /// <param name="message">Message object to log.</param>
         /// <param name="exception">Exception to include with the log entry.</param>
         /// <param name="client">Optional GridClient whose name may be included in the log.</param>
-        public static void Critical(object message, Exception exception, GridClient client = null)
+        public static void Critical(object message, Exception exception, GridClient? client = null)
         {
             Log(message, LogLevel.Critical, client, exception);
         }

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>LibreMetaverse.Imaging.Skia</RootNamespace>
+    <AssemblyName>LibreMetaverse.Imaging.Skia</AssemblyName>
+    <PackageId>LibreMetaverse.Imaging.Skia</PackageId>
+    <OutputType>Library</OutputType>
+    <TargetFrameworks>netstandard2.1;net481;net8.0;net9.0;net10.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Description>SkiaSharp-backed ITextureCodec implementation for LibreMetaverse — decodes arbitrary image formats (PNG, JPEG, BMP, etc.) into ManagedImage. Reference this package to give ColladaLoader, PrimMesher's file-decode helpers, or your own code a working ITextureCodec.</Description>
+    <Authors>Sjofn LLC, OpenMetaverse Developers</Authors>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <NoWarn>$(NoWarn);CS0419;CS1591;CS1574</NoWarn>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <OutputPath>..\bin\</OutputPath>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DefineConstants>TRACE;DEBUG</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DefineConstants>TRACE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net481'">
+    <PackageReference Include="System.Buffers" />
+    <PackageReference Include="System.Memory" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\LibreMetaverse.Imaging.Abstractions\LibreMetaverse.Imaging.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

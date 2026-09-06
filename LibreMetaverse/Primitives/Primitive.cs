@@ -27,9 +27,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class Primitive : IEquatable<Primitive>
     {
@@ -387,7 +387,7 @@ namespace OpenMetaverse
 
                     // Alpha in color is actually intensity
                     Intensity = Color.A;
-                    Color.A = 1f;
+                    Color = new Color4(Color.R, Color.G, Color.B, 1f);
                 }
                 else
                 {
@@ -408,8 +408,7 @@ namespace OpenMetaverse
                 byte[] data = new byte[16];
 
                 // Alpha channel in color is intensity
-                Color4 tmpColor = Color;
-                tmpColor.A = Intensity;
+                Color4 tmpColor = new Color4(Color.R, Color.G, Color.B, Utils.Clamp(Intensity, 0f, 1f));
                 tmpColor.GetBytes().CopyTo(data, 0);
                 Utils.FloatToBytes(Radius, data, 4);
                 Utils.FloatToBytes(Cutoff, data, 8);
@@ -465,8 +464,7 @@ namespace OpenMetaverse
             /// <returns></returns>
             public override string ToString()
             {
-                return string.Format("Color: {0} Intensity: {1} Radius: {2} Cutoff: {3} Falloff: {4}",
-                    Color, Intensity, Radius, Cutoff, Falloff);
+                return $"Color: {Color} Intensity: {Intensity} Radius: {Radius} Cutoff: {Cutoff} Falloff: {Falloff}";
             }
         }
 
@@ -719,6 +717,7 @@ namespace OpenMetaverse
                 Description = string.Empty;
                 TouchName = string.Empty;
                 SitName = string.Empty;
+                TextureIDs = Array.Empty<UUID>();
             }
 
             /// <summary>
@@ -830,6 +829,20 @@ namespace OpenMetaverse
         /// <summary>Foliage type for this primitive. Only applicable if this
         /// primitive is foliage</summary>
         public Tree TreeSpecies;
+        /// <summary>Returns the procedural rendering parameters for this tree's species.
+        /// Only meaningful when <see cref="ConstructionData.PCode"/> is
+        /// <see cref="PCode.Tree"/> or <see cref="PCode.NewTree"/>.</summary>
+        public ref readonly TreeDefinition GetTreeDefinition() => ref TreeDefinitions.Get(TreeSpecies);
+        /// <summary>Grass species when <see cref="ConstructionData.PCode"/> is <see cref="PCode.Grass"/>.
+        /// The SL viewer stores the grass species in the object State byte, not in the tree extra-data byte.</summary>
+        public Grass GrassSpecies
+        {
+            get => (Grass)PrimData.State;
+            set => PrimData.State = (byte)value;
+        }
+        /// <summary>Returns the rendering parameters for this grass prim's species.
+        /// Only meaningful when <see cref="ConstructionData.PCode"/> is <see cref="PCode.Grass"/>.</summary>
+        public ref readonly GrassDefinition GetGrassDefinition() => ref GrassDefinitions.Get(GrassSpecies);
         /// <summary>Unknown</summary>
         public byte[] ScratchPad;
         /// <summary></summary>
@@ -853,8 +866,15 @@ namespace OpenMetaverse
         /// <summary></summary>
         public LightImage LightMap;
         /// <summary></summary>
-        public SculptData Sculpt;
+        public SculptData? Sculpt;
+        /// <summary>Extended mesh parameter flags (PARAMS_EXTENDED_MESH = 0x70)</summary>
         public UInt32 ExtendedMeshFlags;
+        /// <summary>
+        /// Current signaled animations for this object, or null if no ObjectAnimation packet has been received.
+        /// Fully replaced on each ObjectAnimation update (not a delta).
+        /// Corresponds to signaled_animation_map_t in LLObjectSignaledAnimationMap in the SL C++ viewer.
+        /// </summary>
+        public List<Animation>? SignaledAnimations;
         /// <summary></summary>
         public ClickAction ClickAction;
         /// <summary></summary>
@@ -881,15 +901,15 @@ namespace OpenMetaverse
         /// <summary></summary>
         public Vector3 JointAxisOrAnchor;
         /// <summary></summary>
-        public NameValue[] NameValues;
+        public NameValue[] NameValues = Array.Empty<NameValue>();
         /// <summary></summary>
         public ConstructionData PrimData;
         /// <summary></summary>
-        public ObjectProperties Properties;
+        public ObjectProperties? Properties;
         /// <summary>Objects physics engine properties</summary>
-        public PhysicsProperties PhysicsProps;
+        public PhysicsProperties? PhysicsProps;
         /// <summary>Extra data about primitive</summary>
-        public object Tag;
+        public object? Tag;
         /// <summary>Indicates if prim is attached to an avatar</summary>
         public bool IsAttachment;
         /// <summary>Number of clients referencing this prim</summary>
@@ -987,6 +1007,12 @@ namespace OpenMetaverse
             }
         }
 
+        /// <summary>
+        /// True if this is an animated object (PARAMS_EXTENDED_MESH with ANIMATED_MESH_ENABLED_FLAG set).
+        /// Corresponds to LLVOVolume::isAnimatedObject() in the SL C++ viewer.
+        /// </summary>
+        public bool IsAnimatedObject => (ExtendedMeshFlags & 0x1u) != 0;
+
         #endregion Properties
 
         #region Constructors
@@ -1002,6 +1028,12 @@ namespace OpenMetaverse
             // Default scale to 1,1,1
             Scale = Vector3.One;
             PrimData = new ConstructionData();
+            // Initialize optional fields to safe defaults
+            ScratchPad = Utils.EmptyBytes;
+            Flexible = new FlexibleData();
+            Light = new LightData();
+            LightMap = new LightImage();
+            FaceMedia = Array.Empty<MediaEntry>();
         }
 
         public Primitive(Primitive prim)
@@ -1031,6 +1063,16 @@ namespace OpenMetaverse
             Light = prim.Light;
             LightMap = prim.LightMap;
             Sculpt = prim.Sculpt;
+            // Ensure FaceMedia is initialized
+            if (prim.FaceMedia != null)
+            {
+                FaceMedia = new MediaEntry[prim.FaceMedia.Length];
+                for (int i = 0; i < prim.FaceMedia.Length; i++) FaceMedia[i] = prim.FaceMedia[i];
+            }
+            else
+            {
+                FaceMedia = Array.Empty<MediaEntry>();
+            }
             ClickAction = prim.ClickAction;
             Sound = prim.Sound;
             OwnerID = prim.OwnerID;
@@ -1045,24 +1087,15 @@ namespace OpenMetaverse
             JointAxisOrAnchor = prim.JointAxisOrAnchor;
             if (prim.NameValues != null)
             {
-                if (NameValues == null || NameValues.Length != prim.NameValues.Length)
+                if (NameValues.Length != prim.NameValues.Length)
                     NameValues = new NameValue[prim.NameValues.Length];
                 Array.Copy(prim.NameValues, NameValues, prim.NameValues.Length);
             }
             else
-                NameValues = null;
+                NameValues = Array.Empty<NameValue>();
             PrimData = prim.PrimData != null ? new ConstructionData(prim.PrimData) : new ConstructionData();
             Properties = prim.Properties;
-            // FIXME: Get a real copy constructor for TextureEntry instead of serializing to bytes and back
-            if (prim.Textures != null)
-            {
-                byte[] textureBytes = prim.Textures.GetBytes();
-                Textures = new TextureEntry(textureBytes, 0, textureBytes.Length);
-            }
-            else
-            {
-                Textures = null;
-            }
+            Textures = prim.Textures != null ? new TextureEntry(prim.Textures) : null;
             TextureAnim = prim.TextureAnim;
             ParticleSys = prim.ParticleSys;
         }
@@ -1153,12 +1186,21 @@ namespace OpenMetaverse
         public static Primitive FromOSD(OSD osd)
         {
             Primitive prim = new Primitive();
-            
+            PopulateFromOSD(prim, osd);
+            return prim;
+        }
+
+        /// <summary>
+        /// Populates an existing Primitive (or subclass) instance from an OSD map.
+        /// Called by FromOSD and Avatar.FromOSD to avoid reflection-based field copying.
+        /// </summary>
+        internal static void PopulateFromOSD(Primitive prim, OSD osd)
+        {
             if (!(osd is OSDMap map))
-                return prim; // not a map, return default
+                return;
 
             // Local helpers
-            T GetOrDefault<T>(OSDMap m, string key, Func<OSD, T> conv, T def)
+            T GetOrDefault<T>(OSDMap? m, string key, Func<OSD, T> conv, T def)
             {
                 if (m == null) return def;
                 if (m.TryGetValue(key, out OSD val) && val != null)
@@ -1169,7 +1211,7 @@ namespace OpenMetaverse
                 return def;
             }
 
-            OSDMap GetMap(OSDMap m, string key)
+            OSDMap? GetMap(OSDMap? m, string key)
             {
                 if (m == null) return null;
                 if (m.TryGetValue(key, out OSD val) && val is OSDMap om)
@@ -1180,9 +1222,9 @@ namespace OpenMetaverse
             // Construct construction data safely
             ConstructionData data = new ConstructionData();
 
-            OSDMap volume = GetMap(map, "volume");
-            OSDMap path = GetMap(volume, "path");
-            OSDMap profile = GetMap(volume, "profile");
+            OSDMap? volume = GetMap(map, "volume");
+            OSDMap? path = GetMap(volume, "path");
+            OSDMap? profile = GetMap(volume, "profile");
 
             data.profileCurve = 0;
             data.Material = GetOrDefault(map, "material", o => (Material)o.AsInteger(), (Material)0);
@@ -1266,8 +1308,6 @@ namespace OpenMetaverse
             if (!string.IsNullOrEmpty(name)) prim.Properties.Name = name;
             string desc = GetOrDefault(map, "description", o => o.AsString(), string.Empty);
             if (!string.IsNullOrEmpty(desc)) prim.Properties.Description = desc;
-
-            return prim;
         }
 
         public int SetExtraParamsFromBytes(byte[] data, int pos)
@@ -1310,11 +1350,11 @@ namespace OpenMetaverse
 
         public byte[] GetExtraParamsBytes()
         {
-            byte[] flexible = null;
-            byte[] light = null;
-            byte[] lightmap = null;
-            byte[] sculpt = null;
-            byte[] buffer = null;
+            byte[]? flexible = null;
+            byte[]? light = null;
+            byte[]? lightmap = null;
+            byte[]? sculpt = null;
+            byte[] buffer;
             int size = 1;
             int pos = 0;
             byte count = 0;
@@ -1383,7 +1423,7 @@ namespace OpenMetaverse
             }
             if (sculpt != null)
             {
-                if (Sculpt.Type == SculptType.Mesh)
+                if (Sculpt != null && Sculpt.Type == SculptType.Mesh)
                 {
                     Buffer.BlockCopy(Utils.UInt16ToBytes((ushort)ExtraParamType.Mesh), 0, buffer, pos, 2);
                 }
@@ -1407,13 +1447,14 @@ namespace OpenMetaverse
 
         #region Overrides
 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return (obj is Primitive primitive) && this == primitive;
         }
 
-        public bool Equals(Primitive other)
+        public bool Equals(Primitive? other)
         {
+            if (ReferenceEquals(other, null)) return false;
             return this == other;
         }
 
@@ -1477,22 +1518,16 @@ namespace OpenMetaverse
 
         #region Operators
 
-        public static bool operator ==(Primitive lhs, Primitive rhs)
+        public static bool operator ==(Primitive? lhs, Primitive? rhs)
         {
-            if ((object)lhs == null || (object)rhs == null)
-            {
-                return (object)rhs == (object)lhs;
-            }
-            return (lhs.ID == rhs.ID);
+            if (ReferenceEquals(lhs, rhs)) return true;
+            if (lhs is null || rhs is null) return false;
+            return lhs.ID == rhs.ID;
         }
 
-        public static bool operator !=(Primitive lhs, Primitive rhs)
+        public static bool operator !=(Primitive? lhs, Primitive? rhs)
         {
-            if ((object)lhs == null || (object)rhs == null)
-            {
-                return (object)rhs != (object)lhs;
-            }
-            return !(lhs.ID == rhs.ID);
+            return !(lhs == rhs);
         }
 
         #endregion Operators

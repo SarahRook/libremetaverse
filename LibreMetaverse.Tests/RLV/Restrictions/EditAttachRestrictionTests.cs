@@ -1,0 +1,29 @@
+using System;
+using System.Threading.Tasks;
+using LibreMetaverse.RLV;
+using NUnit.Framework;
+namespace LibreMetaverse.Tests.RLV.Restrictions
+{
+    [TestFixture]
+    public class EditAttachRestrictionTests : RlvTestBase
+    {
+        #region @editattach=<y/n>
+        [Test]
+        public async Task CanEdit_Attachment()
+        {
+            var objectId1 = new Guid("00000000-0000-4000-8000-000000000000");
+
+            await _rlv.ProcessMessageAsync($"@editattach=n", _sender.Id, _sender.Name);
+
+            Assert.That(_rlv.Permissions.CanEdit(RlvPermissionsService.ObjectLocation.Hud, null), Is.True);
+            Assert.That(_rlv.Permissions.CanEdit(RlvPermissionsService.ObjectLocation.Attached, null), Is.False);
+            Assert.That(_rlv.Permissions.CanEdit(RlvPermissionsService.ObjectLocation.RezzedInWorld, null), Is.True);
+
+            Assert.That(_rlv.Permissions.CanEdit(RlvPermissionsService.ObjectLocation.Hud, objectId1), Is.True);
+            Assert.That(_rlv.Permissions.CanEdit(RlvPermissionsService.ObjectLocation.Attached, objectId1), Is.False);
+            Assert.That(_rlv.Permissions.CanEdit(RlvPermissionsService.ObjectLocation.RezzedInWorld, objectId1), Is.True);
+        }
+
+        #endregion
+    }
+}

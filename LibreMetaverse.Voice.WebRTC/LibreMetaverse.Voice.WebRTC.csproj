@@ -1,13 +1,11 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <PackageId>LibreMetaverse.Voice.WebRTC</PackageId>
-    <Description>Client library for Second Life WebRTC</Description>
+    <Description>WebRTC-based voice client library for LibreMetaverse, enabling real-time audio communication with Second Life's WebRTC voice service via SIPSorcery.</Description>
     <OutputType>Library</OutputType>
     <RootNamespace>LibreMetaverse</RootNamespace>
-    <TargetFrameworks>netstandard2.0;net8.0;net9.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.1;net481;net8.0;net9.0;net10.0</TargetFrameworks>
     <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <NoWarn>$(NoWarn)</NoWarn>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <OutputPath>..\bin\</OutputPath>
@@ -16,23 +14,22 @@
     <DefineConstants>TRACE;DEBUG</DefineConstants>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <DebugType>pdbonly</DebugType>
     <DefineConstants>TRACE</DefineConstants>
-    <Optimize>True</Optimize>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\LibreMetaverse.StructuredData\LibreMetaverse.StructuredData.csproj" />
     <ProjectReference Include="..\LibreMetaverse\LibreMetaverse.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\LICENSE.txt" Pack="true" PackagePath="\" />
-    <None Include="..\README.md" Pack="true" PackagePath="\" />
-    <None Include="..\data\logo.png" Pack="true" PackagePath="\" />
+    <PackageReference Include="SIPSorcery" />
+    <PackageReference Include="System.Text.Json" />
   </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="SIPSorcery" Version="8.0.23" />
-    <PackageReference Include="SIPSorceryMedia.SDL3" Version="0.0.3" />
-    <PackageReference Include="SIPSorceryMedia.SDL3.Native" Version="3.2.28" />
+  <ItemGroup Condition="'$(TargetFramework)' == 'net481'">
+    <Reference Include="System.Net.Http" />
+    <PackageReference Include="SIPSorceryMedia.SDL3" />
+    <PackageReference Include="SIPSorceryMedia.SDL3.Native" />
+  </ItemGroup>
+  <ItemGroup Condition="!$(TargetFramework.Contains('standard')) And '$(TargetFramework)' != 'net481'">
+    <PackageReference Include="SIPSorceryMedia.SoundFlow" />
   </ItemGroup>
 </Project>

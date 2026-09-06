@@ -1,5 +1,5 @@
-﻿/*
- * Copyright (c) 2025, Sjofn LLC.
+/*
+ * Copyright (c) 2025-2026, Sjofn LLC.
  * All rights reserved.
  *
  * - Redistribution and use in source and binary forms, with or without 
@@ -59,7 +59,7 @@ namespace VisualParamGenerator
 using System;
 using System.Collections.Generic;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Operation to apply when applying color to texture
@@ -125,6 +125,87 @@ namespace OpenMetaverse
         }
     }
     /// <summary>
+    /// Describes a single driven-param relationship for a driver visual parameter.
+    /// Min1/Max1/Max2/Min2 are in the driver parameter's own value range.
+    /// </summary>
+    public struct DrivenParamInfo
+    {
+        /// <summary>ParamID of the driven parameter.</summary>
+        public int ParamID;
+        /// <summary>Piecewise-linear range start on the driver axis.</summary>
+        public float Min1;
+        /// <summary>Piecewise-linear range peak-start on the driver axis.</summary>
+        public float Max1;
+        /// <summary>Piecewise-linear range peak-end on the driver axis.</summary>
+        public float Max2;
+        /// <summary>Piecewise-linear range end on the driver axis.</summary>
+        public float Min2;
+        /// <summary>True when Min1/Max1/Max2/Min2 define a custom mapping; false means pass-through.</summary>
+        public bool HasRange;
+        public DrivenParamInfo(int paramID, float min1, float max1, float max2, float min2, bool hasRange)
+        {
+            ParamID = paramID;
+            Min1 = min1;
+            Max1 = max1;
+            Max2 = max2;
+            Min2 = min2;
+            HasRange = hasRange;
+        }
+    }
+    /// <summary>
+    /// Describes how a single bone should be scaled (and optionally repositioned) by a visual parameter.
+    /// Corresponds to a &lt;bone&gt; entry inside a &lt;param_skeleton&gt; element in avatar_lad.xml.
+    /// The deformation formula is additive: finalScale = defaultScale + ScaleDeformation * paramValue.
+    /// </summary>
+    public struct SkeletalBoneInfo
+    {
+        /// <summary>Name of the skeleton bone to deform.</summary>
+        public string BoneName;
+        /// <summary>Additive scale delta applied to the bone when the parameter is at full value.</summary>
+        public Vector3 ScaleDeformation;
+        /// <summary>Additive position delta applied to the bone when the parameter is at full value.</summary>
+        public Vector3 PositionDeformation;
+        /// <summary>True when this bone entry also carries a position deformation.</summary>
+        public bool HasPositionDeformation;
+        public SkeletalBoneInfo(string boneName, Vector3 scaleDeformation, Vector3 positionDeformation, bool hasPositionDeformation)
+        {
+            BoneName = boneName;
+            ScaleDeformation = scaleDeformation;
+            PositionDeformation = positionDeformation;
+            HasPositionDeformation = hasPositionDeformation;
+        }
+    }
+    /// <summary>
+    /// Describes how a single collision-volume bone should be repositioned and/or rescaled
+    /// by a visual parameter. Corresponds to a &lt;volume_morph&gt; entry inside a
+    /// &lt;param_morph&gt; element in avatar_lad.xml — the mechanism SL uses to drive
+    /// body-shape collision volumes (BELLY, CHEST, LEFT_PEC, RIGHT_PEC, BUTT, etc.), as
+    /// distinct from &lt;param_skeleton&gt;/&lt;bone&gt; (see <see cref="SkeletalBoneInfo"/>).
+    /// The deformation formula is additive, same as SkeletalBoneInfo:
+    /// finalValue = defaultValue + Delta * paramValue.
+    /// </summary>
+    public struct VolumeMorphInfo
+    {
+        /// <summary>Name of the collision-volume bone to deform.</summary>
+        public string BoneName;
+        /// <summary>Additive scale delta applied when the parameter is at full value.</summary>
+        public Vector3 ScaleDelta;
+        /// <summary>True when this entry carries a scale delta.</summary>
+        public bool HasScale;
+        /// <summary>Additive position delta applied when the parameter is at full value.</summary>
+        public Vector3 PositionDelta;
+        /// <summary>True when this entry carries a position delta.</summary>
+        public bool HasPosition;
+        public VolumeMorphInfo(string boneName, Vector3 scaleDelta, bool hasScale, Vector3 positionDelta, bool hasPosition)
+        {
+            BoneName = boneName;
+            ScaleDelta = scaleDelta;
+            HasScale = hasScale;
+            PositionDelta = positionDelta;
+            HasPosition = hasPosition;
+        }
+    }
+    /// <summary>
     /// A single visual characteristic of an avatar mesh, such as eyebrow height
     /// </summary>
     public struct VisualParam
@@ -136,7 +217,7 @@ namespace OpenMetaverse
         /// <summary>Group ID this parameter belongs to</summary>
         public int Group;
         /// <summary>Name of the wearable this parameter belongs to</summary>
-        public string Wearable;
+        public string? Wearable;
         /// <summary>Displayable label of this characteristic</summary>
         public string Label;
         /// <summary>Displayable label for the minimum value of this characteristic</summary>
@@ -155,8 +236,14 @@ namespace OpenMetaverse
         public VisualAlphaParam? AlphaParams;
         /// <summary>Color information</summary>
         public VisualColorParam? ColorParams;
-        /// <summary>Array of param IDs that are drivers for this parameter</summary>
-        public int[] Drivers;
+        /// <summary>Array of param IDs driven by this parameter (for driver params).</summary>
+        public int[]? Drivers;
+        /// <summary>Full driven-param info including piecewise-linear mapping (non-null for driver params).</summary>
+        public DrivenParamInfo[]? DrivenParams;
+        /// <summary>Per-bone skeletal deformations driven by this visual parameter (non-null for skeletal morph params).</summary>
+        public SkeletalBoneInfo[]? SkeletalDistortions;
+        /// <summary>Per-collision-volume deformations driven by this visual parameter (non-null for volume morph params).</summary>
+        public VolumeMorphInfo[]? VolumeMorphs;
         /// <summary>
         /// Set all the values through the constructor
         /// </summary>
@@ -171,10 +258,13 @@ namespace OpenMetaverse
         /// <param name="min">Minimum value</param>
         /// <param name="max">Maximum value</param>
         /// <param name="isBumpAttribute">Is this param used for creation of bump layer?</param>
-        /// <param name="drivers">Array of param IDs that are drivers for this parameter</param>
+        /// <param name="drivers">Array of param IDs driven by this parameter</param>
         /// <param name="alpha">Alpha blending/bump info</param>
         /// <param name="colorParams">Color information</param>
-        public VisualParam(int paramID, string name, int group, string wearable, string label, string labelMin, string labelMax, float def, float min, float max, bool isBumpAttribute, int[] drivers, VisualAlphaParam? alpha, VisualColorParam? colorParams)
+        /// <param name="drivenParams">Full driven-param info for driver params</param>
+        /// <param name="skeletalDistortions">Per-bone skeletal deformations driven by this parameter</param>
+        /// <param name="volumeMorphs">Per-collision-volume deformations driven by this parameter</param>
+        public VisualParam(int paramID, string name, int group, string? wearable, string label, string labelMin, string labelMax, float def, float min, float max, bool isBumpAttribute, int[]? drivers, VisualAlphaParam? alpha, VisualColorParam? colorParams, DrivenParamInfo[]? drivenParams = null, SkeletalBoneInfo[]? skeletalDistortions = null, VolumeMorphInfo[]? volumeMorphs = null)
         {
             ParamID = paramID;
             Name = name;
@@ -190,6 +280,9 @@ namespace OpenMetaverse
             Drivers = drivers;
             AlphaParams = alpha;
             ColorParams = colorParams;
+            DrivenParams = drivenParams;
+            SkeletalDistortions = skeletalDistortions;
+            VolumeMorphs = volumeMorphs;
         }
     }
 
@@ -200,7 +293,13 @@ namespace OpenMetaverse
     {
         public static SortedList<int, VisualParam> Params = new SortedList<int, VisualParam>();
 
-        public static VisualParam Find(string name, string wearable)
+        /// <summary>
+        /// Group-0 and group-3 parameter IDs in ascending numeric ID order.
+        /// This order matches the byte sequence in the AvatarAppearance packet visual_param block.
+        /// </summary>
+        public static int[] Group0ParamIds = Array.Empty<int>();
+
+        public static VisualParam Find(string name, string? wearable)
         {
             foreach (KeyValuePair<int, VisualParam> param in Params)
                 if (param.Value.Name == name && param.Value.Wearable == wearable)
@@ -267,6 +366,15 @@ namespace OpenMetaverse
             return value.ToString(EnUsCulture) + "f";
         }
 
+        private static (string x, string y, string z) ParseVector3(string value)
+        {
+            var parts = value.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            var x = parts.Length > 0 ? FormatFloat(float.Parse(parts[0], NumberStyles.Float, EnUsCulture.NumberFormat)) : "0f";
+            var y = parts.Length > 1 ? FormatFloat(float.Parse(parts[1], NumberStyles.Float, EnUsCulture.NumberFormat)) : "0f";
+            var z = parts.Length > 2 ? FormatFloat(float.Parse(parts[2], NumberStyles.Float, EnUsCulture.NumberFormat)) : "0f";
+            return (x, y, z);
+        }
+
         private static string GenerateFromTemplateAndXml(string templateText, string xmlText, SourceProductionContext spc)
         {
             var doc = new XmlDocument();
@@ -274,10 +382,15 @@ namespace OpenMetaverse
             var nodes = doc.GetElementsByTagName("param");
 
             var ids = new SortedList<int, string>();
+            var group0IdsInOrder = new List<int>();  // group-0 and group-3 (TRANSMIT_NOT_TWEAKABLE) wire IDs
             var alphas = new Dictionary<int, string>();
             var colors = new Dictionary<int, string>();
+            var drivenParamInfoMap = new Dictionary<int, string>();
+            var skeletalInfoMap = new Dictionary<int, string>();
+            var volumeMorphInfoMap = new Dictionary<int, string>();
 
             var sb = new StringBuilder();
+            sb.AppendLine("#nullable enable");
 
             // copy template first
             sb.AppendLine(templateText);
@@ -290,9 +403,6 @@ namespace OpenMetaverse
                     continue;
 
                 if (node.Attributes["shared"]?.Value == "1")
-                    continue;
-
-                if (node.Attributes["edit_group"] == null)
                     continue;
 
                 if (node.Attributes["id"] == null || node.Attributes["name"] == null)
@@ -382,6 +492,78 @@ namespace OpenMetaverse
                                     colors[id] = $"new VisualColorParam({operation}, new Color4[] {{ {colorsStr} }})";
                                 }
                             }
+                            else if (child is { Name: "param_skeleton", HasChildNodes: true })
+                            {
+                                var boneInfoList = new List<string>();
+                                foreach (XmlNode bnode in child.ChildNodes)
+                                {
+                                    if (bnode.Name != "bone" || bnode.Attributes?["name"] == null) continue;
+                                    var boneName = bnode.Attributes["name"].Value;
+                                    var scaleAttr = bnode.Attributes["scale"]?.Value ?? "0 0 0";
+                                    var posAttr = bnode.Attributes["offset"]?.Value;
+                                    var (sx, sy, sz) = ParseVector3(scaleAttr);
+                                    var hasPosDeform = posAttr != null;
+                                    string posArg;
+                                    if (hasPosDeform)
+                                    {
+                                        var (px, py, pz) = ParseVector3(posAttr!);
+                                        posArg = $"new Vector3({px}, {py}, {pz})";
+                                    }
+                                    else
+                                    {
+                                        posArg = "Vector3.Zero";
+                                    }
+                                    var hasPosStr = hasPosDeform ? "true" : "false";
+                                    boneInfoList.Add($"new SkeletalBoneInfo(\"" + boneName + $"\", new Vector3({sx}, {sy}, {sz}), {posArg}, {hasPosStr})");
+                                }
+                                if (boneInfoList.Count > 0)
+                                {
+                                    var joinedBones = string.Join(", ", boneInfoList);
+                                    skeletalInfoMap[id] = $"new SkeletalBoneInfo[] {{ {joinedBones} }}";
+                                }
+                            }
+                            else if (child is { Name: "param_morph", HasChildNodes: true })
+                            {
+                                var morphInfoList = new List<string>();
+                                foreach (XmlNode vnode in child.ChildNodes)
+                                {
+                                    if (vnode.Name != "volume_morph" || vnode.Attributes?["name"] == null) continue;
+                                    var volName = vnode.Attributes["name"].Value;
+                                    var scaleAttr = vnode.Attributes["scale"]?.Value;
+                                    var posAttr = vnode.Attributes["pos"]?.Value;
+
+                                    string scaleArg;
+                                    var hasScale = scaleAttr != null;
+                                    if (hasScale)
+                                    {
+                                        var (sx, sy, sz) = ParseVector3(scaleAttr!);
+                                        scaleArg = $"new Vector3({sx}, {sy}, {sz})";
+                                    }
+                                    else
+                                    {
+                                        scaleArg = "Vector3.Zero";
+                                    }
+
+                                    string posArg;
+                                    var hasPos = posAttr != null;
+                                    if (hasPos)
+                                    {
+                                        var (px, py, pz) = ParseVector3(posAttr!);
+                                        posArg = $"new Vector3({px}, {py}, {pz})";
+                                    }
+                                    else
+                                    {
+                                        posArg = "Vector3.Zero";
+                                    }
+
+                                    morphInfoList.Add($"new VolumeMorphInfo(\"" + volName + $"\", {scaleArg}, {(hasScale ? "true" : "false")}, {posArg}, {(hasPos ? "true" : "false")})");
+                                }
+                                if (morphInfoList.Count > 0)
+                                {
+                                    var joinedMorphs = string.Join(", ", morphInfoList);
+                                    volumeMorphInfoMap[id] = $"new VolumeMorphInfo[] {{ {joinedMorphs} }}";
+                                }
+                            }
                         }
                     }
 
@@ -399,11 +581,13 @@ namespace OpenMetaverse
                     var min = float.Parse(node.Attributes["value_min"].Value, NumberStyles.Float, EnUsCulture.NumberFormat);
                     var max = float.Parse(node.Attributes["value_max"].Value, NumberStyles.Float, EnUsCulture.NumberFormat);
 
-                    var def = node.Attributes["value_default"] != null
-                        ? float.Parse(node.Attributes["value_default"].Value, NumberStyles.Float, EnUsCulture.NumberFormat)
-                        : min;
+                    var defAttr = node.Attributes["value_default"];
+                    var def = defAttr != null && !string.IsNullOrEmpty(defAttr.Value)
+                        ? float.Parse(defAttr.Value, NumberStyles.Float, EnUsCulture.NumberFormat)
+                        : 0f;
 
                     var drivers = "null";
+                    var drivenInfos = "null";
                     if (node.HasChildNodes)
                     {
                         for (var nodeNr = 0; nodeNr < node.ChildNodes.Count; nodeNr++)
@@ -412,23 +596,54 @@ namespace OpenMetaverse
                             if (cnode.Name != "param_driver" || !cnode.HasChildNodes) continue;
 
                             var driverIDs = new List<string>();
+                            var drivenInfoList = new List<string>();
                             foreach (XmlNode dnode in cnode.ChildNodes)
                             {
-                                if (dnode.Name == "driven" && dnode.Attributes?["id"] != null)
-                                    driverIDs.Add(dnode.Attributes["id"].Value);
+                                if (dnode.Name != "driven" || dnode.Attributes?["id"] == null) continue;
+                                var drivenId = dnode.Attributes["id"].Value;
+                                driverIDs.Add(drivenId);
+                                var min1Attr = dnode.Attributes["min1"];
+                                if (min1Attr != null)
+                                {
+                                    var dMin1 = float.Parse(min1Attr.Value, NumberStyles.Float, EnUsCulture.NumberFormat);
+                                    var dMax1 = float.Parse(dnode.Attributes["max1"].Value, NumberStyles.Float, EnUsCulture.NumberFormat);
+                                    var dMax2 = float.Parse(dnode.Attributes["max2"].Value, NumberStyles.Float, EnUsCulture.NumberFormat);
+                                    var dMin2 = float.Parse(dnode.Attributes["min2"].Value, NumberStyles.Float, EnUsCulture.NumberFormat);
+                                    drivenInfoList.Add($"new DrivenParamInfo({drivenId}, {FormatFloat(dMin1)}, {FormatFloat(dMax1)}, {FormatFloat(dMax2)}, {FormatFloat(dMin2)}, true)");
+                                }
+                                else
+                                {
+                                    drivenInfoList.Add($"new DrivenParamInfo({drivenId}, 0f, 0f, 0f, 0f, false)");
+                                }
                             }
 
                             if (driverIDs.Count > 0)
+                            {
                                 drivers = $"new int[] {{ {string.Join(", ", driverIDs)} }}";
+                                drivenInfos = $"new DrivenParamInfo[] {{ {string.Join(", ", drivenInfoList)} }}";
+                            }
                         }
                     }
+                    if (drivenInfos != "null")
+                        drivenParamInfoMap[id] = drivenInfos;
 
                     ids.Add(id,
                         string.Format("            Params[{0}] = new VisualParam({0}, \"{1}\", {2}, {3}, {4}, {5}, {6}, {7}, {8}, {9}, {10}, {11}, ",
                                       id, name, group, wearable, label, labelMin, labelMax, FormatFloat(def), FormatFloat(min), FormatFloat(max), bumpAttrib, drivers));
 
                     if (group == 0)
+                    {
+                        group0IdsInOrder.Add(id);
                         ++count;
+                    }
+                    else if (group == 3)
+                    {
+                        // group-3 (VISUAL_PARAM_GROUP_TRANSMIT_NOT_TWEAKABLE) params are also
+                        // transmitted in the AvatarAppearance packet interleaved with group-0 params
+                        // in ascending numeric ID order. They must be included here so that
+                        // DecodeVisualParams() reads each byte from the correct offset.
+                        group0IdsInOrder.Add(id);
+                    }
                 }
                 catch
                 {
@@ -452,9 +667,29 @@ namespace OpenMetaverse
                 else
                     sb.Append("null, ");
 
-                sb.Append(colors.TryGetValue(kv.Key, out var color) ? color : "null");
+                sb.Append((colors.TryGetValue(kv.Key, out var color) ? color : "null") + ", ");
+                sb.Append(drivenParamInfoMap.TryGetValue(kv.Key, out var dpi) ? dpi : "null");
+                var hasSkeletal = skeletalInfoMap.TryGetValue(kv.Key, out var skeletal);
+                var hasVolumeMorph = volumeMorphInfoMap.TryGetValue(kv.Key, out var volumeMorph);
+                if (hasSkeletal || hasVolumeMorph)
+                {
+                    sb.Append(", " + (hasSkeletal ? skeletal : "null"));
+                    if (hasVolumeMorph)
+                        sb.Append(", " + volumeMorph);
+                }
                 sb.AppendLine(");");
             }
+
+            // Emit Group0ParamIds initializer — group-0 and group-3 (TRANSMIT_NOT_TWEAKABLE) params
+            // sorted in ascending numeric ID order. The SL viewer stores visual params in a
+            // std::map<S32, LLVisualParam*> (mVisualParamIndexMap) which iterates in ascending
+            // numeric key order. Both the encoder and decoder in the SL viewer use this same sorted
+            // iteration, so byte[N] in the AvatarAppearance packet corresponds to the N-th param
+            // by ascending numeric ID — not by avatar_lad.xml document order.
+            group0IdsInOrder.Sort();
+            sb.Append("            Group0ParamIds = new int[] { ");
+            sb.Append(string.Join(", ", group0IdsInOrder));
+            sb.AppendLine(" };");
 
             // close the constructor / class / namespace that the template left open
             sb.Append("        }").AppendLine();

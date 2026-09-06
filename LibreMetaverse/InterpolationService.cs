@@ -29,17 +29,17 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     internal sealed class InterpolationService : IDisposable
     {
         private readonly GridClient _client;
 #if NET6_0_OR_GREATER
-        private System.Threading.PeriodicTimer _periodicTimer;
-        private CancellationTokenSource _cts;
-        private Task _loopTask;
+        private System.Threading.PeriodicTimer? _periodicTimer;
+        private CancellationTokenSource? _cts;
+        private Task? _loopTask;
 #else
-        private Timer _timer;
+        private Timer? _timer;
 #endif
         private bool _started;
 
@@ -50,14 +50,14 @@ namespace OpenMetaverse
 
         public void Start()
         {
-            if (!_client.Settings.USE_INTERPOLATION_TIMER || _started) return;
+            if (!_client.Settings.World.UseInterpolationTimer || _started) return;
 
 #if NET6_0_OR_GREATER
             _cts = new CancellationTokenSource();
-            _periodicTimer = new System.Threading.PeriodicTimer(TimeSpan.FromMilliseconds(_client.Settings.INTERPOLATION_INTERVAL));
+            _periodicTimer = new System.Threading.PeriodicTimer(TimeSpan.FromMilliseconds(_client.Settings.Timing.InterpolationInterval));
             _loopTask = Task.Run(() => LoopAsync(_cts.Token));
 #else
-            _timer = new Timer(TimerElapsed, null, _client.Settings.INTERPOLATION_INTERVAL, Timeout.Infinite);
+            _timer = new Timer(TimerElapsed, null, _client.Settings.Timing.InterpolationInterval, Timeout.Infinite);
 #endif
             _started = true;
         }
@@ -86,7 +86,8 @@ namespace OpenMetaverse
         {
             try
             {
-                while (await _periodicTimer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+                var timer = _periodicTimer!;
+                while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
                 {
                     PerformInterpolationPass();
                 }
@@ -108,7 +109,7 @@ namespace OpenMetaverse
 
             // Start the timer again. Use a minimum of a 50ms pause in between calculations
             int elapsed = _client.Self.lastInterpolation - Environment.TickCount;
-            int delay = Math.Max(50, _client.Settings.INTERPOLATION_INTERVAL - elapsed);
+            int delay = Math.Max(50, _client.Settings.Timing.InterpolationInterval - elapsed);
             _timer?.Change(delay, Timeout.Infinite);
         }
 #endif
@@ -196,9 +197,11 @@ namespace OpenMetaverse
                                     rotation *= dQ;
                                 }
 
-                                // Only do movement interpolation (extrapolation) when there is non-zero velocity
-                                // but no acceleration
-                                if (velocity != Vector3.Zero && acceleration == Vector3.Zero)
+                                // Extrapolate position using standard kinematic integration.
+                                // Previously this was gated on acceleration == Zero, which meant
+                                // accelerating objects were never extrapolated. Now we extrapolate
+                                // whenever there is any motion.
+                                if (velocity != Vector3.Zero || acceleration != Vector3.Zero)
                                 {
                                     position += (velocity + acceleration *
                                         (0.5f * (adjSeconds - ObjectManager.HAVOK_TIMESTEP))) * adjSeconds;
@@ -215,11 +218,41 @@ namespace OpenMetaverse
                                 break;
                             }
                             case JointType.Hinge:
-                                //FIXME: Hinge movement extrapolation
+                            {
+                                // A hinge joint allows rotation only around a single axis (JointAxisOrAnchor).
+                                // Position is constrained by the parent; only the rotational component along
+                                // the hinge axis is integrated.
+                                Vector3 hingeAxis;
+                                lock (pv) { hingeAxis = pv.JointAxisOrAnchor; }
+
+                                float axisLen = hingeAxis.Length();
+                                if (axisLen > 0.0001f && angVel != Vector3.Zero)
+                                {
+                                    Vector3 normalizedAxis = hingeAxis * (1.0f / axisLen);
+                                    float angularRate = Vector3.Dot(angVel, normalizedAxis);
+                                    float angle = angularRate * adjSeconds;
+                                    Quaternion dQ = Quaternion.CreateFromAxisAngle(normalizedAxis, angle);
+                                    lock (pv) { pv.Rotation = rotation * dQ; }
+                                }
                                 break;
+                            }
                             case JointType.Point:
-                                //FIXME: Point movement extrapolation
+                            {
+                                // A point joint allows free rotation around a fixed pivot (JointPivot).
+                                // Apply full angular velocity; linear position does not change.
+                                const float omegaThresholdSquared = 0.00001f;
+                                float omegaSquared = angVel.LengthSquared();
+
+                                if (omegaSquared > omegaThresholdSquared)
+                                {
+                                    float omega = (float)Math.Sqrt(omegaSquared);
+                                    float angle = omega * adjSeconds;
+                                    Vector3 normalizedAngVel = angVel * (1.0f / omega);
+                                    Quaternion dQ = Quaternion.CreateFromAxisAngle(normalizedAngVel, angle);
+                                    lock (pv) { pv.Rotation = rotation * dQ; }
+                                }
                                 break;
+                            }
                             default:
                                 Logger.Warn($"Unhandled joint type {joint}", _client);
                                 break;

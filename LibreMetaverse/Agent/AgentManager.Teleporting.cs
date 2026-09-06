@@ -1,35 +1,36 @@
-/**
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2019-2026, Sjofn LLC
  * All rights reserved.
  *
- * - Redistribution and use in source and binary forms, with or without 
+ * - Redistribution and use in source and binary forms, with or without
  *   modification, are permitted provided that the following conditions are met:
  *
  * - Redistributions of source code must retain the above copyright notice, this
  *   list of conditions and the following disclaimer.
- * - Neither the name of the openmetaverse.co nor the names 
+ * - Neither the name of the openmetaverse.co nor the names
  *   of its contributors may be used to endorse or promote products derived from
  *   this software without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" 
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE 
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE 
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE 
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR 
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF 
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS 
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN 
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) 
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
 using System;
 using System.Threading;
-using OpenMetaverse.Packets;
+using System.Threading.Tasks;
+using LibreMetaverse.Packets;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// AgentManager partial class - Teleporting
@@ -40,21 +41,12 @@ namespace OpenMetaverse
 
         private bool _requestedMaps = false;
 
-        /// <summary>
-        /// Teleports agent to their stored home location
-        /// </summary>
-        /// <returns>true on successful teleport to home location</returns>
-        public bool GoHome()
-        {
-            return Teleport(UUID.Zero);
-        }
+        /// <summary>Teleports agent to their stored home location</summary>
+        public Task<bool> GoHomeAsync(CancellationToken cancellationToken = default)
+            => TeleportAsync(UUID.Zero, cancellationToken);
 
-        /// <summary>
-        /// Teleport agent to a landmark
-        /// </summary>
-        /// <param name="landmark"><see cref="UUID"/> of the landmark to teleport agent to</param>
-        /// <returns>true on success, false on failure</returns>
-        public bool Teleport(UUID landmark)
+        /// <summary>Teleport agent to a landmark</summary>
+        public async Task<bool> TeleportAsync(UUID landmark, CancellationToken cancellationToken = default)
         {
             if (teleportStatus == TeleportStatus.Progress)
             {
@@ -63,7 +55,10 @@ namespace OpenMetaverse
             }
 
             teleportStatus = TeleportStatus.None;
-            teleportEvent.Reset();
+
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _teleportTcs = tcs;
+
             TeleportLandmarkRequestPacket p = new TeleportLandmarkRequestPacket
             {
                 Info = new TeleportLandmarkRequestPacket.InfoBlock
@@ -75,46 +70,65 @@ namespace OpenMetaverse
             };
             Client.Network.SendPacket(p);
 
-            teleportEvent.WaitOne(Client.Settings.TELEPORT_TIMEOUT, false);
+            return await WaitForTeleportAsync(tcs, cancellationToken).ConfigureAwait(false);
+        }
 
-            if (teleportStatus == TeleportStatus.None ||
-                teleportStatus == TeleportStatus.Start ||
-                teleportStatus == TeleportStatus.Progress)
+        /// <summary>Teleport agent to another region</summary>
+        public Task<bool> TeleportAsync(ulong regionHandle, Vector3 position, CancellationToken cancellationToken = default)
+            => TeleportAsync(regionHandle, position, new Vector3(0.0f, 1.0f, 0.0f), cancellationToken);
+
+        /// <summary>Teleport agent to another region</summary>
+        public async Task<bool> TeleportAsync(ulong regionHandle, Vector3 position, Vector3 lookAt, CancellationToken cancellationToken = default)
+        {
+            if (Client.Network.CurrentSim == null ||
+                Client.Network.CurrentSim.Caps == null ||
+                !Client.Network.CurrentSim.Caps.IsEventQueueRunning)
             {
-                TeleportMessage = "Teleport timed out.";
-                teleportStatus = TeleportStatus.Failed;
+                var queueTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+                var curSim = Client.Network.CurrentSim;
+                curSim?.Caps?.EventQueue?.Start();
+
+                EventHandler<EventQueueRunningEventArgs> queueCallback = null!;
+                queueCallback = (sender, e) =>
+                {
+                    if (e.Simulator == Client.Network.CurrentSim)
+                        queueTcs.TrySetResult(true);
+                };
+
+                Client.Network.EventQueueRunning += queueCallback;
+                try
+                {
+                    await Task.WhenAny(queueTcs.Task,
+                        Task.Delay(TimeSpan.FromSeconds(10), cancellationToken)).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Client.Network.EventQueueRunning -= queueCallback;
+                }
+                cancellationToken.ThrowIfCancellationRequested();
             }
 
-            return (teleportStatus == TeleportStatus.Finished);
+            teleportStatus = TeleportStatus.None;
+
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _teleportTcs = tcs;
+
+            RequestTeleport(regionHandle, position, lookAt, true);
+
+            return await WaitForTeleportAsync(tcs, cancellationToken).ConfigureAwait(false);
         }
 
-        /// <summary>
-        /// Attempt to look up a simulator name and teleport to the discovered
-        /// destination
-        /// </summary>
-        /// <param name="simName">Region name to look up</param>
-        /// <param name="position">Position to teleport to</param>
-        /// <returns>True if the lookup and teleport were successful, otherwise
-        /// false</returns>
-        public bool Teleport(string simName, Vector3 position)
-        {
-            return Teleport(simName, position, new Vector3(0, 1.0f, 0));
-        }
+        /// <summary>Look up a simulator by name and teleport to it</summary>
+        public Task<bool> TeleportAsync(string simName, Vector3 position, CancellationToken cancellationToken = default)
+            => TeleportAsync(simName, position, new Vector3(0, 1.0f, 0), cancellationToken);
 
-        /// <summary>
-        /// Attempt to look up a simulator name and teleport to the discovered
-        /// destination
-        /// </summary>
-        /// <param name="simName">Region name to look up</param>
-        /// <param name="position">Position to teleport to</param>
-        /// <param name="lookAt">Target to look at</param>
-        /// <returns>True if the lookup and teleport were successful, otherwise
-        /// false</returns>
-        public bool Teleport(string simName, Vector3 position, Vector3 lookAt)
+        /// <summary>Look up a simulator by name and teleport to it</summary>
+        public async Task<bool> TeleportAsync(string simName, Vector3 position, Vector3 lookAt, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrEmpty(simName))
             {
-                TeleportMessage = $"Invalid simulator name";
+                TeleportMessage = "Invalid simulator name";
                 teleportStatus = TeleportStatus.Failed;
                 OnTeleport(new TeleportEventArgs(TeleportMessage, teleportStatus, TeleportFlags.Default));
                 Logger.Warn("Teleport failed; " + TeleportMessage, Client);
@@ -138,29 +152,23 @@ namespace OpenMetaverse
 
             teleportStatus = TeleportStatus.None;
 
-            // Dodgy Hack - Requesting individual regions isn't always reliable.
-            if (!Client.Grid.GetGridRegion(simName, GridLayerType.Objects, out var region))
+            ulong handle;
+            if (string.Equals(simName, Client.Network.CurrentSim.Name, StringComparison.OrdinalIgnoreCase))
             {
-                if (!_requestedMaps)
+                handle = Client.Network.CurrentSim.Handle;
+            }
+            else
+            {
+                var region = await Client.Grid.GetGridRegionAsync(simName, GridLayerType.Objects, cancellationToken).ConfigureAwait(false);
+                if (region == null && !_requestedMaps)
                 {
                     _requestedMaps = true;
                     Client.Grid.RequestMainlandSims(GridLayerType.Objects);
-                    int max = 10;
-                    while (!Client.Grid.GetGridRegion(simName, GridLayerType.Objects, out region) && max-- > 0)
-                    {
-                        Thread.Sleep(1000);
-                    }
+                    // Give mainland map data time to arrive, then retry
+                    await Task.Delay(5000, cancellationToken).ConfigureAwait(false);
+                    region = await Client.Grid.GetGridRegionAsync(simName, GridLayerType.Objects, cancellationToken).ConfigureAwait(false);
                 }
-            }
-
-            if (simName != Client.Network.CurrentSim.Name)
-            {
-                // Teleporting to a foreign sim
-                if (Client.Grid.GetGridRegion(simName, GridLayerType.Objects, out region))
-                {
-                    return Teleport(region.RegionHandle, position, lookAt);
-                }
-                else
+                if (region == null)
                 {
                     TeleportMessage = $"Unable to resolve simulator named: {simName}";
                     teleportStatus = TeleportStatus.Failed;
@@ -168,78 +176,31 @@ namespace OpenMetaverse
                     Logger.Warn("Teleport failed; " + TeleportMessage, Client);
                     return false;
                 }
+                handle = region.Value.RegionHandle;
             }
-            else
-            {
-                // Teleporting to the sim we're already in
-                return Teleport(Client.Network.CurrentSim.Handle, position, lookAt);
-            }
+
+            return await TeleportAsync(handle, position, lookAt, cancellationToken).ConfigureAwait(false);
         }
 
-        /// <summary>
-        /// Teleport agent to another region
-        /// </summary>
-        /// <param name="regionHandle">handle of region to teleport agent to</param>
-        /// <param name="position"><see cref="Vector3"/> position in destination sim to teleport to</param>
-        /// <returns>true on success, false on failure</returns>
-        /// <remarks>This call is blocking</remarks>
-        public bool Teleport(ulong regionHandle, Vector3 position)
+        private async Task<bool> WaitForTeleportAsync(TaskCompletionSource<bool> tcs, CancellationToken cancellationToken)
         {
-            return Teleport(regionHandle, position, new Vector3(0.0f, 1.0f, 0.0f));
-        }
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            linkedCts.CancelAfter(Client.Settings.Timing.TeleportTimeout);
 
-        /// <summary>
-        /// Teleport agent to another region
-        /// </summary>
-        /// <param name="regionHandle">handle of region to teleport agent to</param>
-        /// <param name="position"><see cref="Vector3"/> position in destination sim to teleport to</param>
-        /// <param name="lookAt"><see cref="Vector3"/> direction in destination sim agent will look at</param>
-        /// <returns>true on success, false on failure</returns>
-        /// <remarks>This call is blocking</remarks>
-        public bool Teleport(ulong regionHandle, Vector3 position, Vector3 lookAt)
-        {
-            if (Client.Network.CurrentSim == null ||
-                Client.Network.CurrentSim.Caps == null ||
-                !Client.Network.CurrentSim.Caps.IsEventQueueRunning)
-            {
-                // Wait a bit to see if the event queue comes online
-                AutoResetEvent queueEvent = new AutoResetEvent(false);
+            var completed = await Task.WhenAny(tcs.Task,
+                Task.Delay(Timeout.InfiniteTimeSpan, linkedCts.Token)).ConfigureAwait(false);
 
-                EventHandler<EventQueueRunningEventArgs> queueCallback =
-                    delegate(object sender, EventQueueRunningEventArgs e)
-                    {
-                        if (e.Simulator == Client.Network.CurrentSim)
-                            queueEvent.Set();
-                    };
+            _teleportTcs = null;
 
-                if (Client.Network.CurrentSim != null && Client.Network.CurrentSim.Caps != null)
-                {
-                    Client.Network.CurrentSim.Caps.EventQueue.Start();
-                }
+            if (completed == tcs.Task)
+                return tcs.Task.Result;
 
-                Client.Network.EventQueueRunning += queueCallback;
-                queueEvent.WaitOne(TimeSpan.FromSeconds(10), false);
-                Client.Network.EventQueueRunning -= queueCallback;
-            }
+            cancellationToken.ThrowIfCancellationRequested();
 
-            teleportStatus = TeleportStatus.None;
-            teleportEvent.Reset();
-
-            RequestTeleport(regionHandle, position, lookAt, true);
-
-            teleportEvent.WaitOne(Client.Settings.TELEPORT_TIMEOUT, false);
-
-            if (teleportStatus == TeleportStatus.None ||
-                teleportStatus == TeleportStatus.Start ||
-                teleportStatus == TeleportStatus.Progress)
-            {
-                TeleportMessage = "Teleport timed out.";
-                teleportStatus = TeleportStatus.Failed;
-                
-                Logger.Info("Teleport has timed out.", Client);
-            }
-
-            return (teleportStatus == TeleportStatus.Finished);
+            TeleportMessage = "Teleport timed out.";
+            teleportStatus = TeleportStatus.Failed;
+            Logger.Info("Teleport has timed out.", Client);
+            return false;
         }
 
         /// <summary>
@@ -287,8 +248,8 @@ namespace OpenMetaverse
             {
                 Logger.Info("Event queue is not running, teleport abandoned.", Client);
                 TeleportMessage = "CAPS event queue is not running";
-                teleportEvent.Set();
                 teleportStatus = TeleportStatus.Failed;
+                _teleportTcs?.TrySetResult(false);
             }
         }
 
@@ -316,7 +277,8 @@ namespace OpenMetaverse
         /// <param name="targetID">target avatars <see cref="UUID"/> to lure</param>
         public void SendTeleportLure(UUID targetID)
         {
-            SendTeleportLure(targetID, $"Join me in {Client.Network.CurrentSim.Name}!");
+            var regionName = Client?.Network?.CurrentSim?.Name ?? "unknown";
+            SendTeleportLure(targetID, $"Join me in {regionName}!");
         }
 
         /// <summary>
@@ -345,7 +307,7 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Respond to a teleport lure by either accepting it and initiating 
+        /// Respond to a teleport lure by either accepting it and initiating
         /// the teleport, or denying it
         /// </summary>
         /// <param name="requesterID"><see cref="UUID"/> of the avatar sending the lure</param>
@@ -390,11 +352,16 @@ namespace OpenMetaverse
             }
         }
 
+        /// <summary>Request a teleport lure from another agent with a custom message and explicit session ID</summary>
+        /// <param name="targetID">UUID of the avatar to request a lure from</param>
+        /// <param name="message">Message text to include with the request</param>
         public void SendTeleportLureRequest(UUID targetID, string message)
         {
             SendTeleportLureRequest(targetID, targetID, message);
         }
 
+        /// <summary>Request a teleport lure from another agent using a default message</summary>
+        /// <param name="targetID">UUID of the avatar to request a lure from</param>
         public void SendTeleportLureRequest(UUID targetID)
         {
             SendTeleportLureRequest(targetID, "Let me join you in your location");

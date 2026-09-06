@@ -26,10 +26,11 @@
 
 using System;
 using System.Collections.Generic;
-using System.Threading;
-using OpenMetaverse.Packets;
+using System.Linq;
+using System.Threading.Tasks;
+using LibreMetaverse.Packets;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class InventoryManager
     {
@@ -67,6 +68,7 @@ namespace OpenMetaverse
         /// Rez an object from inventory
         /// </summary>
         /// <param name="simulator">Simulator to place object in</param>
+        /// <param name="taskID">TaskID (or UUID.Zero if not from a task)</param>
         /// <param name="rotation">Rotation of the object when rezzed</param>
         /// <param name="position">Vector of where to place object</param>
         /// <param name="item">InventoryItem object containing item details</param>
@@ -128,7 +130,7 @@ namespace OpenMetaverse
             Client.Network.SendPacket(add, simulator);
 
             // Remove from store if the item is no copy
-            if (Store.TryGetValue(item.UUID, out var storeItem) && storeItem is InventoryItem invItem)
+            if (Store != null && Store.TryGetValue(item.UUID, out var storeItem) && storeItem is InventoryItem invItem)
             {
                 if ((invItem.Permissions.OwnerMask & PermissionMask.Copy) == PermissionMask.None)
                 {
@@ -202,7 +204,8 @@ namespace OpenMetaverse
 
             if (Client.AisClient.IsAvailable)
             {
-                _ = Client.AisClient.PurgeDescendents(folderID, RemoveLocalUi).ConfigureAwait(false);
+                _ = Client.AisClient.PurgeDescendentsAsync(folderID)
+                    .ContinueWith(t => RemoveLocalUi(t.Status == TaskStatus.RanToCompletion && t.Result, folderID), TaskScheduler.Default);
             }
             else
             {
@@ -221,9 +224,13 @@ namespace OpenMetaverse
                     }
                 }
 
-#pragma warning disable CS0612 // Type or member is obsolete
-                Remove(remItems, remFolders);
-#pragma warning restore CS0612 // Type or member is obsolete
+                var rem = new RemoveInventoryObjectsPacket
+                {
+                    AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID }
+                };
+                rem.ItemData = remItems.Select(id => new RemoveInventoryObjectsPacket.ItemDataBlock { ItemID = id }).ToArray();
+                rem.FolderData = remFolders.Select(id => new RemoveInventoryObjectsPacket.FolderDataBlock { FolderID = id }).ToArray();
+                Client.Network.SendPacket(rem);
             }
         }
 
@@ -288,6 +295,7 @@ namespace OpenMetaverse
             bucket[0] = (byte)assetType;
             Buffer.BlockCopy(itemID.GetBytes(), 0, bucket, 1, 16);
 
+            var currentSimId = Client.Network.CurrentSim?.ID ?? UUID.Zero;
             Client.Self.InstantMessage(
                     Client.Self.Name,
                     recipient,
@@ -296,17 +304,17 @@ namespace OpenMetaverse
                     InstantMessageDialog.InventoryOffered,
                     InstantMessageOnline.Online,
                     Client.Self.SimPosition,
-                    Client.Network.CurrentSim.ID,
+                    currentSimId,
                     bucket);
 
             if (doEffect)
             {
                 Client.Self.BeamEffect(Client.Self.AgentID, recipient, Vector3d.Zero,
-                    Client.Settings.DEFAULT_EFFECT_COLOR, 1f, UUID.Random());
+                    Client.Settings.DefaultEffectColor, 1f, UUID.Random());
             }
 
             // Remove from store if the item is no copy
-            if (Store.TryGetValue(itemID, out var storeItem) && storeItem is InventoryItem invItem)
+            if (Store != null && Store.TryGetValue(itemID, out var storeItem) && storeItem is InventoryItem invItem)
             {
                 if ((invItem.Permissions.OwnerMask & PermissionMask.Copy) == PermissionMask.None)
                 {
@@ -315,49 +323,6 @@ namespace OpenMetaverse
             }
         }
 
-        /// <summary>
-        /// Recurse inventory category and return folders and items. Does NOT contain parent folder being searched
-        /// </summary>
-        /// <param name="folderID">Inventory category to recursively search</param>
-        /// <param name="owner">Owner of folder</param>
-        /// <param name="cats">reference to list of categories</param>
-        /// <param name="items">reference to list of items</param>
-        private void GetInventoryRecursive(UUID folderID, UUID owner,
-            ref List<InventoryFolder> cats, ref List<InventoryItem> items)
-        {
-            // Use the async implementation with a reasonable timeout to preserve original behavior
-            using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15)))
-            {
-                try
-                {
-                    GetInventoryRecursiveAsync(folderID, owner, cats, items, cts.Token).GetAwaiter().GetResult();
-                }
-                catch (OperationCanceledException)
-                {
-                    // preserve previous behavior: if timeout occurs, just return what we have
-                }
-            }
-        }
-
-        /// <summary>
-        /// Give an inventory Folder with contents to another avatar
-        /// </summary>
-        /// <param name="folderID">The <see cref="UUID"/> of the Folder to give</param>
-        /// <param name="folderName">The name of the folder</param>
-        /// <param name="recipient">The <see cref="UUID"/> of the recipient</param>
-        /// <param name="doEffect">true to generate a beam-effect during transfer</param>
-        /// <param name="cancellationToken">Cancellation token to cancel the operation</param>
-        public void GiveFolder(UUID folderID, string folderName, UUID recipient, bool doEffect, CancellationToken cancellationToken = default)
-        {
-            try
-            {
-                GiveFolderAsync(folderID, folderName, recipient, doEffect, cancellationToken).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(ex.Message, ex, Client);
-            }
-        }
     }
 }
 

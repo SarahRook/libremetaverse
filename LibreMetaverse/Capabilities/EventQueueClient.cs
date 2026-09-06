@@ -31,11 +31,10 @@ using System.Net;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using LibreMetaverse;
-using OpenMetaverse.Messages.Linden;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Messages.Linden;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse.Http
+namespace LibreMetaverse.Http
 {
     /// <summary>EventQueueClient manages the polling-based EventQueueGet capability</summary>
     public class EventQueueClient : IDisposable
@@ -43,23 +42,32 @@ namespace OpenMetaverse.Http
         private const string PROXY_TIMEOUT_RESPONSE = "502 Proxy Error";
         private const string MALFORMED_EMPTY_RESPONSE = "<llsd><undef /></llsd>";
 
+        // Exponential backoff bounds for transient HTTP/network errors.
+        private const int InitialEqRetryDelayMs = 1_000;
+        private const int MaxEqRetryDelayMs = 30_000;
+
+        // Milliseconds to wait before the next request; written by RequestCompletedHandler,
+        // read and reset by the polling loop.  Accessed only from the single EQ task so no
+        // Interlocked is needed, but volatile prevents stale reads across the await boundary.
+        private volatile int _pendingRetryDelayMs;
+
         public delegate void ConnectedCallback();
         public delegate void EventCallback(string eventName, OSDMap body);
 
-        public ConnectedCallback OnConnected;
-        public EventCallback OnEvent;
+        public ConnectedCallback? OnConnected;
+        public EventCallback? OnEvent;
 
         public bool Running => _queueCts != null && !_queueCts.IsCancellationRequested
                                && _eqTask != null && !_eqTask.IsCompleted;
 
         protected readonly Uri Address;
         protected readonly Simulator Simulator;
-        private CancellationTokenSource _queueCts;
-        private Task _eqTask;
+        private CancellationTokenSource? _queueCts;
+        private Task? _eqTask;
 
         private readonly object _payloadLock = new object();
-        private OSDMap _reqPayloadMap;
-        private byte[] _reqPayloadBytes;
+        private OSDMap? _reqPayloadMap;
+        private byte[]? _reqPayloadBytes;
 
         public EventQueueClient(Uri eventQueueLocation, Simulator sim)
         {
@@ -109,6 +117,20 @@ namespace OpenMetaverse.Http
             }
         }
 
+        /// <summary>
+        /// Returns the next backoff delay using binary exponential back-off with a small
+        /// jitter derived from Environment.TickCount so multiple clients don't thunderbird
+        /// at the same moment.
+        /// </summary>
+        private static int NextRetryDelay(int currentMs)
+        {
+            int next = currentMs == 0 ? InitialEqRetryDelayMs
+                                      : Math.Min(MaxEqRetryDelayMs, currentMs * 2);
+            // Add 0–12.5% jitter using TickCount as a cheap pseudo-random source.
+            next += Math.Abs(Environment.TickCount) % (next / 8 + 1);
+            return next;
+        }
+
         private void Create()
         {
             // Create an EventQueueGet request
@@ -126,7 +148,40 @@ namespace OpenMetaverse.Http
             var prev = Interlocked.Exchange(ref _queueCts, newCts);
             DisposalHelper.SafeCancelAndDispose(prev);
 
-            _eqTask = Repeat.IntervalAsync(TimeSpan.FromSeconds(1), ack, newCts.Token, true);
+            // Capture the token once: Dispose()/a later Create() can cancel-and-dispose
+            // this same CTS from another thread while this loop is still running (it only
+            // observes cancellation between awaits), and CancellationTokenSource.Token's
+            // getter throws ObjectDisposedException once disposed — which is not an
+            // OperationCanceledException, so it would fault the task instead of exiting
+            // cleanly. Reading IsCancellationRequested on an already-obtained token stays
+            // safe after the source is disposed, so re-deriving the token from newCts
+            // anywhere below this line must be avoided.
+            var token = newCts.Token;
+
+            _pendingRetryDelayMs = 0;
+
+            _eqTask = Task.Run(async () =>
+            {
+                try
+                {
+                    // First request is immediate.
+                    await ack().ConfigureAwait(false);
+
+                    while (!token.IsCancellationRequested)
+                    {
+                        int delayMs = _pendingRetryDelayMs;
+                        _pendingRetryDelayMs = 0;
+
+                        if (delayMs > 0)
+                            await Task.Delay(delayMs, token).ConfigureAwait(false);
+
+                        if (token.IsCancellationRequested) break;
+
+                        await ack().ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException) { }
+            }, token);
 
             async Task ack()
             {
@@ -149,9 +204,17 @@ namespace OpenMetaverse.Http
                         }
                     }
 
-                    await Simulator.Client.HttpCapsClient.PostRequestAsync(
-                        Address, OSDFormat.Xml, payloadSnapshot, newCts.Token, RequestCompletedHandler, ConnectedResponseHandler)
-                        .ConfigureAwait(false);
+                    try
+                    {
+                        var (response, data) = await Simulator.Client.HttpCapsClient.PostAsync(
+                            Address, OSDFormat.Xml, payloadSnapshot, token).ConfigureAwait(false);
+                        ConnectedResponseHandler(response);
+                        RequestCompletedHandler(response, data, null);
+                    }
+                    catch (Exception innerEx) when (!(innerEx is OperationCanceledException))
+                    {
+                        RequestCompletedHandler(null, null, innerEx);
+                    }
                 }
                 catch (OperationCanceledException)
                 {
@@ -199,9 +262,9 @@ namespace OpenMetaverse.Http
             }
         }
 
-        private void ConnectedResponseHandler(HttpResponseMessage response)
+        private void ConnectedResponseHandler(HttpResponseMessage? response)
         {
-            if (!response.IsSuccessStatusCode) { return; }
+            if (response?.IsSuccessStatusCode != true) { return; }
 
             // The event queue is starting up for the first time
             if (OnConnected == null) { return; }
@@ -224,16 +287,16 @@ namespace OpenMetaverse.Http
         /// <param name="response">The HTTP response message (might be null).</param>
         /// <param name="data">The response body bytes.</param>
         /// <returns>True if the payload should be treated as LLSD/XML and can be parsed; false otherwise.</returns>
-        private static bool IsLikelyLLSD(HttpResponseMessage response, byte[] data)
+        private static bool IsLikelyLLSD(HttpResponseMessage? response, byte[]? data)
         {
             if (data == null || data.Length == 0) return false;
 
             // Prefer a canonical content-type check when available
-            string mediaType = null;
+            string? mediaType = null;
             try { mediaType = response?.Content?.Headers?.ContentType?.MediaType; } catch { mediaType = null; }
             if (!string.IsNullOrEmpty(mediaType))
             {
-                var mt = mediaType.ToLowerInvariant();
+                var mt = mediaType!.ToLowerInvariant();
                 if (mt.Contains("xml") || mt.Contains("llsd"))
                     return true;
                 // Content type explicitly present and not XML-like -> avoid parsing as LLSD
@@ -263,14 +326,14 @@ namespace OpenMetaverse.Http
             return false;
         }
 
-        private void RequestCompletedHandler(HttpResponseMessage response, byte[] responseData, Exception error)
+        private void RequestCompletedHandler(HttpResponseMessage? response, byte[]? responseData, Exception? error)
         {
             // Ignore anything if we're no longer connected to the sim.
             if (!Simulator.Connected) { return; }
 
             try
             {
-                OSDArray events = null;
+                OSDArray? events = null;
                 OSD ack = new OSD();
 
                 #region Error handling
@@ -280,22 +343,31 @@ namespace OpenMetaverse.Http
                     {
                         if (error is HttpRequestException exception)
                         {
+                            bool isNormalTimeout;
 #if NET5_0_OR_GREATER
-                            if (exception.HttpRequestError != HttpRequestError.ResponseEnded)
-
+                            isNormalTimeout = exception.HttpRequestError == HttpRequestError.ResponseEnded;
 #else
-                            // ugly, but we can't get a status code
-                            if (exception.Message.Equals("The response ended prematurely. (ResponseEnded)"))
+                            // On older runtimes, HttpRequestException.Message is always the generic
+                            // "An error occurred while sending the request." wrapper regardless of cause;
+                            // the real reason lives in InnerException. The normal way a long-poll ends
+                            // when idle is the server closing the held-open connection, which surfaces
+                            // as a WebException with Status ConnectionClosed or KeepAliveFailure.
+                            isNormalTimeout = exception.InnerException is WebException webEx &&
+                                (webEx.Status == WebExceptionStatus.ConnectionClosed ||
+                                 webEx.Status == WebExceptionStatus.KeepAliveFailure);
 #endif
+                            if (!isNormalTimeout)
                             {
                                 Logger.Error($"Unable to parse response from {Simulator} event queue: " +
                                            error.Message);
+                                _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
                             }
                         }
                         else
                         {
                             Logger.Error($"Unable to parse response from {Simulator} event queue: " +
                                        error.Message);
+                            _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
                         }
 
                         return;
@@ -351,6 +423,11 @@ namespace OpenMetaverse.Http
                                         try { ctsSnapshot3.Cancel(); } catch (ObjectDisposedException) { }
                                     }
                                 }
+                                else
+                                {
+                                    // Proxy timeout wrapped in a 500 — server is stressed, back off.
+                                    _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
+                                }
                             }
                             else
                             {
@@ -363,6 +440,11 @@ namespace OpenMetaverse.Http
                                     {
                                         try { ctsSnapshot4.Cancel(); } catch (ObjectDisposedException) { }
                                     }
+                                }
+                                else
+                                {
+                                    // Ignoring spec's "stop on 500" — back off before retrying.
+                                    _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
                                 }
                             }
                         }
@@ -385,6 +467,7 @@ namespace OpenMetaverse.Http
                             if (response.StatusCode != HttpStatusCode.OK)
                             {
                                 Logger.Warn($"Unrecognized caps connection problem from {Simulator}: {response.StatusCode} {response.ReasonPhrase}");
+                                _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
                             }
                             else if (error.InnerException != null)
                             {
@@ -396,8 +479,7 @@ namespace OpenMetaverse.Http
                                     Logger.Warn("  Extra details:");
                                     foreach (DictionaryEntry de in error.Data)
                                     {
-                                        Logger.Warn(string.Format("    Key: {0,-20}      Value: {1}",
-                                                "'" + de.Key + "'", de.Value));
+                                        Logger.Warn($"    Key: {"'" + de.Key + "'",-20}      Value: {de.Value}");
                                     }
                                 }
                             }
@@ -412,6 +494,10 @@ namespace OpenMetaverse.Http
                 #endregion Error handling
                 else if (responseData != null)
                 {
+                    // Got a proper HTTP response — clear any pending backoff regardless of whether
+                    // the body parses cleanly.  The server is reachable and answering.
+                    _pendingRetryDelayMs = 0;
+
                     // Got a response. Validate that the payload is likely LLSD/XML before attempting to parse.
                     if (!IsLikelyLLSD(response, responseData))
                     {

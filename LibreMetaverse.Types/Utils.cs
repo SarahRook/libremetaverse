@@ -30,7 +30,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Runtime.InteropServices;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public static partial class Utils
     {
@@ -49,17 +49,6 @@ namespace OpenMetaverse
             Linux,
             /// <summary>Apple OSX</summary>
             OSX
-        }
-
-        /// <summary>
-        /// Runtime platform
-        /// </summary>
-        public enum Runtime
-        {
-            /// <summary>.NET runtime</summary>
-            Windows,
-            /// <summary>Mono runtime: http://www.mono-project.com/</summary>
-            Mono
         }
 
         public const float E = (float)Math.E;
@@ -402,11 +391,16 @@ namespace OpenMetaverse
         public static string PBKDF2(string str)
         {
             var salt = new byte[32];
+#if NET6_0_OR_GREATER
+            RandomNumberGenerator.Fill(salt);
+            byte[] hash = Rfc2898DeriveBytes.Pbkdf2(str, salt, 10000, HashAlgorithmName.SHA1, 20);
+#else
             using (var generator = RandomNumberGenerator.Create()) { generator.GetBytes(salt); }
 #pragma warning disable SYSLIB0041
             var derivebytes = new Rfc2898DeriveBytes(str, salt, 10000);
 #pragma warning restore SYSLIB0041
             byte[] hash = derivebytes.GetBytes(20);
+#endif
             return Convert.ToBase64String(salt) + "|" + Convert.ToBase64String(hash);
         }
 
@@ -444,16 +438,6 @@ namespace OpenMetaverse
             }
             return System.IO.File.Exists(OSX_CHECK_FILE)
                 ? Platform.OSX : Platform.Linux;
-        }
-
-        /// <summary>
-        /// Get the current running runtime
-        /// </summary>
-        /// <returns>Enumeration of the current runtime we are running on</returns>
-        public static Runtime GetRunningRuntime()
-        {
-            Type t = Type.GetType("Mono.Runtime");
-            return t != null ? Runtime.Mono : Runtime.Windows;
         }
 
         #endregion Platform

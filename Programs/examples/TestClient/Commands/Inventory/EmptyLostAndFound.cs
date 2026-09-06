@@ -1,5 +1,5 @@
-﻿using System.Threading.Tasks;
-using OpenMetaverse;
+using System.Threading.Tasks;
+using LibreMetaverse;
 
 namespace TestClient.Commands.Inventory
 {

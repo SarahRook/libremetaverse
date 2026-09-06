@@ -30,11 +30,10 @@ using System.IO;
 using System.IO.Compression;
 using System.Reflection;
 using System.Text;
-using System.Threading.Tasks;
 using ComponentAce.Compression.Libs.zlib;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Static helper functions and global variables
@@ -50,32 +49,6 @@ namespace OpenMetaverse
         /// <summary>This header flag signals that the message is compressed using zerocoding</summary>
         public const byte MSG_ZEROCODED = 0x80;
 
-        /// <summary>
-        /// Passed to Logger.Log() to identify the severity of a log entry
-        /// </summary>
-        [Obsolete("Use Microsoft.Extensions.Logging.LogLevel")]
-        public enum LogLevel
-        {
-            /// <summary>No logging information will be output</summary>
-            None,
-            /// <summary>Non-noisy useful information, may be helpful in 
-            /// debugging a problem</summary>
-            Info,
-            /// <summary>A non-critical error occurred. A warning will not 
-            /// prevent the rest of the library from operating as usual, 
-            /// although it may be indicative of an underlying issue</summary>
-            Warning,
-            /// <summary>A critical error has occurred. Generally this will 
-            /// be followed by the network layer shutting down, although the 
-            /// stability of the library after an error is uncertain</summary>
-            Error,
-            /// <summary>Used for internal testing, this logging level can 
-            /// generate very noisy (long and/or repetitive) messages. Don't
-            /// pass this to the Log() function, use DebugLog() instead.
-            /// </summary>
-            Debug,
-            Trace
-        }
 
         /// <summary>
         /// 
@@ -224,8 +197,9 @@ namespace OpenMetaverse
             for (int i = 0; i < bytes.Length; ++i)
             {
                 // Check if there are any unprintable characters in the array
-                if ((i < 0x20 || i > 0x7E) && i != 0x09
-                    && i != 0x0D && i != 0x0A && i != 0x00)
+                byte b = bytes[i];
+                if ((b < 0x20 || b > 0x7E) && b != 0x09
+                    && b != 0x0D && b != 0x0A && b != 0x00)
                 {
                     printable = false;
                     break;
@@ -279,10 +253,19 @@ namespace OpenMetaverse
         /// appended ACKs</param>
         /// <param name="dest">The output byte array to decode to</param>
         /// <returns>The length of the output buffer</returns>
-        public static int ZeroDecode(byte[] src, int srclen, byte[] dest)
+        public static int ZeroDecode(byte[]? src, int srclen, byte[]? dest)
         {
+            if (src == null)
+                throw new ArgumentNullException(nameof(src));
+            
+            if (dest == null)
+                throw new ArgumentNullException(nameof(dest));
+            
             if (srclen > src.Length)
-                throw new ArgumentException("srclen cannot be greater than src.Length");
+                throw new ArgumentException("srclen cannot be greater than src.Length", nameof(srclen));
+            
+            if (srclen < 6)
+                throw new ArgumentException("srclen must be at least 6 bytes for packet header", nameof(srclen));
 
             uint zerolen = 0;
             int bodylen = 0;
@@ -298,15 +281,42 @@ namespace OpenMetaverse
                 {
                     if (src[i] == 0x00)
                     {
-                        for (byte j = 0; j < src[i + 1]; j++)
+                        // If the zero marker is the last byte in the source this is technically
+                        // malformed zerocoding (no count byte). Instead of throwing and failing
+                        // callers, be tolerant: treat a trailing 0x00 as a single zero (count=1)
+                        // and continue processing. This prevents intermittent malformed packets
+                        // from bringing down the client or CI runs while still preserving
+                        // reasonable decoding behavior.
+                        byte zeroCount;
+                        if (i + 1 >= srclen)
+                        {
+                            // Log a warning but continue with a count of 1
+                            try { Logger.Warn($"ZeroDecode: trailing zero marker at end of buffer at position {i}, srclen={srclen}"); } catch { }
+                            zeroCount = 1;
+                        }
+                        else
+                        {
+                            zeroCount = src[i + 1];
+                        }
+
+                        // Check if destination buffer has enough space
+                        if (zerolen + zeroCount > dest.Length)
+                            throw new IndexOutOfRangeException($"ZeroDecode: Destination buffer overflow, need {zerolen + zeroCount} bytes but dest.Length={dest.Length}");
+
+                        for (byte j = 0; j < zeroCount; j++)
                         {
                             dest[zerolen++] = 0x00;
                         }
 
-                        i++;
+                        // If we consumed a count byte advance the source index
+                        if (i + 1 < srclen) i++;
                     }
                     else
                     {
+                        // Check destination buffer bounds
+                        if (zerolen >= dest.Length)
+                            throw new IndexOutOfRangeException($"ZeroDecode: Destination buffer overflow at position {zerolen}, dest.Length={dest.Length}");
+                        
                         dest[zerolen++] = src[i];
                     }
                 }
@@ -314,6 +324,9 @@ namespace OpenMetaverse
                 // Copy appended ACKs
                 for (; i < srclen; i++)
                 {
+                    if (zerolen >= dest.Length)
+                        throw new IndexOutOfRangeException($"ZeroDecode: Destination buffer overflow while copying ACKs at position {zerolen}, dest.Length={dest.Length}");
+                    
                     dest[zerolen++] = src[i];
                 }
 
@@ -341,8 +354,20 @@ namespace OpenMetaverse
         /// <param name="srclen">The length of the byte array to encode</param>
         /// <param name="dest">The output byte array to encode to</param>
         /// <returns>The length of the output buffer</returns>
-        public static int ZeroEncode(byte[] src, int srclen, byte[] dest)
+        public static int ZeroEncode(byte[]? src, int srclen, byte[]? dest)
         {
+            if (src == null)
+                throw new ArgumentNullException(nameof(src));
+            
+            if (dest == null)
+                throw new ArgumentNullException(nameof(dest));
+            
+            if (srclen > src.Length)
+                throw new ArgumentException("srclen cannot be greater than src.Length", nameof(srclen));
+            
+            if (srclen < 6)
+                throw new ArgumentException("srclen must be at least 6 bytes for packet header", nameof(srclen));
+
             uint zerolen = 0;
             byte zerocount = 0;
 
@@ -366,28 +391,42 @@ namespace OpenMetaverse
                 {
                     zerocount++;
 
+                    // Handle byte overflow: if we've hit 255 zeros, flush them out
                     if (zerocount == 0)
                     {
+                        // We wrapped around from 255 -> 0, so write out 255 zeros
+                        if (zerolen + 2 > dest.Length)
+                            throw new IndexOutOfRangeException($"ZeroEncode: Destination buffer overflow at position {zerolen}, dest.Length={dest.Length}");
+                        
                         dest[zerolen++] = 0x00;
-                        dest[zerolen++] = 0xff;
-                        zerocount++;
+                        dest[zerolen++] = 0xff;  // 255 zeros
+                        zerocount = 1; // Current zero starts a new count
                     }
                 }
                 else
                 {
                     if (zerocount != 0)
                     {
+                        if (zerolen + 2 > dest.Length)
+                            throw new IndexOutOfRangeException($"ZeroEncode: Destination buffer overflow at position {zerolen}, dest.Length={dest.Length}");
+                        
                         dest[zerolen++] = 0x00;
                         dest[zerolen++] = (byte)zerocount;
                         zerocount = 0;
                     }
 
+                    if (zerolen >= dest.Length)
+                        throw new IndexOutOfRangeException($"ZeroEncode: Destination buffer overflow at position {zerolen}, dest.Length={dest.Length}");
+                    
                     dest[zerolen++] = src[i];
                 }
             }
 
             if (zerocount != 0)
             {
+                if (zerolen + 2 > dest.Length)
+                    throw new IndexOutOfRangeException($"ZeroEncode: Destination buffer overflow at position {zerolen}, dest.Length={dest.Length}");
+                
                 dest[zerolen++] = 0x00;
                 dest[zerolen++] = (byte)zerocount;
             }
@@ -395,6 +434,9 @@ namespace OpenMetaverse
             // copy appended ACKs
             for (; i < srclen; i++)
             {
+                if (zerolen >= dest.Length)
+                    throw new IndexOutOfRangeException($"ZeroEncode: Destination buffer overflow while copying ACKs at position {zerolen}, dest.Length={dest.Length}");
+                
                 dest[zerolen++] = src[i];
             }
 
@@ -461,7 +503,7 @@ namespace OpenMetaverse
         /// <param name="resourceName">The filename of the resource to load</param>
         /// <returns>A Stream for the requested file, or null if the resource
         /// was not successfully loaded</returns>
-        public static Stream GetResourceStream(string resourceName)
+        public static Stream? GetResourceStream(string resourceName)
         {
             return GetResourceStream(resourceName, "openmetaverse_data");
         }
@@ -475,17 +517,18 @@ namespace OpenMetaverse
         /// the asset is not found embedded in the assembly</param>
         /// <returns>A Stream for the requested file, or null if the resource
         /// was not successfully loaded</returns>
-        public static Stream GetResourceStream(string resourceName, string searchPath)
+        public static Stream? GetResourceStream(string resourceName, string searchPath)
         {
             if (searchPath != null)
             {
-                Assembly gea = Assembly.GetEntryAssembly();
-                if (gea == null) gea = typeof(Helpers).Assembly;
-                string dirname = ".";
-                if (gea.Location != null)
-                {
-                    dirname = Path.Combine(Path.GetDirectoryName(gea.Location), searchPath);
-                }
+                Assembly gea = Assembly.GetEntryAssembly() ?? typeof(Helpers).Assembly;
+#pragma warning disable IL3000 // Location returns empty string in single-file/AOT; we handle that below
+                var loc = gea.Location;
+#pragma warning restore IL3000
+                var baseDir = string.IsNullOrEmpty(loc)
+                    ? AppContext.BaseDirectory
+                    : Path.GetDirectoryName(loc) ?? AppContext.BaseDirectory;
+                string dirname = Path.Combine(baseDir, searchPath);
 
                 string filename = Path.Combine(dirname, resourceName);
                 try
@@ -504,7 +547,7 @@ namespace OpenMetaverse
                 try
                 {
                     Assembly a = Assembly.GetExecutingAssembly();
-                    Stream s = a.GetManifestResourceStream("OpenMetaverse.Resources." + resourceName);
+                    Stream? s = a.GetManifestResourceStream("LibreMetaverse.Resources." + resourceName);
                     if (s != null) return s;
                 }
                 catch (Exception ex)
@@ -573,6 +616,7 @@ namespace OpenMetaverse
         ///}
         /// </code>
         /// </example>
+        [System.Diagnostics.CodeAnalysis.RequiresUnreferencedCode("Uses runtime reflection to enumerate struct fields. Not AOT-safe. Consider an explicit ToString() override instead.")]
         public static string StructToString(object t)
         {
             StringBuilder result = new StringBuilder();
@@ -599,7 +643,7 @@ namespace OpenMetaverse
 
         public static byte[] ZCompressOSD(OSD data)
         {
-            byte[] ret = null;
+            byte[] ret = Array.Empty<byte>();
 
             using (MemoryStream outMemoryStream = new MemoryStream())
             using (ZOutputStream outZStream = new ZOutputStream(outMemoryStream, zlibConst.Z_BEST_COMPRESSION))
@@ -636,7 +680,7 @@ namespace OpenMetaverse
         /// <param name="meshBytes"></param>
         /// <returns>the OSD object</returns>
         public static OSD DecompressOSD(byte[] meshBytes) {
-            OSD decodedOsd = null;
+            OSD? decodedOsd = null;
 
             using (MemoryStream inMs = new MemoryStream(meshBytes))
             using (MemoryStream outMs = new MemoryStream())
@@ -657,13 +701,13 @@ namespace OpenMetaverse
 
                 decodedOsd = OSDParser.DeserializeLLSDBinary(decompressedBuf);
             }
-            return decodedOsd;
+            return decodedOsd!;
         }
 
         /// <summary>
         /// Execute an action safely catching any exceptions and reporting via logger.
         /// </summary>
-        public static void SafeAction(Action action, string actionName = null, Action<string, Exception> logger = null)
+        public static void SafeAction(Action action, string? actionName = null, Action<string, Exception?>? logger = null)
         {
             if (action == null) return;
 
@@ -677,14 +721,5 @@ namespace OpenMetaverse
                 logger?.Invoke(message, ex);
             }
         }
-    }
-
-    public static class AsyncHelper
-    {
-
-        public static void Sync(Func<Task> func) => Task.Run(func).GetAwaiter().GetResult();
-
-        public static T Sync<T>(Func<Task<T>> func) => Task.Run(func).GetAwaiter().GetResult();
-
     }
 }

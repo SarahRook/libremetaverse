@@ -26,10 +26,9 @@
 
 using System;
 using System.Collections.Generic;
-using OpenMetaverse.StructuredData;
-using System.Reflection;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     #region Enums
 
@@ -249,13 +248,11 @@ namespace OpenMetaverse
         {
             /// <summary>Languages profile field</summary>
             public string LanguagesText;
-            /// <summary></summary>
-            // FIXME:
+            /// <summary>Bitmask of skills (values defined by the SL viewer)</summary>
             public uint SkillsMask;
             /// <summary></summary>
             public string SkillsText;
-            /// <summary></summary>
-            // FIXME:
+            /// <summary>Bitmask of "want to" interests (values defined by the SL viewer)</summary>
             public uint WantToMask;
             /// <summary></summary>
             public string WantToText;
@@ -315,7 +312,7 @@ namespace OpenMetaverse
                 return other.AttachmentPoint == AttachmentPoint && other.AttachmentID == AttachmentID;
             }
 
-            public override bool Equals(object obj)
+            public override bool Equals(object? obj)
             {
                 return obj is Attachment objA && Equals(objA);
             }
@@ -350,7 +347,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Contains the visual parameters describing the deformation of the avatar
         /// </summary>
-        public byte[] VisualParameters = null;
+        public byte[] VisualParameters = Array.Empty<byte>();
 
         /// <summary>
         /// The avatars hover height (as indicated by the simulator)
@@ -375,17 +372,17 @@ namespace OpenMetaverse
         /// <summary>
         /// List of current avatar animations
         /// </summary>
-        public List<Animation> Animations;
+        public List<Animation> Animations = new List<Animation>();
 
         /// <summary>
         /// List of (known) attachments, hinted by the simulator. See: https://jira.secondlife.com/browse/SL-20635
         /// </summary>
-        public List<Attachment> Attachments;
+        public List<Attachment> Attachments = new List<Attachment>();
 
         #endregion Public Members
 
-        internal string _cachedName;
-        internal string _cachedGroupName;
+        internal string? _cachedName;
+        internal string? _cachedGroupName;
 
         #region Properties
 
@@ -397,7 +394,7 @@ namespace OpenMetaverse
                 for (int i = 0; i < NameValues.Length; i++)
                 {
                     if (NameValues[i].Name == "FirstName" && NameValues[i].Type == NameValue.ValueType.String)
-                        return (string)NameValues[i].Value;
+                        return NameValues[i].Value as string ?? string.Empty;
                 }
 
                 return string.Empty;
@@ -412,7 +409,7 @@ namespace OpenMetaverse
                 for (int i = 0; i < NameValues.Length; i++)
                 {
                     if (NameValues[i].Name == "LastName" && NameValues[i].Type == NameValue.ValueType.String)
-                        return (string)NameValues[i].Value;
+                        return NameValues[i].Value as string ?? string.Empty;
                 }
 
                 return string.Empty;
@@ -426,7 +423,7 @@ namespace OpenMetaverse
             {
                 if (!string.IsNullOrEmpty(_cachedName))
                 {
-                    return _cachedName;
+                    return _cachedName ?? string.Empty;
                 }
                 if (NameValues != null && NameValues.Length > 0)
                 {
@@ -438,15 +435,15 @@ namespace OpenMetaverse
                         for (int i = 0; i < NameValues.Length; i++)
                         {
                             if (NameValues[i].Name == "FirstName" && NameValues[i].Type == NameValue.ValueType.String)
-                                firstName = (string)NameValues[i].Value;
+                                firstName = NameValues[i].Value as string ?? string.Empty;
                             else if (NameValues[i].Name == "LastName" && NameValues[i].Type == NameValue.ValueType.String)
-                                lastName = (string)NameValues[i].Value;
+                                lastName = NameValues[i].Value as string ?? string.Empty;
                         }
 
                         if (firstName != string.Empty && lastName != string.Empty)
                         {
                             _cachedName = $"{firstName} {lastName}";
-                            return _cachedName;
+                            return _cachedName ?? string.Empty;
                         }
                         else
                         {
@@ -468,7 +465,7 @@ namespace OpenMetaverse
             {
                 if (_cachedGroupName != null)
                 {
-                    return _cachedGroupName;
+                    return _cachedGroupName ?? string.Empty;
                 }
                 if (NameValues == null || NameValues.Length == 0)
                 {
@@ -482,14 +479,83 @@ namespace OpenMetaverse
                         {
                             if (NameValues[i].Name == "Title" && NameValues[i].Type == NameValue.ValueType.String)
                             {
-                                _cachedGroupName = (string)NameValues[i].Value;
-                                return _cachedGroupName;
+                                _cachedGroupName = NameValues[i].Value as string ?? string.Empty;
+                                return _cachedGroupName ?? string.Empty;
                             }
                         }
                     }
                     return _cachedGroupName = string.Empty;
                 }
             }
+        }
+
+        /// <summary>
+        /// Decodes the compressed group-0 and group-3 visual parameters received from the network
+        /// into a dictionary of parameter ID to float value, then derives driven (group-1+)
+        /// parameters from their group-0 driver values.
+        /// The result can be passed directly to
+        /// <see cref="LibreMetaverse.Rendering.LindenAvatarDefinition.ComputeBoneTransforms"/>.
+        /// </summary>
+        /// <remarks>
+        /// The AvatarAppearance packet transmits both TWEAKABLE (group-0) and
+        /// TRANSMIT_NOT_TWEAKABLE (group-3) params interleaved in ascending numeric ID order.
+        /// <see cref="VisualParams.Group0ParamIds"/> includes both groups in that order so each
+        /// byte maps to the correct parameter. This ordering must stay in sync with the encode
+        /// side in <see cref="AppearanceManager.MakeAppearancePacket"/>, which builds the
+        /// outgoing VisualParam block from the same array.
+        /// </remarks>
+        public IReadOnlyDictionary<int, float> DecodeVisualParams()
+        {
+            var ids    = VisualParams.Group0ParamIds;
+            var result = new Dictionary<int, float>(ids.Length);
+            for (int i = 0; i < ids.Length; i++)
+            {
+                if (i >= VisualParameters.Length) break;
+                if (!VisualParams.Params.TryGetValue(ids[i], out var vp)) continue;
+                result[ids[i]] = Utils.ByteToFloat(VisualParameters[i], vp.MinValue, vp.MaxValue);
+            }
+
+            // Derive driven params (group-1 body morphs etc.) from their group-0 driver values.
+            // Mirrors LLDriverParam::setDrivenWeight in the SL viewer.
+            foreach (var kv in VisualParams.Params)
+            {
+                var driverVp = kv.Value;
+                if (driverVp.DrivenParams == null || driverVp.DrivenParams.Length == 0) continue;
+                if (!result.TryGetValue(driverVp.ParamID, out var driverVal)) continue;
+
+                foreach (var driven in driverVp.DrivenParams)
+                {
+                    if (!VisualParams.Params.TryGetValue(driven.ParamID, out var drivenVp)) continue;
+
+                    float drivenNorm;
+                    if (!driven.HasRange)
+                    {
+                        float range = driverVp.MaxValue - driverVp.MinValue;
+                        drivenNorm = range > 1e-6f
+                            ? (driverVal - driverVp.MinValue) / range
+                            : 0f;
+                    }
+                    else
+                    {
+                        if (driverVal < driven.Min1)
+                            drivenNorm = 0f;
+                        else if (driverVal < driven.Max1)
+                            drivenNorm = (driverVal - driven.Min1) / (driven.Max1 - driven.Min1);
+                        else if (driverVal <= driven.Max2)
+                            drivenNorm = 1f;
+                        else if (driverVal < driven.Min2)
+                            drivenNorm = (driven.Min2 - driverVal) / (driven.Min2 - driven.Max2);
+                        else
+                            drivenNorm = 0f;
+                    }
+
+                    drivenNorm = Math.Max(0f, Math.Min(1f, drivenNorm));
+                    result[driven.ParamID] =
+                        drivenVp.MinValue + drivenNorm * (drivenVp.MaxValue - drivenVp.MinValue);
+                }
+            }
+
+            return result;
         }
 
         public override OSD GetOSD()
@@ -522,22 +588,12 @@ namespace OpenMetaverse
 
         public new static Avatar FromOSD(OSD O)
         {
-
             OSDMap tex = (OSDMap)O;
 
             Avatar A = new Avatar();
-            
-            Primitive P = Primitive.FromOSD(O);
 
-            Type Prim = typeof(Primitive);
-
-            FieldInfo[] Fields = Prim.GetFields();
-
-            foreach (FieldInfo info in Fields)
-            {
-                Logger.Debug("Field Matched in FromOSD: "+info.Name);
-                info.SetValue(A, info.GetValue(P));
-            }            
+            // Populate all Primitive base-class fields without reflection
+            Primitive.PopulateFromOSD(A, O);
 
             A.Groups = new List<UUID>();
 
@@ -608,4 +664,3 @@ namespace OpenMetaverse
 
     }
 }
-

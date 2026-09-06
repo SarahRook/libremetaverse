@@ -24,11 +24,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using LitJson;
-using OpenMetaverse;
-using OpenMetaverse.StructuredData;
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using LibreMetaverse.StructuredData;
 
 namespace LibreMetaverse.Voice.WebRTC
 {
@@ -54,17 +55,26 @@ namespace LibreMetaverse.Voice.WebRTC
             catch (Exception ex) { try { _log.Debug($"TrySend failed: {ex.Message}", _client); } catch { } return false; }
         }
 
+        private static string BuildJson(Action<Utf8JsonWriter> build)
+        {
+            var ms = new MemoryStream();
+            using var w = new Utf8JsonWriter(ms, new JsonWriterOptions { SkipValidation = true });
+            build(w);
+            w.Flush();
+            return Encoding.UTF8.GetString(ms.GetBuffer(), 0, (int)ms.Length);
+        }
+
         public bool SendJoin(bool primary = true)
         {
             try
             {
-                var jw = new JsonWriter();
-                jw.WriteObjectStart();
-                jw.WritePropertyName("j"); jw.WriteObjectStart();
-                jw.WritePropertyName("p"); jw.Write(primary);
-                jw.WriteObjectEnd();
-                jw.WriteObjectEnd();
-                return TrySend(jw.ToString());
+                return TrySend(BuildJson(jw => {
+                    jw.WriteStartObject();
+                    jw.WriteStartObject("j");
+                    jw.WriteBoolean("p", primary);
+                    jw.WriteEndObject();
+                    jw.WriteEndObject();
+                }));
             }
             catch (Exception ex) { try { _log.Debug($"SendJoin failed: {ex.Message}", _client); } catch { } return false; }
         }
@@ -84,68 +94,89 @@ namespace LibreMetaverse.Voice.WebRTC
             catch (Exception ex) { try { _log.Debug($"SetPeerMute failed: {ex.Message}", _client); } catch { } return false; }
         }
 
+        /// <summary>
+        /// Set per-peer gain on the voice server.
+        /// <paramref name="gain"/> must be in SL's 0–220 range (PEER_GAIN_CONVERSION_FACTOR = 220).
+        /// 220 = full volume (1.0), 0 = silence.
+        /// </summary>
         public bool SetPeerGain(UUID peerId, int gain)
         {
+            if (gain < 0) gain = 0;
+            if (gain > 220) gain = 220;
             try { return TrySend("{\"ug\": {\"" + peerId + "\": " + gain + "}}"); }
             catch (Exception ex) { try { _log.Debug($"SetPeerGain failed: {ex.Message}", _client); } catch { } return false; }
         }
 
-        public bool SendPosition(Vector3d globalPos, Quaternion heading)
+        /// <summary>
+        /// Send avatar body position/heading (<c>sp</c>/<c>sh</c>) and camera/listener
+        /// position/heading (<c>lp</c>/<c>lh</c>) as separate values.
+        /// This is the preferred overload — it matches SL C++ which tracks avatar and camera poses
+        /// independently. <c>listenerPos</c>/<c>listenerHeading</c> should come from the camera.
+        /// </summary>
+        public bool SendPosition(Vector3d avatarPos, Quaternion avatarHeading,
+                                  Vector3d listenerPos, Quaternion listenerHeading)
         {
             try
             {
-                int posX = (int)Math.Round(globalPos.X * 100);
-                int posY = (int)Math.Round(globalPos.Y * 100);
-                int posZ = (int)Math.Round(globalPos.Z * 100);
+                int spX = (int)Math.Round(avatarPos.X * 100);
+                int spY = (int)Math.Round(avatarPos.Y * 100);
+                int spZ = (int)Math.Round(avatarPos.Z * 100);
+                int shX = (int)Math.Round(avatarHeading.X * 100);
+                int shY = (int)Math.Round(avatarHeading.Y * 100);
+                int shZ = (int)Math.Round(avatarHeading.Z * 100);
+                int shW = (int)Math.Round(avatarHeading.W * 100);
 
-                int headX = (int)Math.Round(heading.X * 100);
-                int headY = (int)Math.Round(heading.Y * 100);
-                int headZ = (int)Math.Round(heading.Z * 100);
-                int headW = (int)Math.Round(heading.W * 100);
+                int lpX = (int)Math.Round(listenerPos.X * 100);
+                int lpY = (int)Math.Round(listenerPos.Y * 100);
+                int lpZ = (int)Math.Round(listenerPos.Z * 100);
+                int lhX = (int)Math.Round(listenerHeading.X * 100);
+                int lhY = (int)Math.Round(listenerHeading.Y * 100);
+                int lhZ = (int)Math.Round(listenerHeading.Z * 100);
+                int lhW = (int)Math.Round(listenerHeading.W * 100);
 
-                var jw = new JsonWriter();
-                jw.WriteObjectStart();
+                return TrySend(BuildJson(jw => {
+                    jw.WriteStartObject();
 
-                jw.WritePropertyName("sp"); jw.WriteObjectStart();
-                jw.WritePropertyName("x"); jw.Write(posX);
-                jw.WritePropertyName("y"); jw.Write(posY);
-                jw.WritePropertyName("z"); jw.Write(posZ);
-                jw.WriteObjectEnd();
+                    jw.WriteStartObject("sp");
+                    jw.WriteNumber("x", spX); jw.WriteNumber("y", spY); jw.WriteNumber("z", spZ);
+                    jw.WriteEndObject();
 
-                jw.WritePropertyName("sh"); jw.WriteObjectStart();
-                jw.WritePropertyName("x"); jw.Write(headX);
-                jw.WritePropertyName("y"); jw.Write(headY);
-                jw.WritePropertyName("z"); jw.Write(headZ);
-                jw.WritePropertyName("w"); jw.Write(headW);
-                jw.WriteObjectEnd();
+                    jw.WriteStartObject("sh");
+                    jw.WriteNumber("x", shX); jw.WriteNumber("y", shY); jw.WriteNumber("z", shZ); jw.WriteNumber("w", shW);
+                    jw.WriteEndObject();
 
-                jw.WritePropertyName("lp"); jw.WriteObjectStart();
-                jw.WritePropertyName("x"); jw.Write(posX);
-                jw.WritePropertyName("y"); jw.Write(posY);
-                jw.WritePropertyName("z"); jw.Write(posZ);
-                jw.WriteObjectEnd();
+                    jw.WriteStartObject("lp");
+                    jw.WriteNumber("x", lpX); jw.WriteNumber("y", lpY); jw.WriteNumber("z", lpZ);
+                    jw.WriteEndObject();
 
-                jw.WritePropertyName("lh"); jw.WriteObjectStart();
-                jw.WritePropertyName("x"); jw.Write(headX);
-                jw.WritePropertyName("y"); jw.Write(headY);
-                jw.WritePropertyName("z"); jw.Write(headZ);
-                jw.WritePropertyName("w"); jw.Write(headW);
-                jw.WriteObjectEnd();
+                    jw.WriteStartObject("lh");
+                    jw.WriteNumber("x", lhX); jw.WriteNumber("y", lhY); jw.WriteNumber("z", lhZ); jw.WriteNumber("w", lhW);
+                    jw.WriteEndObject();
 
-                jw.WriteObjectEnd();
-                return TrySend(jw.ToString());
+                    jw.WriteEndObject();
+                }));
             }
             catch (Exception ex) { try { _log.Debug($"SendPosition failed: {ex.Message}", _client); } catch { } return false; }
         }
+
+        /// <summary>
+        /// Legacy single-pose overload — sets both avatar and listener to the same position/heading.
+        /// Prefer the four-argument overload which separates avatar body from camera pose.
+        /// </summary>
+        public bool SendPosition(Vector3d globalPos, Quaternion heading)
+            => SendPosition(globalPos, heading, globalPos, heading);
 
         public bool SendAvatarArray(List<UUID> avatars)
         {
             try
             {
-                var jw = new JsonWriter(); jw.WriteObjectStart(); jw.WritePropertyName("av"); jw.WriteArrayStart();
-                if (avatars != null) foreach (var id in avatars) jw.Write(id.ToString());
-                jw.WriteArrayEnd(); jw.WriteObjectEnd();
-                return TrySend(jw.ToString());
+                return TrySend(BuildJson(jw => {
+                    jw.WriteStartObject();
+                    jw.WriteStartArray("av");
+                    if (avatars != null) foreach (var id in avatars) jw.WriteStringValue(id.ToString());
+                    jw.WriteEndArray();
+                    jw.WriteEndObject();
+                }));
             }
             catch (Exception ex) { try { _log.Debug($"SendAvatarArray failed: {ex.Message}", _client); } catch { } return false; }
         }
@@ -154,10 +185,17 @@ namespace LibreMetaverse.Voice.WebRTC
         {
             try
             {
-                var jw = new JsonWriter(); jw.WriteObjectStart(); jw.WritePropertyName("a"); jw.WriteObjectStart();
-                if (avatars != null) foreach (var id in avatars) { jw.WritePropertyName(id.ToString()); jw.WriteObjectStart(); jw.WriteObjectEnd(); }
-                jw.WriteObjectEnd(); jw.WriteObjectEnd();
-                return TrySend(jw.ToString());
+                return TrySend(BuildJson(jw => {
+                    jw.WriteStartObject();
+                    jw.WriteStartObject("a");
+                    if (avatars != null) foreach (var id in avatars)
+                    {
+                        jw.WriteStartObject(id.ToString());
+                        jw.WriteEndObject();
+                    }
+                    jw.WriteEndObject();
+                    jw.WriteEndObject();
+                }));
             }
             catch (Exception ex) { try { _log.Debug($"SendAvatarMap failed: {ex.Message}", _client); } catch { } return false; }
         }
@@ -166,22 +204,35 @@ namespace LibreMetaverse.Voice.WebRTC
         {
             try
             {
-                var jw = new JsonWriter(); jw.WriteObjectStart(); jw.WritePropertyName("m"); jw.WriteObjectStart();
-                if (muteMap != null) foreach (var kv in muteMap) { jw.WritePropertyName(kv.Key.ToString()); jw.Write(kv.Value); }
-                jw.WriteObjectEnd(); jw.WriteObjectEnd();
-                return TrySend(jw.ToString());
+                return TrySend(BuildJson(jw => {
+                    jw.WriteStartObject();
+                    jw.WriteStartObject("m");
+                    if (muteMap != null) foreach (var kv in muteMap) jw.WriteBoolean(kv.Key.ToString(), kv.Value);
+                    jw.WriteEndObject();
+                    jw.WriteEndObject();
+                }));
             }
             catch (Exception ex) { try { _log.Debug($"SendMuteMap failed: {ex.Message}", _client); } catch { } return false; }
         }
 
+        /// <summary>
+        /// Send a batch gain map. Values must be in SL's 0–220 range (PEER_GAIN_CONVERSION_FACTOR = 220).
+        /// </summary>
         public bool SendGainMap(Dictionary<UUID, int> gainMap)
         {
             try
             {
-                var jw = new JsonWriter(); jw.WriteObjectStart(); jw.WritePropertyName("ug"); jw.WriteObjectStart();
-                if (gainMap != null) foreach (var kv in gainMap) { jw.WritePropertyName(kv.Key.ToString()); jw.Write(kv.Value); }
-                jw.WriteObjectEnd(); jw.WriteObjectEnd();
-                return TrySend(jw.ToString());
+                return TrySend(BuildJson(jw => {
+                    jw.WriteStartObject();
+                    jw.WriteStartObject("ug");
+                    if (gainMap != null) foreach (var kv in gainMap)
+                    {
+                        int v = kv.Value < 0 ? 0 : kv.Value > 220 ? 220 : kv.Value;
+                        jw.WriteNumber(kv.Key.ToString(), v);
+                    }
+                    jw.WriteEndObject();
+                    jw.WriteEndObject();
+                }));
             }
             catch (Exception ex) { try { _log.Debug($"SendGainMap failed: {ex.Message}", _client); } catch { } return false; }
         }
@@ -192,20 +243,21 @@ namespace LibreMetaverse.Voice.WebRTC
 
             try
             {
-                JsonData root = null;
-                try
-                {
-                    root = JsonMapper.ToObject(msg);
-                }
-                catch (Exception litEx)
-                {
-                    try { _log.Debug($"LitJson parsing failed: {litEx.Message}", _client); } catch { }
-                }
+                JsonDocument? doc = null;
+                try { doc = JsonDocument.Parse(msg); }
+                catch (Exception ex) { try { _log.Debug($"JSON parsing failed: {ex.Message}", _client); } catch { } }
 
-                if (root != null && root.IsObject)
+                if (doc != null)
                 {
-                    try { _peerManager.ProcessLitJson(root, _sendString, sessionId); } catch (Exception ex) { try { _log.Error($"PeerManager.ProcessLitJson failed: {ex.Message}", _client); } catch { } }
-                    return;
+                    using (doc)
+                    {
+                        if (doc.RootElement.ValueKind == JsonValueKind.Object)
+                        {
+                            try { _peerManager.ProcessJsonElement(doc.RootElement, _sendString, sessionId); }
+                            catch (Exception ex) { try { _log.Error($"PeerManager.ProcessJsonElement failed: {ex.Message}", _client); } catch { } }
+                            return;
+                        }
+                    }
                 }
 
                 // Fallback to OSD path

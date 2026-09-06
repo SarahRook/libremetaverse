@@ -27,7 +27,7 @@
 using System;
 using System.Text;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// A Name Value pair with additional settings, used in the protocol
@@ -105,7 +105,7 @@ namespace OpenMetaverse
         /// <summary></summary>
         public SendtoType Sendto;
         /// <summary></summary>
-        public object Value;
+        public object? Value;
 
 
         private static readonly string[] TypeStrings = new string[]
@@ -345,7 +345,7 @@ namespace OpenMetaverse
                    && Equals(Value, other.Value);
         }
 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return obj is NameValue other && Equals(other);
         }

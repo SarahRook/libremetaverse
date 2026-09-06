@@ -1,20 +1,20 @@
 using System;
-using System.Collections.Generic;
+using System.Threading.Tasks;
 using NUnit.Framework;
-using OpenMetaverse;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
 namespace LibreMetaverse.Tests
 {
     [TestFixture]
     public class InventoryAISClientTests
     {
-        private static OSDMap MakePermissions(UUID creator, UUID lastOwner)
+        private static OSDMap MakePermissions(UUID creator, UUID lastOwner, UUID? owner = null)
         {
             return new OSDMap
             {
                 { "creator_id", OSD.FromUUID(creator) },
                 { "last_owner_id", OSD.FromUUID(lastOwner) },
+                { "owner_id", OSD.FromUUID(owner ?? lastOwner) },
                 { "base_mask", 0 },
                 { "everyone_mask", 0 },
                 { "group_mask", 0 },
@@ -37,7 +37,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void ParseLinksFromEmbedded_ObjectAsset_ResultsInAttachmentInventoryTypeAndParsesFields()
         {
-            var client = new InventoryAISClient(null);
+            var client = new InventoryAISClient(new GridClient());
 
             var itemId = UUID.Random();
             var parentId = UUID.Random();
@@ -73,7 +73,7 @@ namespace LibreMetaverse.Tests
             Assert.That(parsed.Name, Is.EqualTo("TestObject"));
             Assert.That(parsed.ParentUUID, Is.EqualTo(parentId));
             Assert.That(parsed.AssetUUID, Is.EqualTo(linkedId));
-            // Inventory type correction results in created InventoryItem of expected type — we cannot directly assert the enum used
+            // Inventory type correction results in created InventoryItem of expected type ï¿½ we cannot directly assert the enum used
             // but ensure basic fields are parsed and not left default
             Assert.That(parsed.OwnerID, Is.EqualTo(agentId));
             Assert.That(parsed.CreationDate, Is.Not.EqualTo(default(DateTime)));
@@ -82,7 +82,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void ParseItemsFromEmbedded_ItemsKey_ParsesConcreteItems()
         {
-            var client = new InventoryAISClient(null);
+            var client = new InventoryAISClient(new GridClient());
 
             var itemId = UUID.Random();
             var parentId = UUID.Random();
@@ -99,7 +99,7 @@ namespace LibreMetaverse.Tests
                 { "inv_type", (int)InventoryType.Object },
                 { "type", (int)AssetType.Object },
                 { "created_at", createdAt },
-                { "permissions", MakePermissions(UUID.Random(), UUID.Random()) },
+                { "permissions", MakePermissions(UUID.Random(), UUID.Random(), agentId) },
                 { "sale_info", MakeSaleInfo() }
             };
 
@@ -122,7 +122,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void ParseLinksFromEmbedded_MeshAsset_TreatedAsAttachment()
         {
-            var client = new InventoryAISClient(null);
+            var client = new InventoryAISClient(new GridClient());
 
             var itemId = UUID.Random();
             var parentId = UUID.Random();
@@ -160,7 +160,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void ParseItemsFromEmbedded_TopLevelItemsKey_WorksWithoutEmbedded()
         {
-            var client = new InventoryAISClient(null);
+            var client = new InventoryAISClient(new GridClient());
 
             var itemId = UUID.Random();
             var parentId = UUID.Random();
@@ -193,7 +193,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void ParseLinksFromEmbedded_TopLevelLinksKey_WorksWithoutEmbedded()
         {
-            var client = new InventoryAISClient(null);
+            var client = new InventoryAISClient(new GridClient());
 
             var itemId = UUID.Random();
             var parentId = UUID.Random();
@@ -227,7 +227,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void ParseItemsFromEmbedded_NullOrEmpty_ReturnsEmptyList()
         {
-            var client = new InventoryAISClient(null);
+            var client = new InventoryAISClient(new GridClient());
 
             Assert.That(client.ParseItemsFromEmbedded(null), Is.Empty);
             Assert.That(client.ParseItemsFromEmbedded(new OSDMap()), Is.Empty);
@@ -236,7 +236,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void ParseEmbedded_CombinesItemsAndLinks()
         {
-            var client = new InventoryAISClient(null);
+            var client = new InventoryAISClient(new GridClient());
 
             var itemId = UUID.Random();
             var linkId = UUID.Random();
@@ -254,6 +254,24 @@ namespace LibreMetaverse.Tests
             Assert.That(items, Is.Not.Null.And.Count.EqualTo(1));
             Assert.That(links, Is.Not.Null.And.Count.EqualTo(1));
             Assert.That(folders, Is.Not.Null);
+        }
+
+        [Test]
+        public async Task MoveCategoryLinksAsync_AlwaysReturnsFalse()
+        {
+            var client = new InventoryAISClient(new GridClient());
+            var result = await client.MoveCategoryLinksAsync("outfit", UUID.Random());
+            Assert.That(result, Is.False,
+                "MoveCategoryLinksAsync has no AIS v3 equivalent and must always return false");
+        }
+
+        [Test]
+        public void MoveCategoryLinksAsync_ReturnsCompletedTask()
+        {
+            var client = new InventoryAISClient(new GridClient());
+            var task = client.MoveCategoryLinksAsync("outfit", UUID.Random());
+            Assert.That(task.IsCompleted, Is.True,
+                "MoveCategoryLinksAsync should return an already-completed task");
         }
     }
 }

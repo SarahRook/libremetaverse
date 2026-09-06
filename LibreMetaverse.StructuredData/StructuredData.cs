@@ -27,10 +27,11 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
 
-namespace OpenMetaverse.StructuredData
+namespace LibreMetaverse.StructuredData
 {
     public enum OSDType : byte
     {
@@ -83,7 +84,7 @@ namespace OpenMetaverse.StructuredData
         public virtual string AsString() { return string.Empty; }
         public virtual UUID AsUUID() { return UUID.Zero; }
         public virtual DateTime AsDate() { return Utils.Epoch; }
-        public virtual Uri AsUri() { return null; }
+        public virtual Uri? AsUri() { return null; }
         public virtual byte[] AsBinary() { return Utils.EmptyBytes; }
         public virtual Vector2 AsVector2() { return Vector2.Zero; }
         public virtual Vector3 AsVector3() { return Vector3.Zero; }
@@ -317,7 +318,7 @@ namespace OpenMetaverse.StructuredData
                     newMap.Add(o);
                 return newMap;
             }
-            return null;
+            return new OSD(); // Return empty OSD instead of null for unknown types
         }
 
         #region Implicit Conversions
@@ -355,7 +356,7 @@ namespace OpenMetaverse.StructuredData
         public static implicit operator string(OSD value) { return value.AsString(); }
         public static implicit operator UUID(OSD value) { return value.AsUUID(); }
         public static implicit operator DateTime(OSD value) { return value.AsDate(); }
-        public static implicit operator Uri(OSD value) { return value.AsUri(); }
+        public static implicit operator Uri?(OSD value) { return value.AsUri(); }
         public static implicit operator byte[](OSD value) { return value.AsBinary(); }
         public static implicit operator Vector2(OSD value) { return value.AsVector2(); }
         public static implicit operator Vector3(OSD value) { return value.AsVector3(); }
@@ -373,6 +374,7 @@ namespace OpenMetaverse.StructuredData
         /// <param name="obj">Class or struct containing serializable types</param>
         /// <returns>An SDMap holding the serialized values from the
         /// container object</returns>
+        [RequiresUnreferencedCode("Enumerates public fields via reflection. Not AOT-safe; consider an explicit serialization method instead.")]
         public static OSDMap SerializeMembers(object obj)
         {
             Type t = obj.GetType();
@@ -384,7 +386,7 @@ namespace OpenMetaverse.StructuredData
             {
                 if (!Attribute.IsDefined(field, typeof(NonSerializedAttribute)))
                 {
-                    OSD serializedField = FromObject(field.GetValue(obj));
+                    OSD serializedField = FromObject(field.GetValue(obj)!);
 
                     if (serializedField.Type != OSDType.Unknown
                         || field.FieldType == typeof(string)
@@ -406,6 +408,7 @@ namespace OpenMetaverse.StructuredData
         /// values</param>
         /// <param name="serialized">Serialized values to put in the target
         /// object</param>
+        [RequiresUnreferencedCode("Enumerates public fields via reflection. Not AOT-safe; consider an explicit deserialization method instead.")]
         public static void DeserializeMembers(ref object obj, OSDMap serialized)
         {
             Type t = obj.GetType();
@@ -416,7 +419,7 @@ namespace OpenMetaverse.StructuredData
                 if (!Attribute.IsDefined(field, typeof(NonSerializedAttribute)))
                 {
                     if (serialized.TryGetValue(field.Name, out var serializedField))
-                        field.SetValue(obj, ToObject(field.FieldType, serializedField));
+                        field.SetValue(obj, ToObject(field.FieldType, serializedField!));
                 }
             }
         }
@@ -633,7 +636,7 @@ namespace OpenMetaverse.StructuredData
         {
             return DateTime.TryParse(_mString, out var dt) ? dt : Utils.Epoch;
         }
-        public override Uri AsUri()
+        public override Uri? AsUri()
         {
             return Uri.TryCreate(_mString, UriKind.RelativeOrAbsolute, out var uri) ? uri : null;
         }
@@ -834,7 +837,7 @@ namespace OpenMetaverse.StructuredData
 
         public override string ToString()
         {
-            return Utils.BytesToHexString(_mBytes, null);
+            return Utils.BytesToHexString(_mBytes, null!);
         }
     }
 }

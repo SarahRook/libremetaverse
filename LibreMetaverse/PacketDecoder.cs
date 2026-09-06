@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2025, Sjofn LLC.
  * All rights reserved.
@@ -27,32 +27,20 @@
 
 using System;
 using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Collections.Frozen;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using System.Text;
 using Microsoft.Extensions.Logging;
-using System.Collections.Concurrent;
 
-namespace OpenMetaverse.Packets
+namespace LibreMetaverse.Packets
 {
     public static class PacketDecoder
     {
-        // Reflection caches to avoid repeated GetFields/GetProperties calls
-        private static readonly ConcurrentDictionary<Type, FieldInfo[]> _fieldsCache = new ConcurrentDictionary<Type, FieldInfo[]>();
-        private static readonly ConcurrentDictionary<Type, PropertyInfo[]> _propertiesCache = new ConcurrentDictionary<Type, PropertyInfo[]>();
-
-        // @todo: expensive - we need it for each packet decode!! - Lazy Dict is contra productive here
-        /**
-         * better:
-            private static readonly Dictionary<string, Func<string, object, string>> Callbacks = 
-                new Dictionary<string, Func<string, object, string>> 
-                { 
-                };
-         */
         
-        
-        private static readonly Lazy<Dictionary<string, Func<string, object, string>>> Callbacks =
-            new Lazy<Dictionary<string, Func<string, object, string>>>(() =>
+        [UnconditionalSuppressMessage("ReflectionAnalysis", "IL2026",
+            Justification = "PacketDecoder is a debug-only facility; all delegate targets are intentionally reflection-based.")]
+        private static Dictionary<string, Func<string, object, string>> CreateCallbacks() =>
             new Dictionary<string, Func<string, object, string>>
             {
                 {"Color", DecodeColorField},
@@ -176,7 +164,12 @@ namespace OpenMetaverse.Packets
                 {"LayerData.LayerID.Type", DecodeLayerDataType},
 
                 {"GroupPowers", DecodeGroupPowers}
-            });
+            };
+
+#pragma warning disable IL2026
+        private static readonly Lazy<Dictionary<string, Func<string, object, string>>> Callbacks =
+            new Lazy<Dictionary<string, Func<string, object, string>>>(CreateCallbacks);
+#pragma warning restore IL2026
 
         #region Custom Decoders
 
@@ -271,6 +264,7 @@ namespace OpenMetaverse.Packets
             return result.ToString();
         }
 
+        [RequiresUnreferencedCode("Calls reflection-based sub-decoders (DecodeTextureEntry, DecodeObjectParticleSystem, etc). Not AOT-safe.")]
         private static string DecodeObjectCompressedData(string fieldName, object fieldData)
         {
             StringBuilder result = new StringBuilder();
@@ -461,14 +455,14 @@ namespace OpenMetaverse.Packets
                 i += 86;
             }
 
-            // Extra parameters TODO:
+            // Extra parameters
             Primitive prim = new Primitive();
             int bytes = prim.SetExtraParamsFromBytes(block, i);
             i += bytes;
-            result.AppendFormat("{0,30}: {1,-40} [{2}]" + Environment.NewLine,
-                "ExtraParams[]",
-                bytes,
-                "byte[]");
+            if (bytes > 0)
+                result.AppendLine(DecodeObjectExtraParams("ExtraParams", prim.GetExtraParamsBytes()));
+            else
+                result.AppendFormat("{0,30}: {1,-40} [{2}]" + Environment.NewLine, "ExtraParams[]", "(none)", "byte[]");
 
             //Sound data
             if ((flags & CompressedFlags.HasSound) != 0)
@@ -669,8 +663,6 @@ namespace OpenMetaverse.Packets
             }
             else if (data.Length == 76)
             {
-                /* TODO: these are likely useful packed fields,
-                 * need to unpack them */
                 Vector4 col = Vector4.Zero;
                 Vector3 offset = Vector3.Zero;
                 Vector3 vel = Vector3.Zero;
@@ -679,11 +671,11 @@ namespace OpenMetaverse.Packets
                 Vector3 angvel = Vector3.Zero;
 
                 col.FromBytes(data, 0);
-                offset.FromBytes(data, 16);
-                vel.FromBytes(data, 28);
-                acc.FromBytes(data, 40);
-                q.FromBytes(data, 52, true);
-                angvel.FromBytes(data, 64);
+                offset = new Vector3(data, 16);
+                vel = new Vector3(data, 28);
+                acc = new Vector3(data, 40);
+                q = new Quaternion(data, 52, true);
+                angvel = new Vector3(data, 64);
 
                 StringBuilder result = new StringBuilder();
                 result.AppendFormat("{0,30}: {1,-40} [{2}]" + Environment.NewLine,
@@ -714,18 +706,17 @@ namespace OpenMetaverse.Packets
             }
             else if (data.Length == 60)
             {
-                /* TODO: these are likely useful packed fields, need to unpack them */
                 Vector3 offset = Vector3.Zero;
                 Vector3 vel = Vector3.Zero;
                 Vector3 acc = Vector3.Zero;
                 Quaternion q = Quaternion.Identity;
                 Vector3 angvel = Vector3.Zero;
 
-                offset.FromBytes(data, 0);
-                vel.FromBytes(data, 12);
-                acc.FromBytes(data, 24);
-                q.FromBytes(data, 36, true);
-                angvel.FromBytes(data, 48);
+                offset = new Vector3(data, 0);
+                vel = new Vector3(data, 12);
+                acc = new Vector3(data, 24);
+                q = new Quaternion(data, 36, true);
+                angvel = new Vector3(data, 48);
 
                 StringBuilder result = new StringBuilder();
                 result.AppendFormat("{0,30}: {1,-40} [{2}]" + Environment.NewLine,
@@ -756,6 +747,7 @@ namespace OpenMetaverse.Packets
             }
         }
 
+        [RequiresUnreferencedCode("Calls GenericTypeDecoder which uses reflection. Not AOT-safe.")]
         private static string DecodeObjectTextureAnim(string fieldName, object fieldData)
         {
             StringBuilder result = new StringBuilder();
@@ -783,7 +775,7 @@ namespace OpenMetaverse.Packets
 
         private static string DecodeNameValue(string fieldName, object fieldData)
         {
-            NameValue[] nameValues = null;
+            NameValue[]? nameValues = null;
             if (fieldData is NameValue[] data)
                 nameValues = data;
             else
@@ -822,6 +814,7 @@ namespace OpenMetaverse.Packets
             return result.ToString();
         }
 
+        [RequiresUnreferencedCode("Calls GenericTypeDecoder which uses reflection. Not AOT-safe.")]
         private static string DecodeObjectExtraParams(string fieldName, object fieldData)
         {
             byte[] data = (byte[]) fieldData;
@@ -829,10 +822,10 @@ namespace OpenMetaverse.Packets
             int i = 0;
             //int totalLength = 1;
 
-            Primitive.FlexibleData flexible = null;
-            Primitive.LightData light = null;
-            Primitive.SculptData sculpt = null;
-            Primitive.SculptData mesh = null;
+            Primitive.FlexibleData? flexible = null;
+            Primitive.LightData? light = null;
+            Primitive.SculptData? sculpt = null;
+            Primitive.SculptData? mesh = null;
             uint meshFlags = 0;
             bool hasMeshFlags = false;
 
@@ -905,6 +898,7 @@ namespace OpenMetaverse.Packets
             return result.ToString();
         }
 
+        [RequiresUnreferencedCode("Calls GenericTypeDecoder which uses reflection. Not AOT-safe.")]
         private static string DecodeObjectParticleSystem(string fieldName, object fieldData)
         {
             var result = new StringBuilder();
@@ -921,6 +915,7 @@ namespace OpenMetaverse.Packets
             return result.ToString();
         }
 
+        [RequiresUnreferencedCode("Uses runtime reflection to enumerate fields for diagnostic display. Not AOT-safe.")]
         private static void GenericTypeDecoder(object obj, ref StringBuilder result)
         {
             // @todo: expensive - caching of GetFields() per Type?
@@ -928,7 +923,7 @@ namespace OpenMetaverse.Packets
 
             foreach (FieldInfo field in fields)
             {
-                if (SpecialDecoder("a" + "." + "b" + "." + field.Name,
+                if (TrySpecialDecode("a" + "." + "b" + "." + field.Name,
                     field.GetValue(obj), out var special))
                 {
                     result.AppendLine(special);
@@ -1249,6 +1244,7 @@ namespace OpenMetaverse.Packets
             return $"{Utils.BytesToHexString((byte[]) fieldData, $"{fieldName,30}"),10}";
         }
 
+        [RequiresUnreferencedCode("Calls GenericFieldsDecoder/GenericPropertiesDecoder which use reflection. Not AOT-safe.")]
         private static string DecodeTerseTextureEntry(string fieldName, object fieldData)
         {
             byte[] block = (byte[]) fieldData;
@@ -1258,6 +1254,7 @@ namespace OpenMetaverse.Packets
             return _DecodeTextureEntryStringBuilder(ref te);
         }
 
+        [RequiresUnreferencedCode("Calls GenericFieldsDecoder/GenericPropertiesDecoder which use reflection. Not AOT-safe.")]
         private static string DecodeTextureEntry(string fieldName, object fieldData)
         {
             Primitive.TextureEntry te;
@@ -1276,6 +1273,7 @@ namespace OpenMetaverse.Packets
         /// Helper: StringBuilder result - internal method for DecodeTextureEntry and DecodeTerseTextureEntry
         /// </summary>
         /// <param name="te"></param>
+        [RequiresUnreferencedCode("Calls GenericFieldsDecoder/GenericPropertiesDecoder which use reflection. Not AOT-safe.")]
         private static string _DecodeTextureEntryStringBuilder(ref Primitive.TextureEntry te)
         {
             var result = new StringBuilder(); // @todo: use of capacity for StringBuilder (in general) ??
@@ -1306,15 +1304,15 @@ namespace OpenMetaverse.Packets
             return result.ToString();
         }
 
+        [RequiresUnreferencedCode("Uses runtime reflection to enumerate fields for diagnostic display. Not AOT-safe.")]
         private static void GenericFieldsDecoder(object obj, ref StringBuilder result)
         {
-            // @todo: expensive - caching of GetFields() per Type?
             Type parcelType = obj.GetType();
             FieldInfo[] fields = parcelType.GetFields();
             foreach (FieldInfo field in fields)
             {
                 string special;
-                if (SpecialDecoder("a" + "." + "b" + "." + field.Name,
+                if (TrySpecialDecode("a" + "." + "b" + "." + field.Name,
                     field.GetValue(obj), out special))
                 {
                     result.AppendLine(special);
@@ -1329,15 +1327,15 @@ namespace OpenMetaverse.Packets
             }
         }
 
+        [RequiresUnreferencedCode("Uses runtime reflection to enumerate properties for diagnostic display. Not AOT-safe.")]
         private static void GenericPropertiesDecoder(object obj, ref StringBuilder result)
         {
             Type parcelType = obj.GetType();
-            // @todo: expensive - caching of GetProperties() per Type?
             PropertyInfo[] propertyInfos = parcelType.GetProperties();
             foreach (PropertyInfo property in propertyInfos)
             {
                 string special;
-                if (SpecialDecoder("a" + "." + "b" + "." + property.Name,
+                if (TrySpecialDecode("a" + "." + "b" + "." + property.Name,
                     property.GetValue(obj, null), out special))
                 {
                     result.AppendLine(special);
@@ -1400,7 +1398,7 @@ namespace OpenMetaverse.Packets
             }
             else
             {
-                return string.Format("{0,30}: (No Decoder) Length={1}" + Environment.NewLine, fieldName, data.Length) +
+                return $"{fieldName,30}: (No Decoder) Length={data.Length}{Environment.NewLine}" +
                        Utils.BytesToHexString(data, $"{"",30}");
             }
         }
@@ -1430,7 +1428,7 @@ namespace OpenMetaverse.Packets
         private static string DecodeAnimToConst(string fieldName, object fieldData)
         {
             string animConst = "UUID";
-            ImmutableDictionary<UUID, string> animsDict = Animations.ToDictionary();
+            var animsDict = Animations.ToDictionary();
             if (animsDict.ContainsKey((UUID) fieldData))
                 animConst = animsDict[(UUID) fieldData];
             return $"{fieldName,30}: {fieldData,-40} [{animConst}]";
@@ -1487,168 +1485,28 @@ namespace OpenMetaverse.Packets
 
             result.AppendLine("[Packet Payload]");
 
-            // use cached fields
-            FieldInfo[] fields = _fieldsCache.GetOrAdd(packet.GetType(), t => t.GetFields());
-
-            foreach (var t in fields)
-            {
-                // we're not interested in any of these here
-                if (t.Name == "Type" || t.Name == "Header" || t.Name == "HasVariableBlocks")
-                    continue;
-
-                if (t.FieldType.IsArray)
-                {
-                    result.AppendFormat("{0,30} []" + Environment.NewLine, "-- " + t.Name + " --");
-                    RecursePacketArray(t, packet, ref result);
-                }
-                else
-                {
-                    result.AppendFormat("{0,30}" + Environment.NewLine, "-- " + t.Name + " --");
-                    RecursePacketField(t, packet, ref result);
-                }
-            }
+            packet.DecodePayload(ref result);
 
             return result.ToString();
         }
 
-        private static void RecursePacketArray(FieldInfo fieldInfo, object packet, ref StringBuilder result)
-        {
-            var packetDataObject = fieldInfo.GetValue(packet) as Array;
-
-            if (packetDataObject == null) return;
-
-            foreach (object nestedArrayRecord in packetDataObject)
-            {
-                // use cached fields
-                FieldInfo[] fields = _fieldsCache.GetOrAdd(nestedArrayRecord.GetType(), t => t.GetFields());
-
-                foreach (FieldInfo t in fields)
-                {
-                    string special;
-                    if (SpecialDecoder(packet.GetType().Name + "." + fieldInfo.Name + "." + t.Name,
-                        t.GetValue(nestedArrayRecord), out special))
-                    {
-                        result.AppendLine(special);
-                    }
-                    else if (t.FieldType.IsArray) // default for an array (probably a byte[])
-                    {
-                        result.AppendFormat("{0,30: } {1,-40} [{2}]" + Environment.NewLine,
-                            t.Name,
-                            Utils.BytesToString((byte[]) t.GetValue(nestedArrayRecord)),
-                            /*fields[i].GetValue(nestedArrayRecord).GetType().Name*/ "String");
-                    }
-                    else // default for a field
-                    {
-                        result.AppendFormat("{0,30}: {1,-40} [{2}]" + Environment.NewLine,
-                            t.Name,
-                            t.GetValue(nestedArrayRecord),
-                            t.GetValue(nestedArrayRecord).GetType().Name);
-                    }
-                }
-
-                // Handle Properties with cache
-                foreach (PropertyInfo propertyInfo in _propertiesCache.GetOrAdd(nestedArrayRecord.GetType(), t => t.GetProperties()))
-                {
-                    if (propertyInfo.Name.Equals("Length"))
-                        continue;
-
-                    string special;
-                    if (SpecialDecoder(packet.GetType().Name + "." + fieldInfo.Name + "." + propertyInfo.Name,
-                        propertyInfo.GetValue(nestedArrayRecord, null),
-                        out special))
-                    {
-                        result.AppendLine(special);
-                    }
-                    else
-                    {
-                        result.AppendFormat("{0, 30}: {1,-40} [{2}]c" + Environment.NewLine,
-                            propertyInfo.Name,
-                            Utils.BytesToString((byte[]) propertyInfo.GetValue(nestedArrayRecord, null)),
-                            propertyInfo.PropertyType.Name);
-                    }
-                }
-
-                result.AppendFormat("{0,32}" + Environment.NewLine, "***");
-            }
-        }
-
-        private static void RecursePacketField(FieldInfo fieldInfo, object packet, ref StringBuilder result)
-        {
-            object packetDataObject = fieldInfo.GetValue(packet);
-
-            // handle Fields
-            foreach (FieldInfo packetValueField in _fieldsCache.GetOrAdd(packetDataObject.GetType(), t => t.GetFields()))
-            {
-                string special;
-                if (SpecialDecoder(packet.GetType().Name + "." + fieldInfo.Name + "." + packetValueField.Name,
-                    packetValueField.GetValue(packetDataObject),
-                    out special))
-                {
-                    result.AppendLine(special);
-                }
-                else if (packetValueField.FieldType.IsArray)
-                {
-                    result.AppendFormat("{0,30}: {1,-40} [{2}]" + Environment.NewLine,
-                        packetValueField.Name,
-                        Utils.BytesToString((byte[]) packetValueField.GetValue(packetDataObject)),
-                        /*packetValueField.FieldType.Name*/ "String");
-                }
-                else
-                {
-                    result.AppendFormat("{0,30}: {1,-40} [{2}]" + Environment.NewLine,
-                        packetValueField.Name, packetValueField.GetValue(packetDataObject),
-                        packetValueField.FieldType.Name);
-                }
-            }
-
-            // Handle Properties
-            foreach (PropertyInfo propertyInfo in _propertiesCache.GetOrAdd(packetDataObject.GetType(), t => t.GetProperties()))
-            {
-                if (propertyInfo.Name.Equals("Length"))
-                    continue;
-
-                string special;
-                if (SpecialDecoder(packet.GetType().Name + "." + fieldInfo.Name + "." + propertyInfo.Name,
-                    propertyInfo.GetValue(packetDataObject, null),
-                    out special))
-                {
-                    result.AppendLine(special);
-                }
-                else if (propertyInfo.GetValue(packetDataObject, null).GetType() == typeof(byte[]))
-                {
-                    result.AppendFormat("{0, 30}: {1,-40} [{2}]" + Environment.NewLine,
-                        propertyInfo.Name,
-                        Utils.BytesToString((byte[]) propertyInfo.GetValue(packetDataObject, null)),
-                        propertyInfo.PropertyType.Name);
-                }
-                else
-                {
-                    result.AppendFormat("{0, 30}: {1,-40} [{2}]" + Environment.NewLine,
-                        propertyInfo.Name,
-                        propertyInfo.GetValue(packetDataObject, null),
-                        propertyInfo.PropertyType.Name);
-                }
-            }
-        }
-
-        private static bool SpecialDecoder(string decoderKey, object fieldData, out string result)
+        internal static bool TrySpecialDecode(string decoderKey, object? fieldData, out string result)
         {
             result = string.Empty;
             string[] keys = decoderKey.Split(new[] {'.'}, StringSplitOptions.RemoveEmptyEntries);
+            if (keys.Length < 3) return false;
             string[] keyList = {decoderKey, decoderKey.Replace("Packet", ""), keys[1] + "." + keys[2], keys[2]};
             foreach (string key in keyList)
             {
                 if (fieldData is byte[] fd && fd.Length == 0)
                 {
-                    // bypass the decoder since we were passed an empty byte array
                     result = $"{keys[2],30}:";
                     return true;
                 }
 
-                // fieldname e.g: Plane
                 if (Callbacks.Value.TryGetValue(key, out var callback))
                 {
-                    result = callback(keys[2], fieldData);
+                    result = callback(keys[2], fieldData ?? string.Empty);
                     return true;
                 }
             }
@@ -1662,6 +1520,7 @@ namespace OpenMetaverse.Packets
         /// <param name="message">The IMessage object</param>
         /// <param name="recurseLevel">Recursion level (used for indenting)</param>
         /// <returns>A formatted string containing the names and values of the source object</returns>
+        [RequiresUnreferencedCode("Uses runtime reflection to enumerate IMessage fields. Not AOT-safe.")]
         public static string MessageToString(object message, int recurseLevel)
         {
             if (message == null)
@@ -1684,26 +1543,26 @@ namespace OpenMetaverse.Packets
             // @todo: expensive - caching of GetFields() per Type?
             foreach (FieldInfo messageField in message.GetType().GetFields())
             {
+                var fieldValue = messageField.GetValue(message);
+
                 // an abstract message class
                 if (messageField.FieldType.IsAbstract)
                 {
-                    result.AppendLine(MessageToString(messageField.GetValue(message), recurseLevel));
+                    result.AppendLine(MessageToString(fieldValue!, recurseLevel));
                 }
                 // a byte array
-                else if (messageField.GetValue(message) != null &&
-                         messageField.GetValue(message).GetType() == typeof(byte[]))
+                else if (fieldValue != null && fieldValue.GetType() == typeof(byte[]))
                 {
                     result.AppendFormat("{0, 30}:" + Environment.NewLine, messageField.Name);
 
                     result.AppendFormat("{0}" + Environment.NewLine,
-                        Utils.BytesToHexString((byte[]) messageField.GetValue(message),
-                            $"{"",30}"));
+                        Utils.BytesToHexString((byte[])fieldValue!, $"{"",30}"));
                 }
 
                 // an array of class objects
                 else if (messageField.FieldType.IsArray)
                 {
-                    var messageObjectData = messageField.GetValue(message) as Array;
+                    var messageObjectData = fieldValue as Array;
                     
                     if (messageObjectData == null) continue;
 
@@ -1724,25 +1583,27 @@ namespace OpenMetaverse.Packets
                         // @todo: expensive - caching of GetFields() per Type?
                         foreach (FieldInfo nestedField in nestedArrayObject.GetType().GetFields())
                         {
+                            var nestedVal = nestedField.GetValue(nestedArrayObject);
                             if (nestedField.FieldType.IsEnum)
                             {
+                                var enumStr = nestedVal != null
+                                    ? Enum.Format(nestedVal.GetType(), nestedVal, "D")
+                                    : "null";
                                 result.AppendFormat("{0,30}: {1,-10} {2,-29} [{3}]" + Environment.NewLine,
                                     nestedField.Name,
-                                    Enum.Format(nestedField.GetValue(nestedArrayObject).GetType(),
-                                        nestedField.GetValue(nestedArrayObject), "D"),
-                                    "(" + nestedField.GetValue(nestedArrayObject) + ")",
-                                    nestedField.GetValue(nestedArrayObject).GetType().Name);
+                                    enumStr,
+                                    "(" + nestedVal + ")",
+                                    nestedVal?.GetType().Name ?? "null");
                             }
                             else if (nestedField.FieldType.IsInterface)
                             {
-                                result.AppendLine(
-                                    MessageToString(nestedField.GetValue(nestedArrayObject), recurseLevel));
+                                result.AppendLine(MessageToString(nestedVal!, recurseLevel));
                             }
                             else
                             {
                                 result.AppendFormat("{0, 30}: {1,-40} [{2}]" + Environment.NewLine,
                                     nestedField.Name,
-                                    nestedField.GetValue(nestedArrayObject),
+                                    nestedVal,
                                     nestedField.FieldType.Name);
                             }
                         }
@@ -1752,21 +1613,22 @@ namespace OpenMetaverse.Packets
                 {
                     if (messageField.FieldType.IsEnum)
                     {
+                        var val = fieldValue;
+                        var enumStr = val != null ? Enum.Format(val.GetType(), val, "D") : "null";
                         result.AppendFormat("{0,30}: {1,-2} {2,-37} [{3}]" + Environment.NewLine,
                             messageField.Name,
-                            Enum.Format(messageField.GetValue(message).GetType(),
-                                messageField.GetValue(message), "D"),
-                            "(" + messageField.GetValue(message) + ")",
+                            enumStr,
+                            "(" + val + ")",
                             messageField.FieldType.Name);
                     }
                     else if (messageField.FieldType.IsInterface)
                     {
-                        result.AppendLine(MessageToString(messageField.GetValue(message), recurseLevel));
+                        result.AppendLine(MessageToString(fieldValue!, recurseLevel));
                     }
                     else
                     {
                         result.AppendFormat("{0, 30}: {1,-40} [{2}]" + Environment.NewLine,
-                            messageField.Name, messageField.GetValue(message), messageField.FieldType.Name);
+                            messageField.Name, fieldValue, messageField.FieldType.Name);
                     }
                 }
             }

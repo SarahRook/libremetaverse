@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2024, Sjofn LLC
  * All rights reserved.
  *
@@ -34,7 +34,7 @@ namespace LibreMetaverse.Threading.Disposers
 	public struct SpinWriteLock:
 		IDisposable
 	{
-		private SpinReaderWriterLock _lock;
+		private SpinReaderWriterLock? _lock;
 		internal SpinWriteLock(SpinReaderWriterLock yieldLock)
 		{
 			_lock = yieldLock;

@@ -25,16 +25,15 @@
  */
 
 using Microsoft.Extensions.Logging;
-using OpenMetaverse;
 
 namespace LibreMetaverse.Voice.WebRTC
 {
     public interface IVoiceLogger
     {
-        void Log(string message, LogLevel level, GridClient client = null);
-        void Info(string message, GridClient client = null);
-        void Warn(string message, GridClient client = null);
-        void Debug(string message, GridClient client = null);
-        void Error(string message, GridClient client = null);
+        void Log(string message, LogLevel level, GridClient? client = null);
+        void Info(string message, GridClient? client = null);
+        void Warn(string message, GridClient? client = null);
+        void Debug(string message, GridClient? client = null);
+        void Error(string message, GridClient? client = null);
     }
 }

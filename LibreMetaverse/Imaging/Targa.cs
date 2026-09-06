@@ -26,135 +26,107 @@
 
 using System;
 using System.IO;
-using System.Runtime.InteropServices;
 using Pfim;
-using SkiaSharp;
 
-namespace OpenMetaverse.Imaging
+namespace LibreMetaverse.Imaging
 {
     public static class Targa
     {
-        /// <summary>Decode Truevision TGA file to <see cref="SKBitmap" /></summary>
-        public static SKBitmap Decode(string fileName)
+        /// <summary>Decode Truevision TGA file directly to <see cref="ManagedImage"/>, with no bitmap library involved</summary>
+        public static ManagedImage DecodeToManagedImage(string fileName)
         {
             using (var image = Pfimage.FromFile(fileName))
             {
-                return Decode(image);
+                return DecodeToManagedImage(image);
             }
         }
 
-        /// <summary>Decode Truevision TGA stream to <see cref="SKBitmap" /></summary>
-        public static SKBitmap Decode(Stream stream)
+        /// <summary>Decode Truevision TGA stream directly to <see cref="ManagedImage"/>, with no bitmap library involved</summary>
+        public static ManagedImage DecodeToManagedImage(Stream stream)
         {
             using (var image = Pfimage.FromStream(stream))
             {
-                return Decode(image);
+                return DecodeToManagedImage(image);
             }
         }
 
-        private static SKBitmap Decode(IImage image)
+        private static ManagedImage DecodeToManagedImage(IImage image)
         {
-            SKColorType colorType;
+            var width = image.Width;
+            var height = image.Height;
             var data = image.Data;
-            var dataLen = image.DataLen;
             var stride = image.Stride;
+
             switch (image.Format)
             {
                 case ImageFormat.Rgb8:
-                    colorType = SKColorType.Gray8;
-                    break;
-                case ImageFormat.R5g6b5: // needs swizzled
-                    colorType = SKColorType.Rgb565;
-                    break;
-                case ImageFormat.Rgba16: // needs swizzled
-                    colorType = SKColorType.Argb4444;
-                    break;
-                case ImageFormat.Rgb24: // skia doesn't support 24-bit (boo!), upscale to 32-bit
-                    var pixels = image.DataLen / 3;
-                    dataLen = pixels * 4;
-                    data = new byte[dataLen];
-                    for (var i = 0; i < pixels; ++i)
+                {
+                    var mi = new ManagedImage(width, height, ManagedImage.ImageChannels.Gray);
+                    for (var y = 0; y < height; y++)
                     {
-                        data[i * 4] = image.Data[i * 3];
-                        data[i * 4 + 1] = image.Data[i * 3 + 1];
-                        data[i * 4 + 2] = image.Data[i * 3 + 2];
-                        data[i * 4 + 3] = 255;
+                        Array.Copy(data, y * stride, mi.Red, y * width, width);
                     }
-                    stride = image.Width * 4;
-                    colorType = SKColorType.Bgra8888;
-                    break;
+                    return mi;
+                }
+                case ImageFormat.R5g6b5:
+                {
+                    var mi = new ManagedImage(width, height, ManagedImage.ImageChannels.Color);
+                    for (var y = 0; y < height; y++)
+                    {
+                        var row = y * stride;
+                        for (var x = 0; x < width; x++)
+                        {
+                            var i = y * width + x;
+                            var v = (ushort)(data[row + x * 2] | (data[row + x * 2 + 1] << 8));
+                            int r5 = (v >> 11) & 0x1F;
+                            int g6 = (v >> 5) & 0x3F;
+                            int b5 = v & 0x1F;
+                            mi.Red[i] = (byte)((r5 * 255 + 15) / 31);
+                            mi.Green[i] = (byte)((g6 * 255 + 31) / 63);
+                            mi.Blue[i] = (byte)((b5 * 255 + 15) / 31);
+                        }
+                    }
+                    return mi;
+                }
+                case ImageFormat.Rgb24:
+                {
+                    var mi = new ManagedImage(width, height, ManagedImage.ImageChannels.Color);
+                    for (var y = 0; y < height; y++)
+                    {
+                        var row = y * stride;
+                        for (var x = 0; x < width; x++)
+                        {
+                            var i = y * width + x;
+                            var p = row + x * 3;
+                            mi.Red[i] = data[p + 2];
+                            mi.Green[i] = data[p + 1];
+                            mi.Blue[i] = data[p];
+                        }
+                    }
+                    return mi;
+                }
                 case ImageFormat.Rgba32:
-                    colorType = SKColorType.Bgra8888;
-                    break;
+                {
+                    var mi = new ManagedImage(width, height,
+                        ManagedImage.ImageChannels.Color | ManagedImage.ImageChannels.Alpha);
+                    for (var y = 0; y < height; y++)
+                    {
+                        var row = y * stride;
+                        for (var x = 0; x < width; x++)
+                        {
+                            var i = y * width + x;
+                            var p = row + x * 4;
+                            mi.Blue[i] = data[p];
+                            mi.Green[i] = data[p + 1];
+                            mi.Red[i] = data[p + 2];
+                            mi.Alpha[i] = data[p + 3];
+                        }
+                    }
+                    return mi;
+                }
                 default:
                     throw new ArgumentException($"Cannot interpret format: {image.Format}");
             }
-            var imageInfo = new SKImageInfo(image.Width, image.Height, colorType);
-            var handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-            var ptr = Marshal.UnsafeAddrOfPinnedArrayElement(data, 0);
-            using (var skdata = SKData.Create(ptr, dataLen, (address, context) => handle.Free()))
-            {
-                using (var skImage = SKImage.FromPixels(imageInfo, skdata, stride))
-                {
-                    return SKBitmap.FromImage(skImage);
-                }
-            }
-        }
-
-        public static byte[] Encode(SKBitmap image)
-        {
-            if (image == null) { return null; }
-
-            var imageType = (byte)(image.ColorType == SKColorType.Gray8 || image.ColorType == SKColorType.Alpha8
-                ? 0x03 : 0x02);
-            var imageDescriptor = (byte)(image.AlphaType <= SKAlphaType.Opaque ? 0 : 0x8);
-
-            var tga = new byte[image.Width * image.Height * image.BytesPerPixel + 18];
-            var di = 0;
-            tga[di++] = 0x00; // id length
-            tga[di++] = 0x00; // colormap type = 0: no colormap
-            tga[di++] = imageType; // image type
-            tga[di++] = 0x00; // color map spec is five zeroes for no color map
-            tga[di++] = 0x00; // color map spec is five zeroes for no color map
-            tga[di++] = 0x00; // color map spec is five zeroes for no color map
-            tga[di++] = 0x00; // color map spec is five zeroes for no color map
-            tga[di++] = 0x00; // color map spec is five zeroes for no color map
-            tga[di++] = 0; // x origin = two bytes
-            tga[di++] = 0; // x origin = two bytes
-            tga[di++] = 0; // y origin = two bytes
-            tga[di++] = 0; // y origin = two bytes
-            tga[di++] = (byte)(image.Width & 0xFF); // width - low byte
-            tga[di++] = (byte)(image.Width >> 8); // width - hi byte
-            tga[di++] = (byte)(image.Height & 0xFF); // height - low byte
-            tga[di++] = (byte)(image.Height >> 8); // height - hi byte
-            tga[di++] = (byte)(image.BytesPerPixel*8); // pixel depth, includes attribute bits
-            tga[di++] = imageDescriptor; // image descriptor byte
-
-            for (var y = image.Height - 1; y >= 0; --y) // takes lines from bottom lines to top (mirrored horizontally)
-            {
-                for (var x = 0; x < image.Width; ++x)
-                {
-                    var c = image.GetPixel(x, y);
-                    if (image.ColorType == SKColorType.Gray8)
-                    {
-                        tga[di++] = c.Red;
-                    } else if (image.ColorType == SKColorType.Alpha8)
-                    {
-                        tga[di++] = c.Alpha;
-                    }
-                    else
-                    {
-                        tga[di++] = c.Blue;
-                        tga[di++] = c.Green;
-                        tga[di++] = c.Red;
-
-                        tga[di++] = (byte)(image.AlphaType > SKAlphaType.Opaque ? c.Alpha : 0x0);
-                    }
-
-                }
-            }
-
-            return tga;
         }
 
         /// <summary>Encode <see cref="ManagedImage"/> to Truevision TGA byte array</summary>

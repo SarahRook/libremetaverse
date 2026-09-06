@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2006-2016, openmetaverse.co
- * Copyright (c) 2025, Sjofn LLC.
+ * Copyright (c) 2025-2026, Sjofn LLC.
  * All rights reserved.
  *
  * - Redistribution and use in source and binary forms, with or without
@@ -29,12 +29,13 @@ using System;
 using System.Net;
 using System.Net.Http;
 using System.Net.Security;
-using LibreMetaverse;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 #if NET8_0_OR_GREATER
 using System.Threading.Tasks;
 #endif
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Main class to expose grid functionality to clients. All managers needed
@@ -42,13 +43,13 @@ namespace OpenMetaverse
     /// </summary>
     /// <example>
     /// <code>
-    /// // Example minimum code required to instantiate class and 
+    /// // Example minimum code required to instantiate class and
     /// // connect to a simulator.
     /// using System;
     /// using System.Collections.Generic;
     /// using System.Text;
-    /// using OpenMetaverse;
-    /// 
+    /// using LibreMetaverse;
+    ///
     /// namespace FirstBot
     /// {
     ///     class Bot
@@ -65,7 +66,7 @@ namespace OpenMetaverse
     ///             {
     ///                 Console.WriteLine("Login successful");
     ///             }
-    /// 
+    ///
     ///             // Wait for a Keypress
     ///             Console.ReadLine();
     ///             // Logout of simulator
@@ -75,53 +76,72 @@ namespace OpenMetaverse
     /// }
     /// </code>
     /// </example>
-    public partial class GridClient : IDisposable
+    public partial class GridClient : IGridClient
 #if NET8_0_OR_GREATER
         , IAsyncDisposable
 #endif
     {
         /// <summary>Networking subsystem</summary>
-        public NetworkManager Network;
+        public NetworkManager Network { get; private set; }
         /// <summary>Settings class including constant values and changeable
         /// parameters for everything</summary>
-        public Settings Settings;
+        public Settings Settings { get; private set; }
         /// <summary>Parcel (subdivided simulator lots) subsystem</summary>
-        public ParcelManager Parcels;
+        public ParcelManager Parcels { get; private set; }
         /// <summary>Our own avatars subsystem</summary>
-        public AgentManager Self;
+        public AgentManager Self { get; private set; }
         /// <summary>Other avatars subsystem</summary>
-        public AvatarManager Avatars;
+        public AvatarManager Avatars { get; private set; }
         /// <summary>Estate subsystem</summary>
-        public EstateTools Estate;
+        public EstateTools Estate { get; private set; }
         /// <summary>Friends list subsystem</summary>
-        public FriendsManager Friends;
+        public FriendsManager Friends { get; private set; }
         /// <summary>Grid (aka simulator group) subsystem</summary>
-        public GridManager Grid;
+        public GridManager Grid { get; private set; }
         /// <summary>Object subsystem</summary>
-        public ObjectManager Objects;
+        public ObjectManager Objects { get; private set; }
         /// <summary>Group subsystem</summary>
-        public GroupManager Groups;
+        public GroupManager Groups { get; private set; }
         /// <summary>Asset subsystem</summary>
-        public AssetManager Assets;
+        public AssetManager Assets { get; private set; }
         /// <summary>Inventory AIS client</summary>
-        public InventoryAISClient AisClient;
+        public InventoryAISClient AisClient { get; private set; }
         /// <summary>Appearance subsystem</summary>
-        public AppearanceManager Appearance;
+        public AppearanceManager Appearance { get; private set; }
         /// <summary>Inventory subsystem</summary>
-        public InventoryManager Inventory;
+        public InventoryManager Inventory { get; private set; }
         /// <summary>Directory searches including classifieds, people, land sales, etc</summary>
-        public DirectoryManager Directory;
+        public DirectoryManager Directory { get; private set; }
         /// <summary>Handles land, wind, and cloud height maps</summary>
-        public TerrainManager Terrain;
+        public TerrainManager Terrain { get; private set; }
         /// <summary>Handles sound-related networking</summary>
-        public SoundManager Sound;
+        public SoundManager Sound { get; private set; }
         /// <summary>Throttling total bandwidth usage, or allocating bandwidth
         /// for specific data stream types</summary>
-        public AgentThrottle Throttle;
+        public AgentThrottle Throttle { get; private set; }
         /// <summary>Utilization statistics, obviously</summary>
-        public Stats.UtilizationStatistics Stats;
+        public Stats.UtilizationStatistics Stats { get; private set; }
         /// <summary>HttpClient chiefly used for Caps</summary>
-        public HttpCapsClient HttpCapsClient;
+        public HttpCapsClient HttpCapsClient { get; set; }
+        /// <summary>Per-category rate limiter applied to all caps HTTP requests</summary>
+        public CapsRateLimiter CapsRateLimiter { get; private set; }
+        /// <summary>Second Life Marketplace subsystem</summary>
+        public Marketplace.MarketplaceManager Marketplace { get; private set; }
+        /// <summary>EEP (Extended Environment Protocol) and legacy WindLight environment subsystem</summary>
+        public EnvironmentManager Environment { get; private set; }
+        /// <summary>Interest list mode subsystem (controls simulator object update culling)</summary>
+        public InterestListManager InterestList { get; private set; }
+        /// <summary>Animesh animation runtime (tracks BVH animations playing on rigged mesh objects)</summary>
+        public Animesh.AnimeshManager Animesh { get; private set; }
+
+        /// <summary>
+        /// Time provider used for all time-dependent operations (throttling, timeouts, retry back-off).
+        /// Override with a fake implementation in tests to control time deterministically.
+        /// </summary>
+        public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
+        /// <summary>Current UTC time from the configured <see cref="TimeProvider"/>.</summary>
+        internal DateTime UtcNow => TimeProvider.GetUtcNow().UtcDateTime;
 
         /// <summary>
         /// Default constructor
@@ -141,39 +161,70 @@ namespace OpenMetaverse
             Groups = new GroupManager(this);
             Assets = new AssetManager(this);
             Appearance = new AppearanceManager(this);
+            CapsRateLimiter = new CapsRateLimiter();
+            HttpCapsClient = SetupHttpCapsClient();
+            AisClient = new InventoryAISClient(this);
             Inventory = new InventoryManager(this);
             Directory = new DirectoryManager(this);
             Terrain = new TerrainManager(this);
             Sound = new SoundManager(this);
             Throttle = new AgentThrottle(this);
             Stats = new Stats.UtilizationStatistics();
+            Marketplace = new Marketplace.MarketplaceManager(this);
+            Environment = new EnvironmentManager(this);
+            InterestList = new InterestListManager(this);
+            Animesh = new Animesh.AnimeshManager(this);
+        }
 
-            HttpCapsClient = SetupHttpCapsClient();
-            AisClient = new InventoryAISClient(this);
+        private static bool ValidateServerCertificate(HttpRequestMessage message, X509Certificate2? cert,
+            X509Chain? chain, SslPolicyErrors sslPolicyErrors)
+        {
+            if (sslPolicyErrors == SslPolicyErrors.None) { return true; }
+
+            // *HACK:
+            return true;
         }
 
         private HttpCapsClient SetupHttpCapsClient()
         {
-            var handler = new HttpClientHandler
+            HttpMessageHandler handler;
+#if NETFRAMEWORK
+            // .NET Framework's HttpClientHandler wraps HttpWebRequest, which throws while building
+            // the response if a non-http(s) Location/Content-Location header is present (e.g. AISv3's
+            // "slcaps://" scheme on SlamFolder responses). WinHttpHandler doesn't have this bug.
+            // See https://github.com/cinderblocks/libremetaverse/issues/113.
+            var winHttpHandler = new WinHttpHandler
+            {
+                AutomaticRedirection = true,
+                AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip,
+                ServerCertificateValidationCallback = ValidateServerCertificate
+            };
+
+            if (!RuntimeInformation.FrameworkDescription.StartsWith("mono", StringComparison.OrdinalIgnoreCase))
+            {
+                winHttpHandler.MaxConnectionsPerServer = Settings.MaxHttpConnections;
+            }
+            handler = winHttpHandler;
+#else
+            var httpClientHandler = new HttpClientHandler
             {
                 AllowAutoRedirect = true,
                 AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip,
-                ServerCertificateCustomValidationCallback = (message, cert, chain, sslPolicyErrors) =>
-                {
-                    if (sslPolicyErrors == SslPolicyErrors.None) { return true; }
-
-                    // *HACK:
-                    return true;
-                }
+                ServerCertificateCustomValidationCallback = ValidateServerCertificate
             };
 
-            if (Utils.GetRunningRuntime() != Utils.Runtime.Mono)
-                handler.MaxConnectionsPerServer = Settings.MAX_HTTP_CONNECTIONS;
+            if (!RuntimeInformation.FrameworkDescription.StartsWith("mono", StringComparison.OrdinalIgnoreCase))
+            {
+                httpClientHandler.MaxConnectionsPerServer = Settings.MaxHttpConnections;
+            }
+            handler = httpClientHandler;
+#endif
 
-            HttpCapsClient client = new HttpCapsClient(handler);
+            var rateLimitingHandler = new RateLimitingCapsHandler(CapsRateLimiter, handler);
+            HttpCapsClient client = new HttpCapsClient(rateLimitingHandler);
             client.DefaultRequestHeaders.Accept.Clear();
-            client.DefaultRequestHeaders.Add("User-Agent", $"{Settings.USER_AGENT}");
-            client.Timeout = System.TimeSpan.FromMilliseconds(Settings.CAPS_TIMEOUT);
+            client.DefaultRequestHeaders.Add("User-Agent", $"{Settings.UserAgent}");
+            client.Timeout = TimeSpan.FromMilliseconds(Settings.Timing.CapsTimeout);
             return client;
         }
 
@@ -204,28 +255,29 @@ namespace OpenMetaverse
 
             if (disposing)
             {
-                // Dispose subsystems that implement IDisposable
-                DisposalHelper.SafeDispose(Sound as IDisposable);
-                DisposalHelper.SafeDispose(Terrain as IDisposable);
-                DisposalHelper.SafeDispose(Appearance as IDisposable);
-                DisposalHelper.SafeDispose(Inventory as IDisposable);
-                DisposalHelper.SafeDispose(Assets as IDisposable);
-                DisposalHelper.SafeDispose(Parcels as IDisposable);
-                DisposalHelper.SafeDispose(Objects as IDisposable);
-
-                // Dispose HttpCapsClient which is a HttpClient
-                DisposalHelper.SafeDispose(HttpCapsClient);
-
-                // If Network has shutdown needs, attempt a graceful shutdown
+                // Shut down networking FIRST to cancel all in-flight HTTP requests before
+                // HttpCapsClient is disposed, preventing ObjectDisposedException on SslStream.
                 try
                 {
-                    // Best-effort shutdown of network (if available)
-                    Network?.Shutdown( NetworkManager.DisconnectType.ClientInitiated );
+                    Network?.Shutdown(NetworkManager.DisconnectType.ClientInitiated);
                 }
                 catch { }
 
-                // Attempt to shutdown logging synchronously to flush providers when possible
-                try { Logger.Shutdown(); } catch { }
+                // Dispose subsystems that implement IDisposable (these may use HttpCapsClient,
+                // so they must be disposed before HttpCapsClient is torn down)
+                if (Sound is IDisposable soundDisposable) DisposalHelper.SafeDispose(soundDisposable);
+                if (Terrain is IDisposable terrainDisposable) DisposalHelper.SafeDispose(terrainDisposable);
+                if (Appearance is IDisposable appearanceDisposable) DisposalHelper.SafeDispose(appearanceDisposable);
+                if (Inventory is IDisposable inventoryDisposable) DisposalHelper.SafeDispose(inventoryDisposable);
+                if (Assets is IDisposable assetsDisposable) DisposalHelper.SafeDispose(assetsDisposable);
+                if (Marketplace is IDisposable marketplaceDisposable) DisposalHelper.SafeDispose(marketplaceDisposable);
+                if (Parcels is IDisposable parcelsDisposable) DisposalHelper.SafeDispose(parcelsDisposable);
+                if (Objects is IDisposable objectsDisposable) DisposalHelper.SafeDispose(objectsDisposable);
+
+                // Now safe to dispose HttpCapsClient — network is shut down and all subsystems
+                // that used it have been disposed, so no more requests are in flight.
+                if (HttpCapsClient is IDisposable httpDisposable) DisposalHelper.SafeDispose(httpDisposable);
+                CapsRateLimiter?.Dispose();
             }
 
             _disposed = true;
@@ -238,9 +290,11 @@ namespace OpenMetaverse
 
 #if NET8_0_OR_GREATER
         /// <summary>
-        /// Async dispose that ensures logger providers are flushed.
+        /// Async dispose. Logging is a process-wide facility (see <see cref="Logger"/>) and is not
+        /// tied to any single GridClient's lifetime, so it is not touched here — callers that own
+        /// the process should shut it down once at application exit.
         /// </summary>
-        public async ValueTask DisposeAsync()
+        public ValueTask DisposeAsync()
         {
             // Dispose managed resources
             Dispose(true);
@@ -248,8 +302,7 @@ namespace OpenMetaverse
             // Suppress finalizer
             GC.SuppressFinalize(this);
 
-            // Await logger shutdown to allow providers to flush
-            try { await Logger.ShutdownAsync().ConfigureAwait(false); } catch { }
+            return default;
         }
 #endif
         #endregion

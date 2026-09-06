@@ -30,10 +30,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse.Packets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Packets;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     [Flags]
     public enum FriendRights : int
@@ -69,7 +69,7 @@ namespace OpenMetaverse
         /// <summary>
         /// full name of the avatar
         /// </summary>
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
 
         /// <summary>
         /// True if the avatar is online
@@ -215,11 +215,11 @@ namespace OpenMetaverse
     {
         #region Delegates
 
-        private EventHandler<FriendsReadyEventArgs> m_FriendsListReadyResponse;
+        private EventHandler<FriendsReadyEventArgs>? m_FriendsListReadyResponse;
 
         protected virtual void OnFriendsListReady(FriendsReadyEventArgs e)
         {
-            EventHandler<FriendsReadyEventArgs> handler = m_FriendsListReadyResponse;
+            EventHandler<FriendsReadyEventArgs>? handler = m_FriendsListReadyResponse;
             handler?.Invoke(this, e);
         }
 
@@ -233,14 +233,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<FriendInfoEventArgs> m_FriendOnline;
+        private EventHandler<FriendInfoEventArgs>? m_FriendOnline;
 
         /// <summary>Raises the FriendOnline event</summary>
         /// <param name="e">A FriendInfoEventArgs object containing the
         /// data returned from the data server</param>
         protected virtual void OnFriendOnline(FriendInfoEventArgs e)
         {
-            EventHandler<FriendInfoEventArgs> handler = m_FriendOnline;
+            EventHandler<FriendInfoEventArgs>? handler = m_FriendOnline;
             handler?.Invoke(this, e);
         }
 
@@ -255,14 +255,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<FriendInfoEventArgs> m_FriendOffline;
+        private EventHandler<FriendInfoEventArgs>? m_FriendOffline;
 
         /// <summary>Raises the FriendOffline event</summary>
         /// <param name="e">A FriendInfoEventArgs object containing the
         /// data returned from the data server</param>
         protected virtual void OnFriendOffline(FriendInfoEventArgs e)
         {
-            EventHandler<FriendInfoEventArgs> handler = m_FriendOffline;
+            EventHandler<FriendInfoEventArgs>? handler = m_FriendOffline;
             handler?.Invoke(this, e);
         }
 
@@ -277,14 +277,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<FriendInfoEventArgs> m_FriendRights;
+        private EventHandler<FriendInfoEventArgs>? m_FriendRights;
 
         /// <summary>Raises the FriendRightsUpdate event</summary>
         /// <param name="e">A FriendInfoEventArgs object containing the
         /// data returned from the data server</param>
         protected virtual void OnFriendRights(FriendInfoEventArgs e)
         {
-            EventHandler<FriendInfoEventArgs> handler = m_FriendRights;
+            EventHandler<FriendInfoEventArgs>? handler = m_FriendRights;
             handler?.Invoke(this, e);
         }
 
@@ -299,14 +299,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<FriendNamesEventArgs> m_FriendNames;
+        private EventHandler<FriendNamesEventArgs>? m_FriendNames;
 
         /// <summary>Raises the FriendNames event</summary>
         /// <param name="e">A FriendNamesEventArgs object containing the
         /// data returned from the data server</param>
         protected virtual void OnFriendNames(FriendNamesEventArgs e)
         {
-            EventHandler<FriendNamesEventArgs> handler = m_FriendNames;
+            EventHandler<FriendNamesEventArgs>? handler = m_FriendNames;
             handler?.Invoke(this, e);
         }
 
@@ -321,14 +321,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<FriendshipOfferedEventArgs> m_FriendshipOffered;
+        private EventHandler<FriendshipOfferedEventArgs>? m_FriendshipOffered;
 
         /// <summary>Raises the FriendshipOffered event</summary>
         /// <param name="e">A FriendshipOfferedEventArgs object containing the
         /// data returned from the data server</param>
         protected virtual void OnFriendshipOffered(FriendshipOfferedEventArgs e)
         {
-            EventHandler<FriendshipOfferedEventArgs> handler = m_FriendshipOffered;
+            EventHandler<FriendshipOfferedEventArgs>? handler = m_FriendshipOffered;
             handler?.Invoke(this, e);
         }
 
@@ -343,14 +343,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<FriendshipResponseEventArgs> m_FriendshipResponse;
+        private EventHandler<FriendshipResponseEventArgs>? m_FriendshipResponse;
 
         /// <summary>Raises the FriendshipResponse event</summary>
         /// <param name="e">A FriendshipResponseEventArgs object containing the
         /// data returned from the data server</param>
         protected virtual void OnFriendshipResponse(FriendshipResponseEventArgs e)
         {
-            EventHandler<FriendshipResponseEventArgs> handler = m_FriendshipResponse;
+            EventHandler<FriendshipResponseEventArgs>? handler = m_FriendshipResponse;
             handler?.Invoke(this, e);
         }
 
@@ -365,14 +365,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<FriendshipTerminatedEventArgs> m_FriendshipTerminated;
+        private EventHandler<FriendshipTerminatedEventArgs>? m_FriendshipTerminated;
 
         /// <summary>Raises the FriendshipTerminated event</summary>
         /// <param name="e">A FriendshipTerminatedEventArgs object containing the
         /// data returned from the data server</param>
         protected virtual void OnFriendshipTerminated(FriendshipTerminatedEventArgs e)
         {
-            EventHandler<FriendshipTerminatedEventArgs> handler = m_FriendshipTerminated;
+            EventHandler<FriendshipTerminatedEventArgs>? handler = m_FriendshipTerminated;
             handler?.Invoke(this, e);
         }
 
@@ -388,14 +388,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<FriendFoundReplyEventArgs> m_FriendFound;
+        private EventHandler<FriendFoundReplyEventArgs>? m_FriendFound;
 
         /// <summary>Raises the FriendFoundReply event</summary>
         /// <param name="e">A FriendFoundReplyEventArgs object containing the
         /// data returned from the data server</param>
         protected virtual void OnFriendFoundReply(FriendFoundReplyEventArgs e)
         {
-            EventHandler<FriendFoundReplyEventArgs> handler = m_FriendFound;
+            EventHandler<FriendFoundReplyEventArgs>? handler = m_FriendFound;
             handler?.Invoke(this, e);
         }
 
@@ -408,6 +408,27 @@ namespace OpenMetaverse
         {
             add { lock (m_FriendFoundLock) { m_FriendFound += value; } }
             remove { lock (m_FriendFoundLock) { m_FriendFound -= value; } }
+        }
+
+        /// <summary>The event subscribers. null if no subscribers</summary>
+        private EventHandler<CallingCardOfferedEventArgs>? m_CallingCardOffered;
+
+        /// <summary>Raises the CallingCardOffered event</summary>
+        /// <param name="e">A CallingCardOfferedEventArgs object containing the data returned from the simulator</param>
+        protected virtual void OnCallingCardOffered(CallingCardOfferedEventArgs e)
+        {
+            EventHandler<CallingCardOfferedEventArgs>? handler = m_CallingCardOffered;
+            handler?.Invoke(this, e);
+        }
+
+        /// <summary>Thread sync lock object</summary>
+        private readonly object m_CallingCardOfferedLock = new object();
+
+        /// <summary>Raised when another agent offers us their calling card</summary>
+        public event EventHandler<CallingCardOfferedEventArgs> CallingCardOffered
+        {
+            add { lock (m_CallingCardOfferedLock) { m_CallingCardOffered += value; } }
+            remove { lock (m_CallingCardOfferedLock) { m_CallingCardOffered -= value; } }
         }
 
         #endregion Delegates
@@ -454,6 +475,7 @@ namespace OpenMetaverse
             Client.Network.RegisterCallback(PacketType.ChangeUserRights, ChangeUserRightsHandler);
             Client.Network.RegisterCallback(PacketType.TerminateFriendship, TerminateFriendshipHandler);
             Client.Network.RegisterCallback(PacketType.FindAgent, OnFindAgentReplyHandler);
+            Client.Network.RegisterCallback(PacketType.OfferCallingCard, OfferCallingCardHandler);
 
             Client.Network.RegisterLoginResponseCallback(Network_OnLoginResponse, new[] { "buddy-list" });
         }
@@ -507,7 +529,8 @@ namespace OpenMetaverse
         /// <param name="cancellationToken"></param>
         public async Task AcceptFriendshipViaCapAsync(UUID fromAgentID, CancellationToken cancellationToken = default)
         {
-            Uri acceptFriendshipCap = Client.Network.CurrentSim.Caps.CapabilityURI("AcceptFriendship");
+            var client = Client;
+            Uri? acceptFriendshipCap = client?.Network?.CurrentSim?.Caps?.CapabilityURI("AcceptFriendship");
             if (acceptFriendshipCap == null)
             {
                 Logger.Warn("AcceptFriendship capability not found.");
@@ -522,25 +545,27 @@ namespace OpenMetaverse
             };
             acceptFriendshipCap = builder.Uri;
 
-            await Client.HttpCapsClient.PostRequestAsync(acceptFriendshipCap, OSDFormat.Xml, new OSD(), cancellationToken,
-                (response, data, error) =>
+            try
+            {
+                var (response, data) = await Client.HttpCapsClient.PostAsync(acceptFriendshipCap, OSDFormat.Xml, new OSD(), cancellationToken);
+                if (data == null)
                 {
-                    if (error != null)
-                    {
-                        Logger.Warn($"AcceptFriendship failed for {fromAgentID}. ({error.Message})");
-                        return;
-                    }
-                    OSD result = OSDParser.Deserialize(data);
-                    if (result is OSDMap resMap && resMap.ContainsKey("success") && resMap["success"].AsBoolean())
-                    {
-                        FriendInfo friend = new FriendInfo(fromAgentID, FriendRights.CanSeeOnline, FriendRights.CanSeeOnline);
-
-                        m_FriendList.TryAdd(friend.UUID, friend);
-                        m_FriendRequests.TryRemove(fromAgentID, out _);
-
-                        Client.Avatars.RequestAvatarName(fromAgentID);
-                    }
-                });
+                    Logger.Warn($"AcceptFriendship: null response data for {fromAgentID}");
+                    return;
+                }
+                OSD result = OSDParser.Deserialize(data);
+                if (result is OSDMap resMap && resMap.ContainsKey("success") && resMap["success"].AsBoolean())
+                {
+                    FriendInfo friend = new FriendInfo(fromAgentID, FriendRights.CanSeeOnline, FriendRights.CanSeeOnline);
+                    m_FriendList.TryAdd(friend.UUID, friend);
+                    m_FriendRequests.TryRemove(fromAgentID, out _);
+                    Client.Avatars.RequestAvatarName(fromAgentID);
+                }
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                Logger.Warn($"AcceptFriendship failed for {fromAgentID}. ({ex.Message})");
+            }
         }
 
         /// <summary>
@@ -576,7 +601,8 @@ namespace OpenMetaverse
         /// <param name="cancellationToken"></param>
         public async Task DeclineFriendshipViaCapAsync(UUID fromAgentID, CancellationToken cancellationToken = default)
         {
-            Uri declineFriendshipCap = Client.Network.CurrentSim.Caps.CapabilityURI("DeclineFriendship");
+            var client = Client;
+            Uri? declineFriendshipCap = client?.Network?.CurrentSim?.Caps?.CapabilityURI("DeclineFriendship");
             if (declineFriendshipCap == null)
             {
                 Logger.Warn("DeclineFriendship capability not found.");
@@ -588,21 +614,24 @@ namespace OpenMetaverse
             };
             declineFriendshipCap = builder.Uri;
 
-            await Client.HttpCapsClient.DeleteRequestAsync(declineFriendshipCap, OSDFormat.Xml, new OSD(), cancellationToken,
-                (response, data, error) =>
+            try
+            {
+                var (response, data) = await Client.HttpCapsClient.DeleteAsync(declineFriendshipCap, OSDFormat.Xml, new OSD(), cancellationToken);
+                if (data == null)
                 {
-                    if (error != null)
-                    {
-                        Logger.Warn($"DeclineFriendship failed for {fromAgentID}. ({error.Message})");
-                        return;
-                    }
-
-                    OSD result = OSDParser.Deserialize(data);
-                    if (result is OSDMap resMap && resMap.ContainsKey("success") && resMap["success"].AsBoolean())
-                    {
-                        m_FriendRequests.TryRemove(fromAgentID, out _);
-                    }
-                });
+                    Logger.Warn($"DeclineFriendship: null response data for {fromAgentID}");
+                    return;
+                }
+                OSD result = OSDParser.Deserialize(data);
+                if (result is OSDMap resMap && resMap.ContainsKey("success") && resMap["success"].AsBoolean())
+                {
+                    m_FriendRequests.TryRemove(fromAgentID, out _);
+                }
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                Logger.Warn($"DeclineFriendship failed for {fromAgentID}. ({ex.Message})");
+            }
         }
 
         /// <summary>
@@ -621,15 +650,16 @@ namespace OpenMetaverse
         /// <param name="message">A message to send with the request</param>
         public void OfferFriendship(UUID agentID, string message)
         {
-            Client.Self.InstantMessage(Client.Self.Name,
-                agentID,
-                message,
-                UUID.Random(),
-                InstantMessageDialog.FriendshipOffered,
-                InstantMessageOnline.Offline,
-                Client.Self.SimPosition,
-                Client.Network.CurrentSim.ID,
-                null);
+                    var simId = Client.Network.CurrentSim?.ID ?? UUID.Zero;
+                    Client.Self.InstantMessage(Client.Self.Name,
+                    agentID,
+                    message,
+                    UUID.Random(),
+                    InstantMessageDialog.FriendshipOffered,
+                    InstantMessageOnline.Offline,
+                    Client.Self.SimPosition,
+                    simId,
+                    Utils.EmptyBytes);
         }
 
 
@@ -663,7 +693,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        private void TerminateFriendshipHandler(object sender, PacketReceivedEventArgs e)
+        private void TerminateFriendshipHandler(object? sender, PacketReceivedEventArgs e)
         {
             try
             {
@@ -700,7 +730,7 @@ namespace OpenMetaverse
             }
         }
 
-        private void ChangeUserRightsHandler(object sender, PacketReceivedEventArgs e)
+        private void ChangeUserRightsHandler(object? sender, PacketReceivedEventArgs e)
         {
             try
             {
@@ -753,7 +783,7 @@ namespace OpenMetaverse
             }
         }
 
-        public void OnFindAgentReplyHandler(object sender, PacketReceivedEventArgs e)
+        public void OnFindAgentReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             try
             {
@@ -789,6 +819,19 @@ namespace OpenMetaverse
             {
                 Logger.Error($"Exception in OnFindAgentReplyHandler: {ex.Message}", ex, Client);
             }
+        }
+
+        private void OfferCallingCardHandler(object? sender, PacketReceivedEventArgs e)
+        {
+            if (e.Packet is not OfferCallingCardPacket offer) return;
+
+            UUID fromAgentId = offer.AgentData.AgentID;
+            string name = m_FriendList.TryGetValue(fromAgentId, out var fi)
+                ? fi.Name ?? fromAgentId.ToString()
+                : fromAgentId.ToString();
+
+            OnCallingCardOffered(new CallingCardOfferedEventArgs(
+                fromAgentId, name, offer.AgentBlock.TransactionID));
         }
 
         /// <summary>
@@ -895,11 +938,87 @@ namespace OpenMetaverse
             Client.Network.SendPacket(gmp);
         }
 
+        /// <summary>
+        /// Offer our calling card to another agent
+        /// </summary>
+        /// <param name="agentID">UUID of the agent to offer the calling card to</param>
+        public void GiveCallingCard(UUID agentID)
+        {
+            OfferCallingCardPacket offer = new OfferCallingCardPacket
+            {
+                AgentData =
+                {
+                    AgentID = Client.Self.AgentID,
+                    SessionID = Client.Self.SessionID
+                },
+                AgentBlock =
+                {
+                    DestID = agentID,
+                    TransactionID = UUID.Random()
+                }
+            };
+
+            Client.Network.SendPacket(offer);
+        }
+
+        /// <summary>
+        /// Accept a calling card offer
+        /// </summary>
+        /// <param name="fromAgentID">UUID of the agent who offered the card</param>
+        /// <param name="transactionID">Transaction ID from the offer</param>
+        public void AcceptCallingCard(UUID fromAgentID, UUID transactionID)
+        {
+            UUID callingCardFolder = Client.Inventory.FindFolderForType(AssetType.CallingCard);
+
+            AcceptCallingCardPacket accept = new AcceptCallingCardPacket
+            {
+                AgentData =
+                {
+                    AgentID = Client.Self.AgentID,
+                    SessionID = Client.Self.SessionID
+                },
+                TransactionBlock =
+                {
+                    TransactionID = transactionID
+                },
+                FolderData = new AcceptCallingCardPacket.FolderDataBlock[1]
+            };
+            accept.FolderData[0] = new AcceptCallingCardPacket.FolderDataBlock
+            {
+                FolderID = callingCardFolder
+            };
+
+            Client.Network.SendPacket(accept);
+        }
+
+        /// <summary>
+        /// Decline a calling card offer
+        /// </summary>
+        /// <param name="fromAgentID">UUID of the agent who offered the card</param>
+        /// <param name="transactionID">Transaction ID from the offer</param>
+        public void DeclineCallingCard(UUID fromAgentID, UUID transactionID)
+        {
+            DeclineCallingCardPacket decline = new DeclineCallingCardPacket
+            {
+                AgentData =
+                {
+                    AgentID = Client.Self.AgentID,
+                    SessionID = Client.Self.SessionID
+                },
+                TransactionBlock =
+                {
+                    TransactionID = transactionID
+                }
+            };
+
+            Client.Network.SendPacket(decline);
+        }
+
         #endregion
 
         #region Internal events
 
-        private void Network_OnConnect(object sender, LoginProgressEventArgs e)
+        private void Network_OnConnect(object? sender, LoginProgressEventArgs e)
         {
             if (e.Status != LoginStatus.Success)
             {
@@ -922,7 +1041,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="sender"></param>
         /// <param name="e">names corresponding to the list of IDs sent to RequestAvatarNames.</param>
-        private void Avatars_OnAvatarNames(object sender, UUIDNameReplyEventArgs e)
+        private void Avatars_OnAvatarNames(object? sender, UUIDNameReplyEventArgs e)
         {
             var newNames = new Dictionary<UUID, string>();
 
@@ -952,7 +1071,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void OnlineNotificationHandler(object sender, PacketReceivedEventArgs e)
+        protected void OnlineNotificationHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             if (packet.Type != PacketType.OnlineNotification) { return; }
@@ -977,7 +1096,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void OfflineNotificationHandler(object sender, PacketReceivedEventArgs e)
+        protected void OfflineNotificationHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             if (packet.Type != PacketType.OfflineNotification) { return; }
@@ -997,7 +1116,7 @@ namespace OpenMetaverse
 
         #endregion
 
-        private void Self_IM(object sender, InstantMessageEventArgs e)
+        private void Self_IM(object? sender, InstantMessageEventArgs e)
         {
             if (e.IM.Dialog == InstantMessageDialog.FriendshipOffered)
             {
@@ -1035,7 +1154,7 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Populate FriendList <see cref="LockingDictionary{TKey,TValue}"/> with data from the login reply
+        /// Populate FriendList with data from the login reply
         /// </summary>
         /// <param name="loginSuccess">true if login was successful</param>
         /// <param name="redirect">true if login request is requiring a redirect</param>
@@ -1044,11 +1163,11 @@ namespace OpenMetaverse
         /// <param name="replyData">A <see cref="LoginResponseData"/> object containing the decoded 
         /// reply from the login server</param>
         private void Network_OnLoginResponse(bool loginSuccess, bool redirect, string message, string reason,
-            LoginResponseData replyData)
+            LoginResponseData? replyData)
         {
             int uuidLength = UUID.Zero.ToString().Length;
 
-            if (loginSuccess && replyData.BuddyList != null)
+            if (loginSuccess && replyData != null && replyData.BuddyList != null)
             {
                 foreach (BuddyListEntry buddy in replyData.BuddyList)
                 {
@@ -1270,6 +1389,33 @@ namespace OpenMetaverse
             this.AgentID = agentID;
             this.RegionHandle = regionHandle;
             this.Location = location;
+        }
+    }
+    /// <summary>
+    /// Data sent when another agent offers their calling card
+    /// </summary>
+    public class CallingCardOfferedEventArgs : EventArgs
+    {
+        /// <summary>Get the ID of the agent offering the calling card</summary>
+        public UUID AgentID { get; }
+
+        /// <summary>Get the name of the agent offering the calling card</summary>
+        public string AgentName { get; }
+
+        /// <summary>Get the transaction ID used to accept or decline the offer</summary>
+        public UUID TransactionID { get; }
+
+        /// <summary>
+        /// Construct a new instance of the CallingCardOfferedEventArgs class
+        /// </summary>
+        /// <param name="agentID">The ID of the agent offering the calling card</param>
+        /// <param name="agentName">The name of the agent offering the calling card</param>
+        /// <param name="transactionID">The transaction ID for accepting or declining</param>
+        public CallingCardOfferedEventArgs(UUID agentID, string agentName, UUID transactionID)
+        {
+            AgentID = agentID;
+            AgentName = agentName;
+            TransactionID = transactionID;
         }
     }
     #endregion

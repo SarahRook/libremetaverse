@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2019-2026, Sjofn LLC
  * All rights reserved.
@@ -27,9 +27,8 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// AgentManager partial class - Multi-Simulator Support
@@ -52,13 +51,13 @@ namespace OpenMetaverse
             = new System.Collections.Concurrent.ConcurrentDictionary<Simulator, SimulatorAgentState>();
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<RegionCrossingPredictionEventArgs> m_RegionCrossingPredicted;
+        private EventHandler<RegionCrossingPredictionEventArgs>? m_RegionCrossingPredicted;
 
         /// <summary>Raises the RegionCrossingPredicted event</summary>
         /// <param name="e">A RegionCrossingPredictionEventArgs object containing prediction data</param>
         protected virtual void OnRegionCrossingPredicted(RegionCrossingPredictionEventArgs e)
         {
-            EventHandler<RegionCrossingPredictionEventArgs> handler = m_RegionCrossingPredicted;
+            EventHandler<RegionCrossingPredictionEventArgs>? handler = m_RegionCrossingPredicted;
             handler?.Invoke(this, e);
         }
 
@@ -77,7 +76,7 @@ namespace OpenMetaverse
         /// </summary>
         private void PredictCrossing()
         {
-            if (!Client.Settings.MULTIPLE_SIMS) { return; }
+            if (!Client.Settings.Agent.MultipleSims) { return; }
 
             var currentSim = Client.Network.CurrentSim;
             if (currentSim == null || velocity == Vector3.Zero) { return; }
@@ -113,7 +112,7 @@ namespace OpenMetaverse
         /// </summary>
         private void CheckAndConnectNeighbors()
         {
-            if (!Client.Settings.MULTIPLE_SIMS) { return; }
+            if (!Client.Settings.Agent.MultipleSims) { return; }
 
             var currentSim = Client.Network.CurrentSim;
             if (currentSim == null) { return; }
@@ -163,7 +162,7 @@ namespace OpenMetaverse
                     Rotation = relativeRotation,
                     LocalID = localID,
                     IsPresent = sim.AgentMovementComplete,
-                    LastUpdate = DateTime.UtcNow
+                    LastUpdate = Client.UtcNow
                 },
                 (key, old) =>
                 {
@@ -171,7 +170,7 @@ namespace OpenMetaverse
                     old.Rotation = relativeRotation;
                     old.LocalID = localID;
                     old.IsPresent = sim.AgentMovementComplete;
-                    old.LastUpdate = DateTime.UtcNow;
+                    old.LastUpdate = Client.UtcNow;
                     return old;
                 });
         }
@@ -194,7 +193,7 @@ namespace OpenMetaverse
         /// </summary>
         private void ProactiveChildAgentSetup()
         {
-            if (!Client.Settings.MULTIPLE_SIMS) return;
+            if (!Client.Settings.Agent.MultipleSims) return;
 
             var currentSim = Client.Network.CurrentSim;
             if (currentSim == null || !currentSim.AgentMovementComplete) return;
@@ -255,7 +254,7 @@ namespace OpenMetaverse
             if (_childAgentStatus.TryGetValue(handle, out var status))
             {
                 // Don't re-establish if recently requested (within 30 seconds)
-                if ((DateTime.UtcNow - status.RequestTime).TotalSeconds < 30)
+                if ((Client.UtcNow - status.RequestTime).TotalSeconds < 30)
                 {
                     return;
                 }
@@ -269,7 +268,7 @@ namespace OpenMetaverse
                 _childAgentStatus[handle] = new ChildAgentStatus
                 {
                     RegionHandle = handle,
-                    RequestTime = DateTime.UtcNow,
+                    RequestTime = Client.UtcNow,
                     Established = true,
                     Direction = direction
                 };
@@ -282,7 +281,7 @@ namespace OpenMetaverse
             _childAgentStatus[handle] = new ChildAgentStatus
             {
                 RegionHandle = handle,
-                RequestTime = DateTime.UtcNow,
+                RequestTime = Client.UtcNow,
                 Established = false,
                 Direction = direction
             };
@@ -293,12 +292,12 @@ namespace OpenMetaverse
         /// </summary>
         private void CleanupChildAgentTracking()
         {
-            if (!Client.Settings.MULTIPLE_SIMS) return;
+            if (!Client.Settings.Agent.MultipleSims) return;
 
             var currentSim = Client.Network.CurrentSim;
             if (currentSim == null) return;
 
-            var now = DateTime.UtcNow;
+            var now = Client.UtcNow;
             var staleThreshold = TimeSpan.FromMinutes(2);
 
             // Remove stale tracking entries
@@ -404,7 +403,7 @@ namespace OpenMetaverse
         /// </summary>
         private void CleanupObjectTracking()
         {
-            if (!Client.Settings.MULTIPLE_SIMS) return;
+            if (!Client.Settings.Agent.MultipleSims) return;
 
             var connectedSims = new HashSet<Simulator>();
             foreach (var sim in Client.Network.Simulators)

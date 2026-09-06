@@ -28,8 +28,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading;
-using OpenMetaverse;
+using LibreMetaverse;
 using TestClient.Commands.Inventory;
 using TestClient.Commands.System;
 
@@ -154,7 +153,7 @@ namespace TestClient
 
             TestClient client = new TestClient(this)
             {
-                Settings = { MFA_ENABLED = true }
+                Settings = { Connection = { MfaEnabled = true } }
             };
             client.Network.LoginProgress +=
                 delegate(object sender, LoginProgressEventArgs e)

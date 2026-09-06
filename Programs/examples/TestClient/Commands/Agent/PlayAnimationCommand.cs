@@ -1,14 +1,14 @@
-﻿using System.Collections.Generic;
-using System.Collections.Immutable;
+using System.Collections.Frozen;
+using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
-using OpenMetaverse;
+using LibreMetaverse;
 
 namespace TestClient.Commands.Agent
 {
     public class PlayAnimationCommand : Command
     {
-        private readonly ImmutableDictionary<UUID, string> m_BuiltInAnimations = Animations.ToDictionary();
+        private readonly FrozenDictionary<UUID, string> m_BuiltInAnimations = Animations.ToDictionary();
         public PlayAnimationCommand(TestClient testClient)
         {
             Name = "play";
@@ -53,7 +53,8 @@ namespace TestClient.Commands.Agent
             }
             else if (arg.ToLower().Equals("show"))
             {
-                Client.Self.SignaledAnimations.ForEach(delegate(KeyValuePair<UUID, int> kvp) {
+                foreach (var kvp in Client.Self.SignaledAnimations)
+                {
                     if (m_BuiltInAnimations.TryGetValue(kvp.Key, out var animation))
                     {
                         result.AppendFormat("The {0} System Animation is being played, sequence is {1}", animation, kvp.Value);
@@ -62,9 +63,9 @@ namespace TestClient.Commands.Agent
                     {
                         result.AppendFormat("The {0} Asset Animation is being played, sequence is {1}", kvp.Key, kvp.Value);
                     }
-                });
+                }
             }
-            else if (m_BuiltInAnimations.ContainsValue(args[0].Trim().ToUpper()))
+            else if (m_BuiltInAnimations.Values.Contains(args[0].Trim().ToUpper()))
             {
                 foreach (var kvp in m_BuiltInAnimations)
                 {

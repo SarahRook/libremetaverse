@@ -29,9 +29,9 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse.ImportExport
+namespace LibreMetaverse.ImportExport
 {
     /// <summary>
     /// Implements mesh upload communications with the simulator
@@ -51,12 +51,6 @@ namespace OpenMetaverse.ImportExport
         GridClient Client;
         List<ModelPrim> Prims;
 
-        /// <summary>
-        /// Callback for mesh upload operations
-        /// </summary>
-        /// <param name="result">null on failure, result from server on success</param>
-        public delegate void ModelUploadCallback(OSD result);
-
 
         string InvName, InvDescription;
 
@@ -75,8 +69,8 @@ namespace OpenMetaverse.ImportExport
             this.InvDescription = newInvDesc;
         }
 
-        List<byte[]> Images;
-        Dictionary<string, int> ImgIndex;
+        List<byte[]> Images = new List<byte[]>();
+        Dictionary<string, int> ImgIndex = new Dictionary<string, int>();
 
         OSD AssetResources(bool upload)
         {
@@ -165,60 +159,45 @@ namespace OpenMetaverse.ImportExport
         /// <summary>
         /// Performs model upload in one go, without first checking for the price
         /// </summary>
-        /// <param name="callback">Callback that will be invoked upon completion of the upload. Null is sent on request failure</param>
         /// <param name="cancellationToken">Cancellation token for upload operation</param>
-        public async Task Upload(ModelUploadCallback callback, CancellationToken cancellationToken)
+        /// <returns>Server response OSD on success, null on failure</returns>
+        public async Task<OSD?> UploadAsync(CancellationToken cancellationToken)
         {
-            await PrepareUpload(async result =>
-            {
-                switch (result)
-                {
-                    case null when callback != null:
-                        callback(null);
-                        return;
-                    case OSDMap res:
-                    {
-                        Uri uploader = new Uri(res["uploader"]);
-                        await PerformUpload(uploader, contents =>
-                        {
-                            if (contents != null)
-                            {
-                                var reply = (OSDMap)contents;
-                                if (reply.ContainsKey("new_inventory_item") && reply.ContainsKey("new_asset"))
-                                {
-                                    // Request full update on the item in order to update the local store
-                                    Client.Inventory.RequestFetchInventory(reply["new_inventory_item"].AsUUID(), Client.Self.AgentID);
-                                }
-                            }
+            var prepareResult = await PrepareUploadAsync(cancellationToken).ConfigureAwait(false);
+            if (prepareResult is not OSDMap res)
+                return null;
 
-                            callback?.Invoke(contents);
-                        }, cancellationToken);
-                        break;
-                    }
-                }
-            }, cancellationToken);
+            Uri uploader = new Uri(res["uploader"]);
+            var uploadResult = await PerformUploadAsync(uploader, cancellationToken).ConfigureAwait(false);
 
+            if (uploadResult is OSDMap reply && reply.ContainsKey("new_inventory_item") && reply.ContainsKey("new_asset"))
+                Client.Inventory.RequestFetchInventory(reply["new_inventory_item"].AsUUID(), Client.Self.AgentID);
+
+            return uploadResult;
         }
 
         /// <summary>
         /// Ask server for details of cost and impact of the mesh upload
         /// </summary>
-        /// <param name="callback">Callback that will be invoked upon completion of the upload. Null is sent on request failure</param>
         /// <param name="cancellationToken">Cancellation token for network operation</param>
-        public async Task PrepareUpload(ModelUploadCallback callback, CancellationToken cancellationToken)
+        /// <returns>Server response OSD on success, null on failure</returns>
+        public async Task<OSD?> PrepareUploadAsync(CancellationToken cancellationToken)
         {
-            Uri cap = null;
+            Uri? cap = null;
             if (Client.Network.CurrentSim == null ||
                 Client.Network.CurrentSim.Caps == null ||
                 (cap = Client.Network.CurrentSim.Caps.CapabilityURI("NewFileAgentInventory")) == null)
             {
                 Logger.Warn("Cannot upload mesh, no connection or NewFileAgentInventory not available");
-                callback?.Invoke(null);
-                return;
+                return null;
             }
 
             Images = new List<byte[]>();
             ImgIndex = new Dictionary<string, int>();
+
+            var meshCost = Client.Self.Benefits.MeshUploadCost > 0
+                ? Client.Self.Benefits.MeshUploadCost
+                : Client.Settings.UploadCost;
 
             OSDMap payload = new OSDMap
             {
@@ -231,77 +210,70 @@ namespace OpenMetaverse.ImportExport
                 ["texture_folder_id"] = Client.Inventory.FindFolderForType(AssetType.Texture),
                 ["everyone_mask"] = (int) PermissionMask.All,
                 ["group_mask"] = (int) PermissionMask.All,
-                ["next_owner_mask"] = (int) PermissionMask.All
+                ["next_owner_mask"] = (int) PermissionMask.All,
+                ["expected_upload_cost"] = meshCost
             };
 
-            await Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, payload, cancellationToken,
-                (response, data, error) =>
+            try
             {
-                if (error != null)
+                var (response, data) = await Client.HttpCapsClient.PostAsync(cap, OSDFormat.Xml, payload, cancellationToken);
+                if (data == null)
                 {
-                    Logger.Error($"Mesh upload request failure: {error.Message}", error, Client);
-                    callback?.Invoke(null);
-                    return;
+                    Logger.Error("Mesh upload request failure: response data is null", Client);
+                    return null;
                 }
-
-                try
+                OSD result = OSDParser.Deserialize(data);
+                OSDMap res = (OSDMap)result;
+                if (res["state"] != "upload")
                 {
-                    OSD result = OSDParser.Deserialize(data);
-                    OSDMap res = (OSDMap)result;
-
-                    if (res["state"] != "upload")
-                    {
-                        Logger.Error($"Mesh upload failure: {res["message"]}", Client);
-                        callback?.Invoke(null);
-                        return;
-                    }
-                    Logger.Debug($"Response from mesh upload prepare: {Environment.NewLine}" +
-                               OSDParser.SerializeLLSDNotationFormatted(result), Client);
-                    callback?.Invoke(result);
+                    Logger.Error($"Mesh upload failure: {res["message"]}", Client);
+                    return null;
                 }
-                catch (Exception ex)
-                {
-                    Logger.Error($"Mesh upload request failure: {ex.Message}", ex, Client);
-                    callback?.Invoke(null);
-                }
-            });
+                Logger.Debug($"Response from mesh upload prepare: {Environment.NewLine}" +
+                           OSDParser.SerializeLLSDNotationFormatted(result), Client);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Mesh upload request failure: {ex.Message}", ex, Client);
+                return null;
+            }
         }
 
         /// <summary>
         /// Performs actual mesh and image upload
         /// </summary>
         /// <param name="uploader">Uri received in the upload prepare stage</param>
-        /// <param name="callback">Callback that will be invoke upon completion of the upload. Null is sent on request failure</param>
         /// <param name="cancellationToken">Cancellation token for network operation</param>
-        public async Task PerformUpload(Uri uploader, ModelUploadCallback callback, CancellationToken cancellationToken)
+        /// <returns>Server response OSD on success, null on failure</returns>
+        public async Task<OSD?> PerformUploadAsync(Uri uploader, CancellationToken cancellationToken)
         {
-            Uri cap = Client.Network.CurrentSim.Caps.CapabilityURI("MeshUploader");
+            Uri? cap = Client.Network.CurrentSim?.Caps?.CapabilityURI("MeshUploader");
+            if (cap == null)
+            {
+                Logger.Warn("Cannot upload mesh, MeshUploader capability not available");
+                return null;
+            }
 
-            await Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, AssetResources(true),
-                cancellationToken, (response, data, error) =>
+            try
+            {
+                var (response, data) = await Client.HttpCapsClient.PostAsync(cap, OSDFormat.Xml, AssetResources(true), cancellationToken);
+                if (data == null)
                 {
-                    if (error != null)
-                    {
-                        Logger.Error($"Mesh upload request failure: {error.Message}", error, Client);
-                        callback?.Invoke(null);
-                        return;
-                    }
-
-                    try
-                    {
-                        OSD result = OSDParser.Deserialize(data);
-                        OSDMap res = (OSDMap)result;
-
-                        Logger.Debug($"Response from mesh upload perform: {Environment.NewLine}" +
-                                   OSDParser.SerializeLLSDNotationFormatted(result));
-                        callback?.Invoke(res);
-                    }
-                    catch (Exception ex)
-                    {
-                        Logger.Error($"Mesh upload request failure: {ex.Message}", ex, Client);
-                        callback?.Invoke(null);
-                    }
-                });
+                    Logger.Error("Mesh upload request failure: response data is null", Client);
+                    return null;
+                }
+                OSD result = OSDParser.Deserialize(data);
+                OSDMap res = (OSDMap)result;
+                Logger.Debug($"Response from mesh upload perform: {Environment.NewLine}" +
+                           OSDParser.SerializeLLSDNotationFormatted(result));
+                return res;
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Mesh upload request failure: {ex.Message}", ex, Client);
+                return null;
+            }
         }
     }
 }

@@ -24,9 +24,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.Messages.Linden;
-using OpenMetaverse.Packets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Assets;
+using LibreMetaverse.Messages.Linden;
+using LibreMetaverse.Packets;
+using LibreMetaverse.StructuredData;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -34,50 +35,147 @@ using System.Threading;
 using System.Threading.Tasks;
 using static LibreMetaverse.HttpCapsClient;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class InventoryManager
     {
-        /// <summary>
-        /// Async wrappers that delegate to existing synchronous implementations by running them on the threadpool.
-        /// These provide an async-first surface while preserving existing sync behavior.
-        /// </summary>
-        public Task MoveFolderAsync(UUID folderID, UUID newParentID, CancellationToken cancellationToken = default)
+        public async Task MoveFolderAsync(UUID folderID, UUID newParentID, CancellationToken cancellationToken = default)
         {
-            return Task.Run(() => MoveFolder(folderID, newParentID, cancellationToken), cancellationToken);
+            using (var writeLock = _storeLock.WriteLock())
+            {
+                if (_Store != null && _Store.TryGetValue(folderID, out var storeItem) && storeItem is InventoryFolder inv)
+                {
+                    inv.ParentUUID = newParentID;
+                    _Store.UpdateNodeFor(inv);
+                }
+            }
+
+            if (Client.AisClient.IsAvailable)
+            {
+                await Client.AisClient.MoveCategoryAsync(folderID, newParentID, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var move = new MoveInventoryFolderPacket
+            {
+                AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID, Stamp = false },
+                InventoryData = new MoveInventoryFolderPacket.InventoryDataBlock[1]
+            };
+            move.InventoryData[0] = new MoveInventoryFolderPacket.InventoryDataBlock { FolderID = folderID, ParentID = newParentID };
+            Client.Network.SendPacket(move);
         }
 
-        public Task MoveFoldersAsync(Dictionary<UUID, UUID> foldersNewParents, CancellationToken cancellationToken = default)
+        public async Task MoveFoldersAsync(Dictionary<UUID, UUID> foldersNewParents, CancellationToken cancellationToken = default)
         {
-            return Task.Run(() => MoveFolders(foldersNewParents, cancellationToken), cancellationToken);
+            using (var writeLock = _storeLock.WriteLock())
+            {
+                foreach (var entry in foldersNewParents)
+                {
+                    if (_Store != null && _Store.TryGetValue(entry.Key, out var storeItem) && storeItem is InventoryFolder inv)
+                    {
+                        inv.ParentUUID = entry.Value;
+                        _Store.UpdateNodeFor(inv);
+                    }
+                }
+            }
+
+            if (Client.AisClient.IsAvailable)
+            {
+                var tasks = foldersNewParents.Select(kv => Client.AisClient.MoveCategoryAsync(kv.Key, kv.Value, cancellationToken)).ToArray();
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+                return;
+            }
+
+            var move = new MoveInventoryFolderPacket
+            {
+                AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID, Stamp = false },
+                InventoryData = new MoveInventoryFolderPacket.InventoryDataBlock[foldersNewParents.Count]
+            };
+            var index = 0;
+            foreach (var folder in foldersNewParents)
+                move.InventoryData[index++] = new MoveInventoryFolderPacket.InventoryDataBlock { FolderID = folder.Key, ParentID = folder.Value };
+            Client.Network.SendPacket(move);
         }
 
         public Task MoveItemAsync(UUID itemID, UUID folderID, CancellationToken cancellationToken = default)
+            => MoveItemAsync(itemID, folderID, string.Empty, cancellationToken);
+
+        public async Task MoveItemAsync(UUID itemID, UUID folderID, string newName, CancellationToken cancellationToken = default)
         {
-            return Task.Run(() => MoveItem(itemID, folderID, cancellationToken), cancellationToken);
+            try
+            {
+                using (_storeLock.WriteLock())
+                {
+                    if (_Store != null && _Store.TryGetValue(itemID, out var storeItem) && storeItem is InventoryItem inv)
+                    {
+                        if (!string.IsNullOrEmpty(newName)) inv.Name = newName;
+                        inv.ParentUUID = folderID;
+                        _Store.UpdateNodeFor(inv);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"MoveItemAsync local update failed: {ex.Message}", Client);
+            }
+
+            if (string.IsNullOrEmpty(newName) && Client.AisClient.IsAvailable)
+            {
+                await Client.AisClient.MoveItemAsync(itemID, folderID, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var move = new MoveInventoryItemPacket
+            {
+                AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID, Stamp = false },
+                InventoryData = new MoveInventoryItemPacket.InventoryDataBlock[1]
+            };
+            move.InventoryData[0] = new MoveInventoryItemPacket.InventoryDataBlock { ItemID = itemID, FolderID = folderID, NewName = Utils.StringToBytes(newName) };
+            Client.Network.SendPacket(move);
         }
 
-        public Task MoveItemAsync(UUID itemID, UUID folderID, string newName, CancellationToken cancellationToken = default)
+        public async Task MoveItemsAsync(Dictionary<UUID, UUID> itemsNewFolders, CancellationToken cancellationToken = default)
         {
-            return Task.Run(() => MoveItem(itemID, folderID, newName, cancellationToken), cancellationToken);
-        }
+            using (var writeLock = _storeLock.WriteLock())
+            {
+                foreach (var entry in itemsNewFolders)
+                {
+                    if (_Store != null && _Store.TryGetValue(entry.Key, out var storeItem) && storeItem is InventoryItem inv)
+                    {
+                        inv.ParentUUID = entry.Value;
+                        _Store.UpdateNodeFor(inv);
+                    }
+                }
+            }
 
-        public Task MoveItemsAsync(Dictionary<UUID, UUID> itemsNewFolders, CancellationToken cancellationToken = default)
-        {
-            return Task.Run(() => MoveItems(itemsNewFolders, cancellationToken), cancellationToken);
+            if (Client.AisClient.IsAvailable)
+            {
+                var tasks = itemsNewFolders.Select(kv => Client.AisClient.MoveItemAsync(kv.Key, kv.Value, cancellationToken)).ToArray();
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+                return;
+            }
+
+            var move = new MoveInventoryItemPacket
+            {
+                AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID, Stamp = false },
+                InventoryData = new MoveInventoryItemPacket.InventoryDataBlock[itemsNewFolders.Count]
+            };
+            var idx = 0;
+            foreach (var item in itemsNewFolders)
+                move.InventoryData[idx++] = new MoveInventoryItemPacket.InventoryDataBlock { ItemID = item.Key, FolderID = item.Value };
+            Client.Network.SendPacket(move);
         }
 
         
 
-        public async Task RequestCreateItemFromAssetAsync(byte[] data, string name, string description, AssetType assetType,
-            InventoryType invType, UUID folderID, Permissions permissions, ItemCreatedFromAssetCallback callback,
-            CancellationToken cancellationToken = default, IProgress<ProgressReport> progress = null)
+        public async Task<(bool success, string status, UUID itemID, UUID assetID)> RequestCreateItemFromAssetAsync(
+            byte[] data, string name, string description, AssetType assetType, InventoryType invType,
+            UUID folderID, Permissions permissions,
+            CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
         {
             var cap = GetCapabilityURI("NewFileAgentInventory", false);
             if (cap == null)
-            {
                 throw new InvalidOperationException("NewFileAgentInventory capability is not currently available");
-            }
 
             var query = new OSDMap
             {
@@ -89,24 +187,24 @@ namespace OpenMetaverse
                 {"everyone_mask", OSD.FromInteger((int) permissions.EveryoneMask)},
                 {"group_mask", OSD.FromInteger((int) permissions.GroupMask)},
                 {"next_owner_mask", OSD.FromInteger((int) permissions.NextOwnerMask)},
-                {"expected_upload_cost", OSD.FromInteger(Client.Settings.UPLOAD_COST)}
+                {"expected_upload_cost", OSD.FromInteger(GetUploadCostForAssetType(assetType))}
             };
 
             try
             {
                 var result = await PostCapAsync(cap, query, cancellationToken, progress).ConfigureAwait(false);
-                CreateItemFromAssetResponse(callback, data, query, result, null, cancellationToken, progress);
+                return await CreateItemFromAssetAsync(data, result, cancellationToken, progress).ConfigureAwait(false);
             }
-            catch (Exception ex)
-            {
-                CreateItemFromAssetResponse(callback, data, query, null, ex, cancellationToken, progress);
-            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { return (false, ex.Message, UUID.Zero, UUID.Zero); }
         }
 
-        public async Task RequestCopyItemFromNotecardAsync(UUID objectID, UUID notecardID, UUID folderID, UUID itemID, 
-            ItemCopiedCallback callback, CancellationToken cancellationToken = default, IProgress<ProgressReport> progress = null)
+        public async Task<InventoryBase?> RequestCopyItemFromNotecardAsync(UUID objectID, UUID notecardID, UUID folderID, UUID itemID,
+            CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
         {
-            _ItemCopiedCallbacks[0] = callback; // Notecards always use callback ID 0
+            var tcs = new TaskCompletionSource<InventoryBase?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+            _ItemCopiedCallbacks[0] = copied => tcs.TrySetResult(copied); // Notecards always use callback ID 0
 
             var cap = GetCapabilityURI("CopyInventoryFromNotecard");
             if (cap != null)
@@ -126,186 +224,185 @@ namespace OpenMetaverse
                 }
                 catch (Exception)
                 {
-                    // fallback to LLUDP path if capability call fails
-                    var copy = new CopyInventoryFromNotecardPacket
-                    {
-                        AgentData =
-                        {
-                            AgentID = Client.Self.AgentID,
-                            SessionID = Client.Self.SessionID
-                        },
-                        NotecardData =
-                        {
-                            ObjectID = objectID,
-                            NotecardItemID = notecardID
-                        },
-                        InventoryData = new CopyInventoryFromNotecardPacket.InventoryDataBlock[1]
-                    };
-
-                    copy.InventoryData[0] = new CopyInventoryFromNotecardPacket.InventoryDataBlock
-                    {
-                        FolderID = folderID,
-                        ItemID = itemID
-                    };
-
-                    Client.Network.SendPacket(copy);
+                    SendCopyFromNotecardPacket(objectID, notecardID, folderID, itemID);
                 }
             }
             else
             {
-                var copy = new CopyInventoryFromNotecardPacket
-                {
-                    AgentData =
-                    {
-                        AgentID = Client.Self.AgentID,
-                        SessionID = Client.Self.SessionID
-                    },
-                    NotecardData =
-                    {
-                        ObjectID = objectID,
-                        NotecardItemID = notecardID
-                    },
-                    InventoryData = new CopyInventoryFromNotecardPacket.InventoryDataBlock[1]
-                };
-
-                copy.InventoryData[0] = new CopyInventoryFromNotecardPacket.InventoryDataBlock
-                {
-                    FolderID = folderID,
-                    ItemID = itemID
-                };
-
-                Client.Network.SendPacket(copy);
+                SendCopyFromNotecardPacket(objectID, notecardID, folderID, itemID);
             }
+
+            return await tcs.Task.ConfigureAwait(false);
         }
 
-        public async Task RequestUploadNotecardAssetAsync(byte[] data, UUID notecardID, InventoryUploadedAssetCallback callback, 
-            CancellationToken cancellationToken = default, IProgress<ProgressReport> progress = null)
+        private void SendCopyFromNotecardPacket(UUID objectID, UUID notecardID, UUID folderID, UUID itemID)
+        {
+            var copy = new CopyInventoryFromNotecardPacket
+            {
+                AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID },
+                NotecardData = { ObjectID = objectID, NotecardItemID = notecardID },
+                InventoryData = new CopyInventoryFromNotecardPacket.InventoryDataBlock[1]
+            };
+            copy.InventoryData[0] = new CopyInventoryFromNotecardPacket.InventoryDataBlock { FolderID = folderID, ItemID = itemID };
+            Client.Network.SendPacket(copy);
+        }
+
+        public async Task<(bool success, string status, UUID itemID, UUID assetID)> RequestUploadNotecardAssetAsync(byte[] data, UUID notecardID,
+            CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
         {
             var cap = GetCapabilityURI("UpdateNotecardAgentInventory", false);
             if (cap == null)
-            {
                 throw new InvalidOperationException("Capability system not initialized to send asset");
-            }
 
             var query = new OSDMap { { "item_id", OSD.FromUUID(notecardID) } };
-
             try
             {
                 var result = await PostCapAsync(cap, query, cancellationToken, progress).ConfigureAwait(false);
-                UploadInventoryAssetResponse(new KeyValuePair<InventoryUploadedAssetCallback, byte[]>(callback, data),
-                    notecardID, result, null, cancellationToken, progress);
+                return await PerformInventoryUploadAsync(data, notecardID, result, cancellationToken, progress).ConfigureAwait(false);
             }
-            catch (Exception ex)
-            {
-                UploadInventoryAssetResponse(new KeyValuePair<InventoryUploadedAssetCallback, byte[]>(callback, data),
-                    notecardID, null, ex, cancellationToken, progress);
-            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { return (false, ex.Message, UUID.Zero, UUID.Zero); }
         }
 
-        public async Task RequestUpdateNotecardTaskAsync(byte[] data, UUID notecardID, UUID taskID, InventoryUploadedAssetCallback callback, 
-            CancellationToken cancellationToken = default, IProgress<ProgressReport> progress = null)
+        public async Task<(bool success, string status, UUID itemID, UUID assetID)> RequestUpdateNotecardTaskAsync(byte[] data, UUID notecardID, UUID taskID,
+            CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
         {
             var cap = GetCapabilityURI("UpdateNotecardTaskInventory", false);
             if (cap == null)
-            {
                 throw new InvalidOperationException("UpdateNotecardTaskInventory capability is not currently available");
-            }
 
-            var query = new OSDMap
-            {
-                {"item_id", OSD.FromUUID(notecardID)},
-                { "task_id", OSD.FromUUID(taskID)}
-            };
-
+            var query = new OSDMap { {"item_id", OSD.FromUUID(notecardID)}, {"task_id", OSD.FromUUID(taskID)} };
             try
             {
                 var result = await PostCapAsync(cap, query, cancellationToken, progress).ConfigureAwait(false);
-                UploadInventoryAssetResponse(new KeyValuePair<InventoryUploadedAssetCallback, byte[]>(callback, data), 
-                    notecardID, result, null, cancellationToken, progress);
+                return await PerformInventoryUploadAsync(data, notecardID, result, cancellationToken, progress).ConfigureAwait(false);
             }
-            catch (Exception ex)
-            {
-                UploadInventoryAssetResponse(new KeyValuePair<InventoryUploadedAssetCallback, byte[]>(callback, data),
-                    notecardID, null, ex, cancellationToken, progress);
-            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { return (false, ex.Message, UUID.Zero, UUID.Zero); }
         }
 
-        public async Task RequestUploadGestureAssetAsync(byte[] data, UUID gestureID, InventoryUploadedAssetCallback callback,
-            CancellationToken cancellationToken = default, IProgress<ProgressReport> progress = null)
+        public async Task<(bool success, string status, UUID itemID, UUID assetID)> RequestUploadGestureAssetAsync(byte[] data, UUID gestureID,
+            CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
         {
             var cap = GetCapabilityURI("UpdateGestureAgentInventory", false);
             if (cap == null)
-            {
                 throw new InvalidOperationException("UpdateGestureAgentInventory capability is not currently available");
-            }
 
             var query = new OSDMap { { "item_id", OSD.FromUUID(gestureID) } };
-
             try
             {
                 var result = await PostCapAsync(cap, query, cancellationToken, progress).ConfigureAwait(false);
-                UploadInventoryAssetResponse(new KeyValuePair<InventoryUploadedAssetCallback, byte[]>(callback, data), 
-                    gestureID, result, null, cancellationToken, progress);
+                return await PerformInventoryUploadAsync(data, gestureID, result, cancellationToken, progress).ConfigureAwait(false);
             }
-            catch (Exception ex)
-            {
-                UploadInventoryAssetResponse(new KeyValuePair<InventoryUploadedAssetCallback, byte[]>(callback, data), 
-                    gestureID, null, ex, cancellationToken, progress);
-            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { return (false, ex.Message, UUID.Zero, UUID.Zero); }
         }
 
-        public async Task RequestUpdateScriptAgentInventoryAsync(byte[] data, UUID itemID, bool mono, ScriptUpdatedCallback callback, 
-            CancellationToken cancellationToken = default, IProgress<ProgressReport> progress = null)
+        /// <summary>
+        /// Saves a GLTF material to an existing agent inventory item via the
+        /// UpdateMaterialAgentInventory capability. Mirrors
+        /// LLMaterialEditor::updateInventoryItem's agent-inventory branch (llmaterialeditor.cpp): a
+        /// two-phase upload where the metadata POST (item_id) returns an "uploader" URL. The second
+        /// POST sends a binary LLSD map containing version, type, and the material JSON in data.
+        /// </summary>
+        /// <param name="material">The material to save</param>
+        /// <param name="materialItemID">UUID of the existing inventory item to update</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <param name="progress">Optional upload progress reporter</param>
+        public async Task<(bool success, string status, UUID itemID, UUID assetID)> RequestUpdateMaterialAgentInventoryAsync(
+            AssetMaterial material, UUID materialItemID, CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
+        {
+            if (material == null) throw new ArgumentNullException(nameof(material));
+
+            var cap = GetCapabilityURI("UpdateMaterialAgentInventory", false);
+            if (cap == null)
+                throw new InvalidOperationException("UpdateMaterialAgentInventory capability is not currently available");
+
+            var data = EncodeMaterialAsset(material);
+            var query = new OSDMap { { "item_id", OSD.FromUUID(materialItemID) } };
+            try
+            {
+                var result = await PostCapAsync(cap, query, cancellationToken, progress).ConfigureAwait(false);
+                return await PerformInventoryUploadAsync(data, materialItemID, result, cancellationToken, progress).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { return (false, ex.Message, UUID.Zero, UUID.Zero); }
+        }
+
+        /// <summary>
+        /// Saves a GLTF material to an existing task (object) inventory item via the
+        /// UpdateMaterialTaskInventory capability. Mirrors
+        /// LLMaterialEditor::updateInventoryItem's task-inventory branch (llmaterialeditor.cpp) and
+        /// uses the same two-phase binary LLSD material envelope as the agent-inventory path.
+        /// </summary>
+        /// <param name="material">The material to save</param>
+        /// <param name="materialItemID">UUID of the existing task-inventory item to update</param>
+        /// <param name="taskID">UUID of the object (task) containing the item</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <param name="progress">Optional upload progress reporter</param>
+        public async Task<(bool success, string status, UUID itemID, UUID assetID)> RequestUpdateMaterialTaskInventoryAsync(
+            AssetMaterial material, UUID materialItemID, UUID taskID, CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
+        {
+            if (material == null) throw new ArgumentNullException(nameof(material));
+
+            var cap = GetCapabilityURI("UpdateMaterialTaskInventory", false);
+            if (cap == null)
+                throw new InvalidOperationException("UpdateMaterialTaskInventory capability is not currently available");
+
+            var data = EncodeMaterialAsset(material);
+            var query = new OSDMap { { "item_id", OSD.FromUUID(materialItemID) }, { "task_id", OSD.FromUUID(taskID) } };
+            try
+            {
+                var result = await PostCapAsync(cap, query, cancellationToken, progress).ConfigureAwait(false);
+                return await PerformInventoryUploadAsync(data, materialItemID, result, cancellationToken, progress).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { return (false, ex.Message, UUID.Zero, UUID.Zero); }
+        }
+
+        private static byte[] EncodeMaterialAsset(AssetMaterial material)
+        {
+            var asset = new OSDMap
+            {
+                ["version"] = OSD.FromString("1.1"),
+                ["type"] = OSD.FromString("GLTF 2.0"),
+                ["data"] = OSD.FromString(material.ToJson())
+            };
+            return OSDParser.SerializeLLSDBinary(asset);
+        }
+
+        public async Task<(bool uploadSuccess, string uploadStatus, bool compileSuccess, List<string>? compileMessages, UUID itemID, UUID assetID)> RequestUpdateScriptAgentInventoryAsync(
+            byte[] data, UUID itemID, bool mono, CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
         {
             var cap = GetCapabilityURI("UpdateScriptAgent");
             if (cap == null)
                 throw new InvalidOperationException("UpdateScriptAgent capability is not currently available");
 
-            var request = new UpdateScriptAgentRequestMessage
-            {
-                ItemID = itemID,
-                Target = mono ? "mono" : "lsl2"
-            };
-
+            var request = new UpdateScriptAgentRequestMessage { ItemID = itemID, Target = mono ? "mono" : "lsl2" };
             try
             {
-                var result = await PostStringAsync(cap, request.Serialize(), cancellationToken, progress).ConfigureAwait(false);
-                UpdateScriptAgentInventoryResponse(new KeyValuePair<ScriptUpdatedCallback, byte[]>(callback, data),
-                    itemID, result, null, cancellationToken, progress);
+                var result = await PostCapAsync(cap, request.Serialize(), cancellationToken, progress).ConfigureAwait(false);
+                return await PerformScriptUploadAsync(data, itemID, result, cancellationToken, progress).ConfigureAwait(false);
             }
-            catch (Exception ex)
-            {
-                UpdateScriptAgentInventoryResponse(new KeyValuePair<ScriptUpdatedCallback, byte[]>(callback, data),
-                    itemID, null, ex, cancellationToken, progress);
-            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { return (false, ex.Message, false, null, UUID.Zero, UUID.Zero); }
         }
 
-        public async Task RequestUpdateScriptTaskAsync(byte[] data, UUID itemID, UUID taskID, bool mono, bool running, 
-            ScriptUpdatedCallback callback, CancellationToken cancellationToken = default, IProgress<ProgressReport> progress = null)
+        public async Task<(bool uploadSuccess, string uploadStatus, bool compileSuccess, List<string>? compileMessages, UUID itemID, UUID assetID)> RequestUpdateScriptTaskAsync(
+            byte[] data, UUID itemID, UUID taskID, bool mono, bool running, CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
         {
             var cap = GetCapabilityURI("UpdateScriptTask");
             if (cap == null)
                 throw new InvalidOperationException("UpdateScriptTask capability is not currently available");
 
-            var msg = new UpdateScriptTaskUpdateMessage
-            {
-                ItemID = itemID,
-                TaskID = taskID,
-                ScriptRunning = running,
-                Target = mono ? "mono" : "lsl2"
-            };
-
+            var msg = new UpdateScriptTaskUpdateMessage { ItemID = itemID, TaskID = taskID, ScriptRunning = running, Target = mono ? "mono" : "lsl2" };
             try
             {
-                var result = await PostStringAsync(cap, msg.Serialize(), cancellationToken, progress).ConfigureAwait(false);
-                UpdateScriptAgentInventoryResponse(new KeyValuePair<ScriptUpdatedCallback, byte[]>(callback, data),
-                    itemID, result, null, cancellationToken, progress);
+                var result = await PostCapAsync(cap, msg.Serialize(), cancellationToken, progress).ConfigureAwait(false);
+                return await PerformScriptUploadAsync(data, itemID, result, cancellationToken, progress).ConfigureAwait(false);
             }
-            catch (Exception ex)
-            {
-                UpdateScriptAgentInventoryResponse(new KeyValuePair<ScriptUpdatedCallback, byte[]>(callback, data),
-                    itemID, null, ex, cancellationToken, progress);
-            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { return (false, ex.Message, false, null, UUID.Zero, UUID.Zero); }
         }
 
         /// <summary>
@@ -315,7 +412,7 @@ namespace OpenMetaverse
         {
             if (GetCapabilityURI("FetchInventory2") != null)
             {
-                return RequestFetchInventoryHttpAsync(itemID, ownerID, cancellationToken, null);
+                return RequestFetchInventoryHttpAsync(itemID, ownerID, cancellationToken, null!);
             }
 
             RequestFetchInventory(itemID, ownerID, cancellationToken);
@@ -326,7 +423,7 @@ namespace OpenMetaverse
         /// Async-first variant to request multiple inventory items. Uses FetchInventory2 capability when available.
         /// </summary>
         public Task RequestFetchInventoryAsync(Dictionary<UUID, UUID> items, CancellationToken cancellationToken = default, 
-            Action<List<InventoryItem>> callback = null)
+            Action<List<InventoryItem>>? callback = null)
         {
             if (GetCapabilityURI("FetchInventory2") != null)
             {
@@ -338,107 +435,34 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Async-first variant to request copying multiple items. Falls back to LLUDP copy packet.
+        /// Copy multiple inventory items. Redirects to <see cref="RequestCopyItemsWithResultAsync"/>.
         /// </summary>
-        public Task RequestCopyItemsAsync(List<UUID> items, List<UUID> targetFolders, List<string> newNames,
-            UUID oldOwnerID, ItemCopiedCallback callback, CancellationToken cancellationToken = default)
-        {
-            if (items == null) throw new ArgumentNullException(nameof(items));
-            if (targetFolders == null) throw new ArgumentNullException(nameof(targetFolders));
-            if (items.Count != targetFolders.Count || (newNames != null && items.Count != newNames.Count))
-                throw new ArgumentException("All list arguments must have an equal number of entries");
+        public Task<CopyItemsResult> RequestCopyItemsAsync(List<UUID> items, List<UUID> targetFolders, List<string> newNames,
+            UUID oldOwnerID, CancellationToken cancellationToken = default)
+            => RequestCopyItemsWithResultAsync(items, targetFolders, newNames, oldOwnerID, cancellationToken);
 
-            // Try AISv3 Inventory API first
-            var invCap = GetCapabilityURI("InventoryAPIv3", false);
-            if (Client.AisClient.IsAvailable && invCap != null)
-            {
-                try
-                {
-                    var ops = new OSDArray(items.Count);
-                    for (var i = 0; i < items.Count; ++i)
-                    {
-                        var op = new OSDMap
-                        {
-                            ["item_id"] = items[i],
-                            ["folder_id"] = targetFolders[i]
-                        };
+        /// <summary>Copy a single inventory item.</summary>
+        public Task<InventoryBase?> RequestCopyItemAsync(UUID item, UUID newParent, string newName,
+            CancellationToken cancellationToken = default)
+            => RequestCopyItemAsync(item, newParent, newName, Client.Self.AgentID, cancellationToken);
 
-                        if (newNames != null && !string.IsNullOrEmpty(newNames[i]))
-                            op["new_name"] = newNames[i];
-
-                        ops.Add(op);
-                    }
-
-                    var payload = new OSDMap { ["items"] = ops, ["agent_id"] = Client.Self.AgentID };
-
-                    // Post to AIS inventory API; ignore result for now and let server emit normal copy callbacks
-                    _ = PostCapAsync(invCap, payload, cancellationToken).ConfigureAwait(false);
-                    return Task.CompletedTask;
-                }
-                catch (Exception)
-                {
-                    // Fall through to legacy LLUDP path on error
-                }
-            }
-
-            // Legacy LLUDP path
-            var callbackID = RegisterItemsCopiedCallback(callback);
-
-            var copy = new CopyInventoryItemPacket
-            {
-                AgentData =
-                {
-                    AgentID = Client.Self.AgentID,
-                    SessionID = Client.Self.SessionID
-                },
-                InventoryData = new CopyInventoryItemPacket.InventoryDataBlock[items.Count]
-            };
-
-            for (var i = 0; i < items.Count; ++i)
-            {
-                copy.InventoryData[i] = new CopyInventoryItemPacket.InventoryDataBlock
-                {
-                    CallbackID = callbackID,
-                    NewFolderID = targetFolders[i],
-                    OldAgentID = oldOwnerID,
-                    OldItemID = items[i],
-                    NewName = !string.IsNullOrEmpty(newNames?[i])
-                        ? Utils.StringToBytes(newNames[i])
-                        : Utils.EmptyBytes
-                };
-            }
-
-            Client.Network.SendPacket(copy);
-            return Task.CompletedTask;
-        }
-
-        /// <summary>
-        /// Async-first wrapper for RequestCopyItem (single item)
-        /// </summary>
-        public Task RequestCopyItemAsync(UUID item, UUID newParent, string newName, ItemCopiedCallback callback, 
+        /// <summary>Copy a single inventory item with explicit old owner.</summary>
+        public async Task<InventoryBase?> RequestCopyItemAsync(UUID item, UUID newParent, string newName, UUID oldOwnerID,
             CancellationToken cancellationToken = default)
         {
-            return RequestCopyItemAsync(item, newParent, newName, Client.Self.AgentID, callback, cancellationToken);
+            var result = await RequestCopyItemsWithResultAsync(
+                new List<UUID>(1) { item },
+                new List<UUID>(1) { newParent },
+                new List<string>(1) { newName },
+                oldOwnerID, cancellationToken).ConfigureAwait(false);
+            return result.CopiedItems?.Count > 0 ? result.CopiedItems[0] : null;
         }
 
-        /// <summary>
-        /// Async-first wrapper for RequestCopyItem with explicit old owner
-        /// </summary>
-        public Task RequestCopyItemAsync(UUID item, UUID newParent, string newName, UUID oldOwnerID,
-            ItemCopiedCallback callback, CancellationToken cancellationToken = default)
+        public async Task<InventoryItem?> FetchItemAsync(UUID itemID, UUID ownerID, CancellationToken cancellationToken = default)
         {
-            var items = new List<UUID>(1) { item };
-            var folders = new List<UUID>(1) { newParent };
-            var names = new List<string>(1) { newName };
+            var tcs = new TaskCompletionSource<InventoryItem?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            return RequestCopyItemsAsync(items, folders, names, oldOwnerID, callback, cancellationToken);
-        }
-
-        public async Task<InventoryItem> FetchItemAsync(UUID itemID, UUID ownerID, CancellationToken cancellationToken = default)
-        {
-            var tcs = new TaskCompletionSource<InventoryItem>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            void Callback(object sender, ItemReceivedEventArgs e)
+            void Callback(object? sender, ItemReceivedEventArgs e)
             {
                 if (e.Item.UUID == itemID)
                     tcs.TrySetResult(e.Item);
@@ -450,7 +474,7 @@ namespace OpenMetaverse
             {
                 try
                 {
-                    await RequestFetchInventoryAsync(itemID, ownerID, cancellationToken);
+                    await RequestFetchInventoryAsync(itemID, ownerID, cancellationToken).ConfigureAwait(false);
                     return await tcs.Task.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -467,11 +491,11 @@ namespace OpenMetaverse
         public async Task<List<InventoryBase>> FolderContentsAsync(UUID folder, UUID owner, bool fetchFolders, bool fetchItems,
             InventorySortOrder order, CancellationToken cancellationToken = default, bool followLinks = false)
         {
-            List<InventoryBase> inventory = null;
+            List<InventoryBase>? inventory = null;
 
             try
             {
-                inventory = await RequestFolderContents(folder, owner, fetchFolders, fetchItems, order, cancellationToken).ConfigureAwait(false);
+                inventory = await RequestFolderContentsAsync(folder, owner, fetchFolders, fetchItems, order, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -484,28 +508,35 @@ namespace OpenMetaverse
 
             if (inventory == null)
             {
-                inventory = _Store.GetContents(folder);
+                inventory = _Store?.GetContents(folder) ?? new List<InventoryBase>();
             }
 
-            if (inventory != null && followLinks)
+            if (followLinks)
             {
                 for (var i = 0; i < inventory.Count; ++i)
                 {
                     if (!(inventory[i] is InventoryItem item)) continue;
 
-                    if (item.IsLink())
+                    if (!item.IsLink()) continue;
+
+                    var store = Store;
+                    // If the real item is already in the local store, substitute it immediately
+                    // so callers always receive fully-typed items with correct metadata (e.g.
+                    // AttachmentPoint on InventoryAttachment) rather than bare link objects.
+                    if (store != null && store.TryGetValue<InventoryItem>(item.AssetUUID, out var cached) && cached != null && !cached.IsLink())
                     {
-                        if (!Store.Contains(item.AssetUUID))
-                        {
-                            var fetched = await FetchItemAsync(item.AssetUUID, owner, cancellationToken).ConfigureAwait(false);
-                            if (fetched != null)
-                                inventory[i] = fetched;
-                        }
+                        inventory[i] = cached;
+                    }
+                    else
+                    {
+                        var fetched = await FetchItemAsync(item.AssetUUID, owner, cancellationToken).ConfigureAwait(false);
+                        if (fetched != null)
+                            inventory[i] = fetched;
                     }
                 }
             }
 
-            return inventory;
+            return inventory!;
         }
 
         public async Task<UUID> FindObjectByPathAsync(UUID baseFolder, UUID inventoryOwner, string path, 
@@ -516,7 +547,7 @@ namespace OpenMetaverse
 
             var tcs = new TaskCompletionSource<UUID>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            void Callback(object sender, FindObjectByPathReplyEventArgs e)
+            void Callback(object? sender, FindObjectByPathReplyEventArgs e)
             {
                 if (e.Path == path)
                 {
@@ -530,7 +561,7 @@ namespace OpenMetaverse
             {
                 try
                 {
-                    await RequestFindObjectByPath(baseFolder, inventoryOwner, path, cancellationToken).ConfigureAwait(false);
+                    await RequestFindObjectByPathAsync(baseFolder, inventoryOwner, path, cancellationToken).ConfigureAwait(false);
                     return await tcs.Task.ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -544,12 +575,24 @@ namespace OpenMetaverse
             }
         }
 
-        public async Task<List<InventoryBase>> GetTaskInventoryAsync(UUID objectID, uint objectLocalID, 
-            CancellationToken cancellationToken = default)
+        public async Task<List<InventoryBase>> GetTaskInventoryAsync(UUID objectID, uint objectLocalID,
+            Simulator? simulator = null, CancellationToken cancellationToken = default)
         {
+            var sim = simulator ?? Client.Network.CurrentSim;
+
+            // Mirrors the reference viewer's LLViewerObject::fetchInventoryFromServer(): when the
+            // RequestTaskInventory capability is present, use it exclusively instead of the legacy
+            // UDP RequestTaskInventory message + Xfer download below (see
+            // LLViewerObject::fetchInventoryFromCapCoro in llviewerobject.cpp).
+            Uri? cap = sim?.Caps?.CapabilityURI("RequestTaskInventory");
+            if (cap != null)
+            {
+                return await GetTaskInventoryViaCapAsync(objectID, cap, cancellationToken).ConfigureAwait(false);
+            }
+
             var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            void Callback(object sender, TaskInventoryReplyEventArgs e)
+            void Callback(object? sender, TaskInventoryReplyEventArgs e)
             {
                 if (e.ItemID == objectID)
                     tcs.TrySetResult(e.AssetFilename);
@@ -559,7 +602,7 @@ namespace OpenMetaverse
 
             try
             {
-                RequestTaskInventory(objectLocalID);
+                RequestTaskInventory(objectLocalID, simulator ?? Client.Network.CurrentSim);
 
                 string filename;
                 try
@@ -571,7 +614,7 @@ namespace OpenMetaverse
                 }
                 catch (OperationCanceledException)
                 {
-                    return null;
+                    return new List<InventoryBase>(0);
                 }
 
                 if (string.IsNullOrEmpty(filename))
@@ -583,7 +626,7 @@ namespace OpenMetaverse
                 var xferTcs = new TaskCompletionSource<byte[]>(TaskCreationOptions.RunContinuationsAsynchronously);
                 ulong xferID = 0;
 
-                void XferCallback(object sender, XferReceivedEventArgs e)
+                void XferCallback(object? sender, XferReceivedEventArgs e)
                 {
                     if (e.Xfer.XferID == xferID)
                         xferTcs.TrySetResult(e.Xfer.AssetData);
@@ -605,7 +648,7 @@ namespace OpenMetaverse
                     }
                     catch (OperationCanceledException)
                     {
-                        return null;
+                        return new List<InventoryBase>(0);
                     }
 
                     var taskList = Utils.BytesToString(assetData);
@@ -622,7 +665,138 @@ namespace OpenMetaverse
             }
         }
 
-        public async Task GiveFolderAsync(UUID folderID, string folderName, UUID recipient, bool doEffect, 
+        /// <summary>
+        /// Fetches a task's inventory via the RequestTaskInventory capability. Mirrors
+        /// LLViewerObject::fetchInventoryFromCapCoro (llviewerobject.cpp): GET
+        /// "?task_id=&lt;uuid&gt;" returns an LLSD map with a "contents" array of item maps in the
+        /// same shape used elsewhere for AIS3 items (item_id/parent_id/permissions/sale_info/etc,
+        /// see <see cref="InventoryItem.FromOSD"/>), plus an "inventory_serial" field the reference
+        /// viewer uses to detect and re-request stale results -- LM does not currently cache
+        /// per-task inventory serials, so that staleness optimization is intentionally omitted here.
+        /// The reference viewer also synthesizes a "Contents" root category locally since the
+        /// server doesn't send one; this does the same so callers see the same shape as the legacy
+        /// UDP+Xfer path.
+        /// </summary>
+        private async Task<List<InventoryBase>> GetTaskInventoryViaCapAsync(UUID objectID, Uri cap,
+            CancellationToken cancellationToken)
+        {
+            var items = new List<InventoryBase>
+            {
+                new InventoryFolder(objectID) { Name = "Contents", ParentUUID = UUID.Zero }
+            };
+
+            try
+            {
+                var requestUri = new Uri($"{cap}?task_id={objectID}");
+                var (response, data) = await Client.HttpCapsClient.GetAsync(requestUri, cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Warn($"RequestTaskInventory non-success status: {response.StatusCode}", Client);
+                    return items;
+                }
+                if (data == null) { return items; }
+
+                if (!(OSDParser.Deserialize(data) is OSDMap map) || !(map["contents"] is OSDArray contents))
+                {
+                    Logger.Warn($"Unable to load task inventory via RequestTaskInventory cap for {objectID}", Client);
+                    return items;
+                }
+
+                foreach (OSD entry in contents)
+                {
+                    if (!(entry is OSDMap itemMap) || !itemMap.ContainsKey("item_id")) { continue; }
+
+                    var item = InventoryItem.FromOSD(itemMap);
+                    if (itemMap.ContainsKey("shadow_id"))
+                    {
+                        item.AssetUUID = DecryptShadowID(itemMap["shadow_id"].AsUUID());
+                    }
+                    items.Add(item);
+                }
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                Logger.Error($"Failed fetching task inventory via cap for {objectID}", ex, Client);
+            }
+
+            return items;
+        }
+
+        /// <summary>
+        /// Uploads a thumbnail image for an inventory item, folder, or task-inventory item via the
+        /// InventoryThumbnailUpload capability. Mirrors
+        /// LLFloaterSimpleSnapshot::uploadImageUploadFile / post_thumbnail_image_coro
+        /// (llfloatersimplesnapshot.cpp): a two-phase upload -- POST metadata identifying the
+        /// target to the capability (which returns an "uploader" URL), then POST the raw image
+        /// bytes to that URL; a final "state":"complete" response carries the new thumbnail asset
+        /// UUID under "new_asset". The metadata shape depends on the target, exactly matching the
+        /// reference viewer's branch in uploadImageUploadFile: {item_id, task_id} for a
+        /// task-inventory item, {category_id} for a local folder, or bare {item_id} for an agent
+        /// inventory item. The caller is responsible for J2K-encoding the image data (LibreMetaverse
+        /// has no rendering/snapshot pipeline of its own); per THUMBNAIL_SNAPSHOT_DIM_MAX/MIN in the
+        /// reference viewer the image should be between 64x64 and 256x256.
+        /// </summary>
+        /// <param name="inventoryID">UUID of the item or folder to set the thumbnail on</param>
+        /// <param name="taskID">UUID of the task (object) the item lives in, or <see cref="UUID.Zero"/>
+        /// for agent inventory items/folders</param>
+        /// <param name="j2cImageData">Raw J2K-encoded thumbnail image bytes</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <param name="progress">Optional upload progress reporter</param>
+        /// <returns>The new thumbnail asset UUID, or null if the capability is unavailable or the
+        /// upload fails</returns>
+        public async Task<UUID?> UploadThumbnailAsync(UUID inventoryID, UUID taskID, byte[] j2cImageData,
+            CancellationToken cancellationToken = default, IProgress<HttpCapsClient.ProgressReport>? progress = null)
+        {
+            if (j2cImageData == null) throw new ArgumentNullException(nameof(j2cImageData));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var cap = GetCapabilityURI("InventoryThumbnailUpload");
+            if (cap == null) { return null; }
+
+            var metadata = new OSDMap();
+            if (taskID != UUID.Zero)
+            {
+                metadata["item_id"] = OSD.FromUUID(inventoryID);
+                metadata["task_id"] = OSD.FromUUID(taskID);
+            }
+            else if (Store != null && Store.Contains(inventoryID) && Store[inventoryID] is InventoryFolder)
+            {
+                metadata["category_id"] = OSD.FromUUID(inventoryID);
+            }
+            else
+            {
+                metadata["item_id"] = OSD.FromUUID(inventoryID);
+            }
+
+            try
+            {
+                var metaResult = await PostCapAsync(cap, metadata, cancellationToken, progress).ConfigureAwait(false);
+                if (!(metaResult is OSDMap metaMap) || !metaMap.ContainsKey("uploader"))
+                {
+                    Logger.Warn("InventoryThumbnailUpload response contained no uploader URL.", Client);
+                    return null;
+                }
+
+                var uploaderUri = new Uri(metaMap["uploader"].AsString());
+                var uploadResult = await PostBytesAsync(uploaderUri, "application/octet-stream", j2cImageData,
+                    cancellationToken, progress).ConfigureAwait(false);
+
+                if (!(uploadResult is OSDMap resultMap) || resultMap["state"].AsString() != "complete")
+                {
+                    Logger.Warn($"InventoryThumbnailUpload did not complete for {inventoryID}: {uploadResult}", Client);
+                    return null;
+                }
+
+                return resultMap["new_asset"].AsUUID();
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                Logger.Error($"Failed uploading thumbnail for {inventoryID}", ex, Client);
+                return null;
+            }
+        }
+
+        public async Task GiveFolderAsync(UUID folderID, string folderName, UUID recipient, bool doEffect,
             CancellationToken cancellationToken = default)
         {
             var folders = new List<InventoryFolder>();
@@ -668,28 +842,33 @@ namespace OpenMetaverse
             }
 
             Client.Self.InstantMessage(
-                    Client.Self.Name,
-                    recipient,
-                    folderName,
-                    UUID.Random(),
-                    InstantMessageDialog.InventoryOffered,
-                    InstantMessageOnline.Online,
-                    Client.Self.SimPosition,
-                    Client.Network.CurrentSim.ID,
-                    bucket);
+                Client.Self.Name,
+                recipient,
+                folderName,
+                UUID.Random(),
+                InstantMessageDialog.InventoryOffered,
+                InstantMessageOnline.Online,
+                Client.Self.SimPosition,
+                Client.Network.CurrentSim?.ID ?? UUID.Zero,
+                bucket);
 
             if (doEffect)
             {
                 Client.Self.BeamEffect(Client.Self.AgentID, recipient, Vector3d.Zero,
-                    Client.Settings.DEFAULT_EFFECT_COLOR, 1f, UUID.Random());
+                    Client.Settings.DefaultEffectColor, 1f, UUID.Random());
             }
 
             // Remove from store if items were no copy
-            foreach (var invItem in items.Where(item => Store.Contains(item.UUID) && Store[item.UUID] is InventoryItem)
-                     .Select(item => (InventoryItem)Store[item.UUID])
-                     .Where(invItem => (invItem.Permissions.OwnerMask & PermissionMask.Copy) == PermissionMask.None))
+            var store = Store;
+            if (store != null)
             {
-                Store.RemoveNodeFor(invItem);
+                foreach (var item in items)
+                {
+                    if (store.TryGetValue(item.UUID, out var node) && node is InventoryItem invItem && (invItem.Permissions.OwnerMask & PermissionMask.Copy) == PermissionMask.None)
+                    {
+                        store.RemoveNodeFor(invItem);
+                    }
+                }
             }
         }
 
@@ -767,15 +946,15 @@ namespace OpenMetaverse
             /// <summary>True if operation completed successfully</summary>
             public bool Success { get; set; }
             /// <summary>Human-readable status returned from server (eg 'upload' or 'complete')</summary>
-            public string Status { get; set; }
+            public string? Status { get; set; }
             /// <summary>UUID of the created inventory item (if available)</summary>
             public UUID ItemID { get; set; }
             /// <summary>UUID of the created asset (if available)</summary>
             public UUID AssetID { get; set; }
             /// <summary>Any exception that occurred during the operation</summary>
-            public Exception Error { get; set; }
+            public Exception? Error { get; set; }
             /// <summary>Raw OSD result returned from capability calls (when available)</summary>
-            public OSD RawResult { get; set; }
+            public OSD? RawResult { get; set; }
         }
 
         /// <summary>
@@ -788,7 +967,7 @@ namespace OpenMetaverse
             /// <summary>True when the folder update succeeded</summary>
             public bool Success { get; set; }
             /// <summary>Contents of the folder at the time of the update (may be null)</summary>
-            public List<InventoryBase> Contents { get; set; }
+            public List<InventoryBase>? Contents { get; set; }
         }
 
         /// <summary>
@@ -797,7 +976,7 @@ namespace OpenMetaverse
         /// </summary>
         public async Task<CreateItemFromAssetResult> CreateItemFromAssetAsync(byte[] data, string name, string description, 
             AssetType assetType, InventoryType invType, UUID folderID, Permissions permissions,
-            CancellationToken cancellationToken = default, IProgress<ProgressReport> progress = null)
+            CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
         {
             var result = new CreateItemFromAssetResult
             {
@@ -827,7 +1006,7 @@ namespace OpenMetaverse
                 {"everyone_mask", OSD.FromInteger((int) permissions.EveryoneMask)},
                 {"group_mask", OSD.FromInteger((int) permissions.GroupMask)},
                 {"next_owner_mask", OSD.FromInteger((int) permissions.NextOwnerMask)},
-                {"expected_upload_cost", OSD.FromInteger(Client.Settings.UPLOAD_COST)}
+                {"expected_upload_cost", OSD.FromInteger(GetUploadCostForAssetType(assetType))}
             };
 
             try
@@ -848,7 +1027,7 @@ namespace OpenMetaverse
                     return result;
                 }
 
-                var status = contents.ContainsKey("state") ? contents["state"].AsString().ToLower() : string.Empty;
+                var status = contents.ContainsKey("state") ? contents["state"].AsString().ToLowerInvariant() : string.Empty;
                 result.Status = status;
 
                 if (status == "upload")
@@ -867,7 +1046,7 @@ namespace OpenMetaverse
                     if (uploadRes is OSDMap uploadMap)
                     {
                         contents = uploadMap;
-                        status = contents.ContainsKey("state") ? contents["state"].AsString().ToLower() : status;
+                        status = contents.ContainsKey("state") ? contents["state"].AsString().ToLowerInvariant() : status;
                         result.Status = status;
                     }
                 }
@@ -908,6 +1087,162 @@ namespace OpenMetaverse
         }
 
         /// <summary>
+        /// Returns true when the current account is permitted to upload large textures (2048×2048 or larger).
+        /// Requires a Premium or higher membership (<see cref="AccountLevelBenefits.PremiumAccess"/> &gt; 0)
+        /// and the <c>NewFileAgentInventoryVariablePrice</c> capability from the current simulator.
+        /// Check this before calling <see cref="CreateItemFromAssetVariablePriceAsync"/>.
+        /// </summary>
+        public bool CanUploadLargeTextures =>
+            Client.Self.Benefits.PremiumAccess > 0 &&
+            GetCapabilityURI("NewFileAgentInventoryVariablePrice") != null;
+
+        /// <summary>
+        /// Uploads an asset using the <c>NewFileAgentInventoryVariablePrice</c> capability, which supports
+        /// high-resolution textures (2048×2048 and 4096×4096) available to Premium/Premium Plus members.
+        /// The server quotes the upload price before charging; the optional <paramref name="confirmCost"/>
+        /// delegate can be used to inspect or reject the quoted fee.
+        /// </summary>
+        /// <param name="data">Raw JPEG2000 asset bytes.</param>
+        /// <param name="name">Inventory item name.</param>
+        /// <param name="description">Inventory item description.</param>
+        /// <param name="assetType">Asset type (typically <see cref="AssetType.Texture"/>).</param>
+        /// <param name="invType">Inventory type (typically <see cref="InventoryType.Texture"/>).</param>
+        /// <param name="folderID">Destination folder UUID.</param>
+        /// <param name="permissions">Permissions to set on the new item.</param>
+        /// <param name="confirmCost">
+        /// Optional delegate called with the server-quoted upload price in L$. Return <c>true</c> to proceed
+        /// with the upload, <c>false</c> to cancel. If <c>null</c>, the upload always proceeds.
+        /// </param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <param name="progress">Optional upload progress reporter.</param>
+        /// <returns>
+        /// A <see cref="CreateItemFromAssetResult"/> with the new item UUID and asset UUID on success.
+        /// </returns>
+        public async Task<CreateItemFromAssetResult> CreateItemFromAssetVariablePriceAsync(
+            byte[] data, string name, string description,
+            AssetType assetType, InventoryType invType, UUID folderID, Permissions permissions,
+            Func<int, bool>? confirmCost = null,
+            CancellationToken cancellationToken = default, IProgress<ProgressReport>? progress = null)
+        {
+            var result = new CreateItemFromAssetResult
+            {
+                Success = false,
+                Status = "",
+                ItemID = UUID.Zero,
+                AssetID = UUID.Zero,
+                Error = null,
+                RawResult = null
+            };
+
+            if (Client.Self.Benefits.PremiumAccess <= 0)
+            {
+                result.Status = "membership_required";
+                result.Error = new InvalidOperationException(
+                    "Large texture uploads require Premium or higher membership " +
+                    "(Benefits.PremiumAccess is 0 for this account).");
+                return result;
+            }
+
+            var cap = GetCapabilityURI("NewFileAgentInventoryVariablePrice", false);
+            if (cap == null)
+            {
+                result.Status = "capability_missing";
+                result.Error = new InvalidOperationException(
+                    "NewFileAgentInventoryVariablePrice capability is not currently available");
+                return result;
+            }
+
+            var query = new OSDMap
+            {
+                {"folder_id", OSD.FromUUID(folderID)},
+                {"asset_type", OSD.FromString(Utils.AssetTypeToString(assetType))},
+                {"inventory_type", OSD.FromString(Utils.InventoryTypeToString(invType))},
+                {"name", OSD.FromString(name)},
+                {"description", OSD.FromString(description)},
+                {"everyone_mask", OSD.FromInteger((int) permissions.EveryoneMask)},
+                {"group_mask", OSD.FromInteger((int) permissions.GroupMask)},
+                {"next_owner_mask", OSD.FromInteger((int) permissions.NextOwnerMask)}
+            };
+
+            try
+            {
+                // Step 1 — ask the server for the upload price
+                var osd = await PostCapAsync(cap, query, cancellationToken, progress).ConfigureAwait(false);
+                result.RawResult = osd;
+                if (osd is not OSDMap contents)
+                {
+                    result.Status = "invalid_response";
+                    return result;
+                }
+
+                var state = contents.ContainsKey("state") ? contents["state"].AsString() : string.Empty;
+                result.Status = state;
+
+                if (state != "confirm_upload")
+                {
+                    result.Status = $"unexpected_state:{state}";
+                    return result;
+                }
+
+                var uploadPrice = contents.ContainsKey("upload_price") ? contents["upload_price"].AsInteger() : 0;
+                var rsvpUrl = contents.ContainsKey("rsvp") ? contents["rsvp"].AsUri() : null;
+
+                if (rsvpUrl == null || rsvpUrl.ToString() == "about:blank")
+                {
+                    result.Status = "missing_rsvp_url";
+                    return result;
+                }
+
+                // Step 2 — let the caller approve the quoted price
+                if (confirmCost != null && !confirmCost(uploadPrice))
+                {
+                    result.Status = "cost_rejected";
+                    result.Error = new OperationCanceledException(
+                        $"Upload cancelled: quoted price {uploadPrice} L$ was rejected by confirmCost delegate");
+                    return result;
+                }
+
+                // Step 3 — POST bytes to rsvp URL; server charges the fee and creates the asset
+                var uploadRes = await PostBytesAsync(rsvpUrl, "application/octet-stream", data, cancellationToken, progress)
+                    .ConfigureAwait(false);
+                result.RawResult = uploadRes;
+
+                if (uploadRes is not OSDMap uploadMap)
+                {
+                    result.Status = "invalid_upload_response";
+                    return result;
+                }
+
+                state = uploadMap.ContainsKey("state") ? uploadMap["state"].AsString() : string.Empty;
+                result.Status = state;
+
+                if (state == "complete" &&
+                    uploadMap.ContainsKey("new_inventory_item") && uploadMap.ContainsKey("new_asset"))
+                {
+                    result.ItemID = uploadMap["new_inventory_item"].AsUUID();
+                    result.AssetID = uploadMap["new_asset"].AsUUID();
+
+                    try { RequestFetchInventory(result.ItemID, Client.Self.AgentID, cancellationToken); }
+                    catch { /* best-effort */ }
+
+                    result.Success = true;
+                    return result;
+                }
+
+                result.Success = false;
+                return result;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                result.Success = false;
+                result.Error = ex;
+                result.Status = ex.Message;
+                return result;
+            }
+        }
+
+        /// <summary>
         /// Request an inventory folder contents update and await the corresponding FolderUpdated event.
         /// Returns a richer result containing success and the folder contents when available.
         /// </summary>
@@ -916,17 +1251,17 @@ namespace OpenMetaverse
         {
             var tcs = new TaskCompletionSource<FolderUpdateResult>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            void Handler(object sender, FolderUpdatedEventArgs e)
+            void Handler(object? sender, FolderUpdatedEventArgs e)
             {
                 if (e.FolderID == folderID)
                 {
                     // build best-effort result; do not block the event handler
                     _ = Task.Run(async () =>
                     {
-                        List<InventoryBase> contents = null;
+                        List<InventoryBase>? contents = null;
                         try
                         {
-                            contents = await RequestFolderContents(folderID, ownerID, fetchFolders, fetchItems, order, cancellationToken).ConfigureAwait(false);
+                            contents = await RequestFolderContentsAsync(folderID, ownerID, fetchFolders, fetchItems, order, cancellationToken).ConfigureAwait(false);
                         }
                         catch
                         {
@@ -952,7 +1287,7 @@ namespace OpenMetaverse
                 try
                 {
                     // Trigger the fetch which will cause the server to emit FolderUpdated
-                    _ = RequestFolderContents(folderID, ownerID, fetchFolders, fetchItems, order, cancellationToken);
+                    _ = RequestFolderContentsAsync(folderID, ownerID, fetchFolders, fetchItems, order, cancellationToken);
 
                     return await tcs.Task.ConfigureAwait(false);
                 }
@@ -970,7 +1305,7 @@ namespace OpenMetaverse
         {
             var tcs = new TaskCompletionSource<InventoryObjectOfferedEventArgs>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            void Handler(object sender, InventoryObjectOfferedEventArgs e)
+            void Handler(object? sender, InventoryObjectOfferedEventArgs e)
             {
                 tcs.TrySetResult(e);
             }
@@ -998,9 +1333,9 @@ namespace OpenMetaverse
             /// <summary>True if the request was accepted/submitted successfully</summary>
             public bool Success { get; set; }
             /// <summary>Collection of items copied back by the server (might be null or partial)</summary>
-            public List<InventoryBase> CopiedItems { get; set; }
+            public List<InventoryBase>? CopiedItems { get; set; }
             /// <summary>If an exception occurred during the operation, populated with the error</summary>
-            public Exception Error { get; set; }
+            public Exception? Error { get; set; }
         }
 
         /// <summary>
@@ -1116,8 +1451,8 @@ namespace OpenMetaverse
                         NewFolderID = targetFolders[i],
                         OldAgentID = oldOwnerID,
                         OldItemID = items[i],
-                        NewName = !string.IsNullOrEmpty(newNames?[i])
-                            ? Utils.StringToBytes(newNames[i])
+                        NewName = (newNames != null && !string.IsNullOrEmpty(newNames[i]))
+                            ? Utils.StringToBytes(newNames[i]!)
                             : Utils.EmptyBytes
                     };
                 }

@@ -25,7 +25,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -50,11 +49,11 @@ namespace LibreMetaverse.Appearance
         // Protects access to client, COF and event registration
         private readonly object stateLock = new object();
 
-        private InventoryFolder _cof;
+        private InventoryFolder? _cof;
         /// <summary>
         /// The Current Outfit Folder inventory folder
         /// </summary>
-        public InventoryFolder COF
+        public InventoryFolder? COF
         {
             get { lock (stateLock) { return _cof; } }
             private set { lock (stateLock) { _cof = value; } }
@@ -66,7 +65,9 @@ namespace LibreMetaverse.Appearance
         public int MaxClothingLayers => 60;
 
         private readonly SemaphoreSlim cofInitLock = new SemaphoreSlim(1, 1);
-        private Task<bool> cofInitTask;
+        private Task<bool>? cofInitTask;
+
+        private CancellationTokenSource _sessionCts = new CancellationTokenSource();
 
         #endregion Fields
 
@@ -76,10 +77,10 @@ namespace LibreMetaverse.Appearance
         /// Creates a new Current Outfit Folder manager
         /// </summary>
         /// <param name="client">GridClient instance to use</param>
-        public CurrentOutfitFolder(GridClient client)
+        public CurrentOutfitFolder(GridClient? client)
         {
             this.client = client ?? throw new ArgumentNullException(nameof(client));
-            RegisterClientEvents(client);
+            RegisterClientEvents(this.client);
         }
 
         /// <summary>
@@ -103,6 +104,8 @@ namespace LibreMetaverse.Appearance
                 if (disposing)
                 {
                     UnregisterClientEvents(client);
+                    _sessionCts.Cancel();
+                    _sessionCts.Dispose();
                 }
 
                 disposed = true;
@@ -163,7 +166,7 @@ namespace LibreMetaverse.Appearance
         /// Atomically update the GridClient used by this instance and re-register events.
         /// </summary>
         /// <param name="newClient"></param>
-        protected void UpdateClient(GridClient newClient)
+        protected void UpdateClient(GridClient? newClient)
         {
             if (newClient == null) throw new ArgumentNullException(nameof(newClient));
 
@@ -179,7 +182,7 @@ namespace LibreMetaverse.Appearance
                 initializedCOF = false;
             }
         }
-        private async void Inventory_FolderUpdated(object sender, FolderUpdatedEventArgs e)
+        private async void Inventory_FolderUpdated(object? sender, FolderUpdatedEventArgs e)
         {
             try
             {
@@ -190,12 +193,13 @@ namespace LibreMetaverse.Appearance
 
                 if (e.FolderID == COF.UUID && e.Success)
                 {
-                    if (client.Inventory.Store.TryGetValue<InventoryFolder>(COF.UUID, out var newCOF))
+                    var store = client.Inventory?.Store;
+                    if (store != null && store.TryGetValue<InventoryFolder>(COF.UUID, out InventoryFolder? newCOF) && newCOF != null)
                     {
                         COF = newCOF;
                     }
 
-                    var cofLinks = await GetCurrentOutfitLinks().ConfigureAwait(false);
+                    var cofLinks = await GetCurrentOutfitLinksAsync().ConfigureAwait(false);
 
                     var items = new Dictionary<UUID, UUID>();
                     foreach (var link in cofLinks)
@@ -205,7 +209,11 @@ namespace LibreMetaverse.Appearance
 
                     if (items.Count > 0)
                     {
-                        await client.Inventory.RequestFetchInventoryAsync(items, CancellationToken.None).ConfigureAwait(false);
+                        var inv = client.Inventory;
+                        if (inv != null)
+                        {
+                            await inv.RequestFetchInventoryAsync(items, _sessionCts.Token).ConfigureAwait(false);
+                        }
                     }
                 }
             }
@@ -215,42 +223,62 @@ namespace LibreMetaverse.Appearance
             }
         }
 
-        private async void Objects_KillObject(object sender, KillObjectEventArgs e)
+        private void Objects_KillObject(object? sender, KillObjectEventArgs e)
         {
+            // Do NOT modify COF links here.
+            //
+            // KillObject fires for worn attachments both on explicit user-initiated detaches
+            // AND during teleports (the departing sim destroys every rezzed object).  Removing
+            // COF links in response to KillObject during a teleport would permanently delete
+            // the links from the inventory server, causing attachments to be missing after the
+            // agent arrives in the destination sim.
+            //
+            // The SL viewer (llagent.cpp / LLVOAvatarSelf) only modifies COF links from
+            // deliberate user actions (Detach, ReplaceOutfit, AddToOutfit, etc.) and from the
+            // server-driven BulkUpdateInventory / MoveInventoryItem callbacks that accompany a
+            // real server-side detach — never from ObjectKill packets alone.
+        }
+
+        private void Network_OnSimChanged(object? sender, SimChangedEventArgs e)
+        {
+            // Reset COF initialization state so the new sim re-fetches the folder.
+            // The COF UUID itself is stable across teleports (it lives in the agent's
+            // inventory, not in the sim), but the COF version number and folder contents
+            // must be re-queried from the inventory service after each region crossing.
+            // We only reset the volatile flag; the semaphore-guarded cofInitTask is cleared
+            // under cofInitLock so concurrent init callers see a clean slate.
+            initializedCOF = false;
+            cofInitLock.Wait();
             try
             {
-                if (client.Network.CurrentSim != e.Simulator)
-                {
-                    return;
-                }
-
-                if (client.Network.CurrentSim.ObjectsPrimitives.TryGetValue(e.ObjectLocalID, out var prim))
-                {
-                    var invItemId = CurrentOutfitFolder.GetAttachmentItemID(prim);
-                    if (invItemId != UUID.Zero)
-                    {
-                        await RemoveLinksToByActualId(new List<UUID>() { invItemId }).ConfigureAwait(false);
-                    }
-                }
+                cofInitTask = null;
             }
-            catch (Exception ex)
+            finally
             {
-                Logger.Error("Unhandled exception in Objects_KillObject: " + ex.Message, ex, client);
+                cofInitLock.Release();
+            }
+
+            // Cancel any outstanding prefetch requests from the previous sim session
+            // and issue a fresh CTS for the new session.
+            var oldCts = Interlocked.Exchange(ref _sessionCts, new CancellationTokenSource());
+            oldCts.Cancel();
+            oldCts.Dispose();
+
+            var sim = client.Network.CurrentSim;
+            if (sim?.Caps != null)
+            {
+                sim.Caps.CapabilitiesReceived += Simulator_OnCapabilitiesReceived;
             }
         }
 
-        private void Network_OnSimChanged(object sender, SimChangedEventArgs e)
-        {
-            client.Network.CurrentSim.Caps.CapabilitiesReceived += Simulator_OnCapabilitiesReceived;
-        }
-
-        private async void Simulator_OnCapabilitiesReceived(object sender, CapabilitiesReceivedEventArgs e)
+        private async void Simulator_OnCapabilitiesReceived(object? sender, CapabilitiesReceivedEventArgs e)
         {
             try
             {
-                e.Simulator.Caps.CapabilitiesReceived -= Simulator_OnCapabilitiesReceived;
+                e.Simulator.Caps?.CapabilitiesReceived -= Simulator_OnCapabilitiesReceived;
 
-                if (e.Simulator == client.Network.CurrentSim && !initializedCOF)
+                var currentSim = client.Network.CurrentSim;
+                if (e.Simulator == currentSim && !initializedCOF)
                 {
                     await InitializeCurrentOutfitFolder().ConfigureAwait(false);
                 }
@@ -271,19 +299,24 @@ namespace LibreMetaverse.Appearance
             {
                 Logger.Trace("COF initialization: requesting current outfit folder", client);
 
-                COF = await client.Appearance.GetCurrentOutfitFolder(cancellationToken).ConfigureAwait(false);
+                var previousCOF = COF;
+                COF = await client.Appearance.GetCurrentOutfitFolderAsync(cancellationToken).ConfigureAwait(false);
 
                 if (COF == null)
                 {
-                    Logger.Warn("COF initialization: Appearance.GetCurrentOutfitFolder returned null", client);
+                    Logger.Warn("COF initialization: Appearance.GetCurrentOutfitFolderAsync returned null", client);
                     initializedCOF = false;
                     return false;
                 }
 
-                await client.Inventory.RequestFolderContents(COF.UUID, client.Self.AgentID,
+                await client.Inventory.RequestFolderContentsAsync(COF.UUID, client.Self.AgentID,
                     true, true, InventorySortOrder.ByDate, cancellationToken).ConfigureAwait(false);
 
-                Logger.Info($"Initialized Current Outfit Folder with UUID {COF.UUID} v.{COF.Version}", client);
+                bool isNewOrChanged = previousCOF == null || previousCOF.UUID != COF.UUID || previousCOF.Version != COF.Version;
+                if (isNewOrChanged)
+                    Logger.Info($"Initialized Current Outfit Folder with UUID {COF.UUID} v.{COF.Version}", client);
+                else
+                    Logger.Debug($"Current Outfit Folder re-confirmed: UUID {COF.UUID} v.{COF.Version} (unchanged)", client);
 
                 initializedCOF = true;
                 return true;
@@ -388,7 +421,7 @@ namespace LibreMetaverse.Appearance
         /// </summary>
         /// <returns>List of <see cref="InventoryItem"/> that can be part of appearance (attachments, wearables)</returns>
         /// <param name="cancellationToken"></param>
-        public async Task<List<InventoryItem>> GetCurrentOutfitLinks(CancellationToken cancellationToken = default)
+        public async Task<List<InventoryItem>> GetCurrentOutfitLinksAsync(CancellationToken cancellationToken = default)
         {
             if (COF == null)
             {
@@ -401,6 +434,12 @@ namespace LibreMetaverse.Appearance
                 return new List<InventoryItem>();
             }
 
+            if (client.Inventory?.Store == null)
+            {
+                Logger.Warn("Inventory store not initialized, cannot get COF links.", client);
+                return new List<InventoryItem>();
+            }
+
             if (!client.Inventory.Store.TryGetNodeFor(COF.UUID, out var cofNode))
             {
                 Logger.Warn("Failed to find COF node in inventory store", client);
@@ -408,9 +447,9 @@ namespace LibreMetaverse.Appearance
             }
 
             List<InventoryBase> cofContents;
-            if (cofNode.NeedsUpdate)
+            if (cofNode!.NeedsUpdate)
             {
-                cofContents = await client.Inventory.RequestFolderContents(
+                cofContents = await client.Inventory.RequestFolderContentsAsync(
                     COF.UUID, COF.OwnerID, true, true, InventorySortOrder.ByName,
                     cancellationToken);
             }
@@ -447,31 +486,55 @@ namespace LibreMetaverse.Appearance
                 return;
             }
 
-            var cofLinks = await GetCurrentOutfitLinks(cancellationToken);
+            var cofLinks = await GetCurrentOutfitLinksAsync(cancellationToken);
             if (cofLinks.Find(itemLink => itemLink.AssetUUID == item.UUID) == null)
             {
-                await client.Inventory.CreateLinkAsync(COF.UUID, item.UUID, item.Name,
-                    newDescription, item.InventoryType, UUID.Random(),
-                    (success, newItem) =>
-                    {
-                        if (success)
-                        {
-                            // Fire-and-forget fetch of the created item
-                            _ = client.Inventory.RequestFetchInventoryAsync(newItem.UUID, newItem.OwnerID, cancellationToken);
-                        }
-                    },
-                    cancellationToken
-                ).ConfigureAwait(false);
+                var newLink = await client.Inventory.CreateLinkAsync(COF.UUID, item.UUID, item.Name,
+                    newDescription, item.InventoryType, UUID.Random(), cancellationToken).ConfigureAwait(false);
+                if (newLink != null)
+                    _ = client.Inventory.RequestFetchInventoryAsync(newLink.UUID, newLink.OwnerID, cancellationToken);
             }
+        }
+
+        internal string GetCofLinkDescription(InventoryItem item)
+        {
+            if (item is InventoryWearable wearable && !IsBodyPart(item))
+                return $"{(int)wearable.WearableType}00";
+            return string.Empty;
+        }
+
+        /// <summary>
+        /// Creates COF links for multiple items in a single AIS3 request when available,
+        /// skipping items already linked. Falls back to sequential creation for non-AIS3.
+        /// </summary>
+        protected async Task AddLinks(IEnumerable<InventoryItem> items, CancellationToken cancellationToken = default)
+        {
+            if (COF == null)
+            {
+                Logger.Warn("Cannot add links; COF hasn't been initialized.", client);
+                return;
+            }
+
+            var cofLinks = await GetCurrentOutfitLinksAsync(cancellationToken);
+            var existingAssetIds = new HashSet<UUID>(cofLinks.Select(l => l.AssetUUID));
+
+            var linksToCreate = items
+                .Where(item => !existingAssetIds.Contains(item.UUID))
+                .Select(item => ((InventoryBase)item, GetCofLinkDescription(item)))
+                .ToList();
+
+            if (linksToCreate.Count == 0) return;
+
+            await client.Inventory.CreateLinksAsync(COF.UUID, linksToCreate, null, cancellationToken).ConfigureAwait(false);
         }
 
         protected async Task RemoveLinksToByActualId(IEnumerable<UUID> actualItemIdsToRemoveLinksTo, CancellationToken cancellationToken = default)
         {
             var actualItemIdsSet = actualItemIdsToRemoveLinksTo.ToArray();
 
-            var cofLinks = await GetCurrentOutfitLinks(cancellationToken);
+            var cofLinks = await GetCurrentOutfitLinksAsync(cancellationToken);
             var linkIdsToRemove = cofLinks
-                .Where(n => n.IsLink() && actualItemIdsSet.Contains(n.ActualUUID))
+                .Where(n => n.IsLink() && actualItemIdsSet.Contains(n.ResolvedItemID))
                 .Select(n => n.UUID)
                 .Distinct()
                 .ToList();
@@ -490,13 +553,13 @@ namespace LibreMetaverse.Appearance
                 return;
             }
 
-            var cofLinks = await GetCurrentOutfitLinks(cancellationToken);
+            var cofLinks = await GetCurrentOutfitLinksAsync(cancellationToken);
 
             var actualItemIDsToRemoveLinksTo = actualItemsToRemoveLinksTo
-                .Select(n => n.ActualUUID);
+                .Select(n => n.ResolvedItemID);
 
             var linkIdsToRemove = cofLinks
-                .Where(n => n.IsLink() && actualItemIDsToRemoveLinksTo.Contains(n.ActualUUID))
+                .Where(n => n.IsLink() && actualItemIDsToRemoveLinksTo.Contains(n.ResolvedItemID))
                 .Select(n => n.UUID)
                 .Distinct()
                 .ToList();
@@ -517,7 +580,7 @@ namespace LibreMetaverse.Appearance
         /// <param name="item">Object to check</param>
         /// <param name="cancellationToken"></param>
         /// <returns>True if we are able to attach this object</returns>
-        public async Task<bool> CanAttachItem(InventoryItem item, CancellationToken cancellationToken = default)
+        public async Task<bool> CanAttachItemAsync(InventoryItem item, CancellationToken cancellationToken = default)
         {
             var trashFolderId = client.Inventory.FindFolderForType(FolderType.Trash);
             var rootFolderId = client.Inventory.FindFolderForType(FolderType.Root);
@@ -534,23 +597,23 @@ namespace LibreMetaverse.Appearance
                 return false;
             }
 
-            var isInTrash = await IsObjectDescendentOf(realItem, trashFolderId, cancellationToken);
+            var isInTrash = await IsObjectDescendentOfAsync(realItem, trashFolderId, cancellationToken);
             if (isInTrash)
             {
                 Logger.Warn("Cannot attach an item that is currently in the trash.", client);
                 return false;
             }
 
-            var isInPlayerInventory = await IsObjectDescendentOf(realItem, rootFolderId, cancellationToken);
+            var isInPlayerInventory = await IsObjectDescendentOfAsync(realItem, rootFolderId, cancellationToken);
             if (!isInPlayerInventory)
             {
                 Logger.Warn("Cannot attach an item that is not in your inventory.", client);
                 return false;
             }
 
-            var cofLinks = await GetCurrentOutfitLinks(cancellationToken);
+            var cofLinks = await GetCurrentOutfitLinksAsync(cancellationToken);
 
-            if (cofLinks.FirstOrDefault(n => n.ActualUUID == item.ActualUUID) != null)
+            if (cofLinks.FirstOrDefault(n => n.ResolvedItemID == item.ResolvedItemID) != null)
             {
                 return false;
             }
@@ -570,8 +633,6 @@ namespace LibreMetaverse.Appearance
                 var numClothingLayers = cofLinks
                     .Count(n => n is InventoryWearable);
 
-                numClothingLayers++;
-
                 if (numClothingLayers + 1 >= MaxClothingLayers)
                 {
                     return false;
@@ -587,7 +648,7 @@ namespace LibreMetaverse.Appearance
         /// <param name="item">Object to check</param>
         /// <param name="cancellationToken"></param>
         /// <returns>True if we are able to detach this object</returns>
-        public async Task<bool> CanDetachItem(InventoryItem item, CancellationToken cancellationToken = default)
+        public async Task<bool> CanDetachItemAsync(InventoryItem item, CancellationToken cancellationToken = default)
         {
             if (!policy.CanDetach(item))
             {
@@ -606,8 +667,8 @@ namespace LibreMetaverse.Appearance
                 return false;
             }
 
-            var cofLinks = await GetCurrentOutfitLinks(cancellationToken);
-            if (cofLinks.FirstOrDefault(n => n.ActualUUID == realItem.UUID) == null)
+            var cofLinks = await GetCurrentOutfitLinksAsync(cancellationToken);
+            if (cofLinks.FirstOrDefault(n => n.ResolvedItemID == realItem.UUID) == null)
             {
                 return false;
             }
@@ -622,16 +683,16 @@ namespace LibreMetaverse.Appearance
         /// <param name="point">Attachment point</param>
         /// <param name="replace">Replace existing attachment at that point first?</param>
         /// <param name="cancellationToken"></param>
-        public async Task Attach(InventoryItem item, AttachmentPoint point, bool replace, CancellationToken cancellationToken = default)
+        public async Task AttachAsync(InventoryItem item, AttachmentPoint point, bool replace, CancellationToken cancellationToken = default)
         {
-            if (!await CanAttachItem(item, cancellationToken))
+            if (!await CanAttachItemAsync(item, cancellationToken))
             {
                 return;
             }
 
             client.Appearance.Attach(item, point, replace);
 
-            await policy.ReportItemChange(new List<InventoryItem>() { item }, new List<InventoryItem>(), cancellationToken);
+            await policy.ReportItemChangeAsync(new List<InventoryItem>() { item }, new List<InventoryItem>(), cancellationToken);
             await AddLink(item, cancellationToken);
         }
 
@@ -640,16 +701,16 @@ namespace LibreMetaverse.Appearance
         /// </summary>
         /// <param name="item">Inventory item to be detached</param>
         /// <param name="cancellationToken"></param>
-        public async Task Detach(InventoryItem item, CancellationToken cancellationToken = default)
+        public async Task DetachAsync(InventoryItem item, CancellationToken cancellationToken = default)
         {
-            if (!await CanDetachItem(item, cancellationToken))
+            if (!await CanDetachItemAsync(item, cancellationToken))
             {
                 return;
             }
 
             client.Appearance.Detach(item);
 
-            await policy.ReportItemChange(new List<InventoryItem>(), new List<InventoryItem>() { item }, cancellationToken);
+            await policy.ReportItemChangeAsync(new List<InventoryItem>(), new List<InventoryItem>() { item }, cancellationToken);
             await RemoveLinksTo(new List<InventoryItem>() { item }, cancellationToken);
         }
 
@@ -659,11 +720,11 @@ namespace LibreMetaverse.Appearance
         /// <param name="type">Specific wearable type to find</param>
         /// <param name="cancellationToken"></param>
         /// <returns>List of all worn items of the specified wearable type</returns>
-        public async Task<List<InventoryItem>> GetWornAt(WearableType type, CancellationToken cancellationToken = default)
+        public async Task<List<InventoryItem>> GetWornAtAsync(WearableType type, CancellationToken cancellationToken = default)
         {
             var wornItemsByAssetId = new Dictionary<UUID, InventoryItem>();
 
-            var cofLinks = await GetCurrentOutfitLinks(cancellationToken);
+            var cofLinks = await GetCurrentOutfitLinksAsync(cancellationToken);
             foreach (var link in cofLinks)
             {
                 var realItem = ResolveInventoryLink(link);
@@ -692,14 +753,20 @@ namespace LibreMetaverse.Appearance
         /// <param name="newOutfitFolderId">Folder ID containing the new outfit</param>
         /// <param name="cancellationToken"></param>
         /// <returns>True on success</returns>
-        public async Task<bool> ReplaceOutfit(UUID newOutfitFolderId, CancellationToken cancellationToken = default)
+        public async Task<bool> ReplaceOutfitAsync(UUID newOutfitFolderId, CancellationToken cancellationToken = default)
         {
             const string generalErrorMessage = "Try refreshing your inventory or clearing your cache.";
+
+            if (client.Inventory?.Store?.RootFolder == null)
+            {
+                Logger.Warn("Inventory store not initialized, cannot modify outfit.", client);
+                return false;
+            }
 
             var trashFolderId = client.Inventory.FindFolderForType(FolderType.Trash);
             var rootFolderId = client.Inventory.Store.RootFolder.UUID;
 
-            var newOutfit = await client.Inventory.RequestFolderContents(
+            var newOutfit = await client.Inventory.RequestFolderContentsAsync(
                 newOutfitFolderId,
                 client.Self.AgentID,
                 true,
@@ -713,34 +780,34 @@ namespace LibreMetaverse.Appearance
                 return false;
             }
 
-            if (!client.Inventory.Store.TryGetNodeFor(newOutfitFolderId, out var newOutfitFolderNode))
+            if (client.Inventory?.Store == null || !client.Inventory.Store.TryGetNodeFor(newOutfitFolderId, out var newOutfitFolderNode) || newOutfitFolderNode?.Data == null)
             {
                 Logger.Warn($"Failed to get node for replacement outfit folder. {generalErrorMessage}", client);
                 return false;
             }
 
-            var isOutfitInTrash = await IsObjectDescendentOf(newOutfitFolderNode.Data, trashFolderId, cancellationToken);
+            var isOutfitInTrash = await IsObjectDescendentOfAsync(newOutfitFolderNode.Data, trashFolderId, cancellationToken);
             if (isOutfitInTrash)
             {
                 Logger.Warn($"Cannot wear an outfit that is currently in the trash.", client);
                 return false;
             }
 
-            var isOutfitInInventory = await IsObjectDescendentOf(newOutfitFolderNode.Data, rootFolderId, cancellationToken);
+            var isOutfitInInventory = await IsObjectDescendentOfAsync(newOutfitFolderNode.Data, rootFolderId, cancellationToken);
             if (!isOutfitInInventory)
             {
                 Logger.Warn($"Cannot wear an outfit that is not currently in your inventory.", client);
                 return false;
             }
 
-            var currentOutfitFolder = await client.Appearance.GetCurrentOutfitFolder(cancellationToken);
+            var currentOutfitFolder = await client.Appearance.GetCurrentOutfitFolderAsync(cancellationToken);
             if (currentOutfitFolder == null)
             {
                 Logger.Warn($"Failed to find current outfit folder. {generalErrorMessage}", client);
                 return false;
             }
 
-            var currentOutfitContents = await client.Inventory.RequestFolderContents(
+            var currentOutfitContents = await client.Inventory.RequestFolderContentsAsync(
                 currentOutfitFolder.UUID,
                 currentOutfitFolder.OwnerID,
                 true,
@@ -776,13 +843,13 @@ namespace LibreMetaverse.Appearance
                     continue;
                 }
 
-                var isInTrash = await IsObjectDescendentOf(inventoryItem, trashFolderId, cancellationToken);
+                var isInTrash = await IsObjectDescendentOfAsync(inventoryItem, trashFolderId, cancellationToken);
                 if (isInTrash)
                 {
                     continue;
                 }
 
-                var isInInventory = await IsObjectDescendentOf(inventoryItem, rootFolderId, cancellationToken);
+                var isInInventory = await IsObjectDescendentOfAsync(inventoryItem, rootFolderId, cancellationToken);
                 if (!isInInventory)
                 {
                     continue;
@@ -933,42 +1000,34 @@ namespace LibreMetaverse.Appearance
             {
                 itemsBeingAdded.Add(item.Value.UUID, item.Value);
             }
-            foreach (var item in itemsBeingAdded)
-            {
-                await AddLink(item.Value, cancellationToken);
-            }
+            await AddLinks(itemsBeingAdded.Values, cancellationToken);
 
             // Add link to outfit folder we're putting on
-            await client.Inventory.CreateLinkAsync(
+            var outfitLink = await client.Inventory.CreateLinkAsync(
                 currentOutfitFolder.UUID,
                 newOutfitFolderNode.Data.UUID,
                 newOutfitFolderNode.Data.Name,
                 "",
                 InventoryType.Folder,
                 UUID.Random(),
-                (success, newItem) =>
-                {
-                    if (success)
-                    {
-                        _ = client.Inventory.RequestFetchInventoryAsync(newItem.UUID, newItem.OwnerID);
-                    }
-                },
                 cancellationToken
             ).ConfigureAwait(false);
+            if (outfitLink != null)
+                _ = client.Inventory.RequestFetchInventoryAsync(outfitLink.UUID, outfitLink.OwnerID);
 
             // Wear new outfit
             var tcs = new TaskCompletionSource<bool>();
-            void handleAppearanceSet(object sender, AppearanceSetEventArgs e)
+            void handleAppearanceSet(object? sender, AppearanceSetEventArgs e)
             {
                 tcs.TrySetResult(true);
             }
 
-            await policy.ReportItemChange(new List<InventoryItem>(), itemsBeingRemoved.Values.ToList(), cancellationToken);
+            await policy.ReportItemChangeAsync(new List<InventoryItem>(), itemsBeingRemoved.Values.ToList(), cancellationToken);
 
             try
             {
                 client.Appearance.AppearanceSet += handleAppearanceSet;
-                client.Appearance.ReplaceOutfit(newOutfitItemMap.Values.ToList(), false);
+                await client.Appearance.ReplaceOutfitAsync(newOutfitItemMap.Values.ToList(), false).ConfigureAwait(false);
 
                 var completedTask = await Task.WhenAny(tcs.Task, Task.Delay(10000, cancellationToken));
                 if (completedTask != tcs.Task)
@@ -982,7 +1041,7 @@ namespace LibreMetaverse.Appearance
                 client.Appearance.AppearanceSet -= handleAppearanceSet;
             }
 
-            await policy.ReportItemChange(itemsBeingAdded.Values.ToList(), new List<InventoryItem>(), cancellationToken);
+            await policy.ReportItemChangeAsync(itemsBeingAdded.Values.ToList(), new List<InventoryItem>(), cancellationToken);
             return true;
         }
 
@@ -992,9 +1051,9 @@ namespace LibreMetaverse.Appearance
         /// <param name="item">Item to add</param>
         /// <param name="replace">Should existing wearable of the same type be removed</param>
         /// <param name="cancellationToken"></param>
-        public async Task AddToOutfit(InventoryItem item, bool replace, CancellationToken cancellationToken = default)
+        public async Task AddToOutfitAsync(InventoryItem item, bool replace, CancellationToken cancellationToken = default)
         {
-            await AddToOutfit(new List<InventoryItem>(1) { item }, replace, cancellationToken);
+            await AddToOutfitAsync(new List<InventoryItem>(1) { item }, replace, cancellationToken);
         }
 
         /// <summary>
@@ -1003,7 +1062,7 @@ namespace LibreMetaverse.Appearance
         /// <param name="requestedItemsToAdd">List of items to add</param>
         /// <param name="replace">Should existing wearable of the same type be removed</param>
         /// <param name="cancellationToken"></param>
-        public async Task AddToOutfit(List<InventoryItem> requestedItemsToAdd, bool replace, CancellationToken cancellationToken = default)
+        public async Task AddToOutfitAsync(List<InventoryItem> requestedItemsToAdd, bool replace, CancellationToken cancellationToken = default)
         {
             if (COF == null)
             {
@@ -1011,10 +1070,17 @@ namespace LibreMetaverse.Appearance
                 return;
             }
 
-            var trashFolderId = client.Inventory.FindFolderForType(FolderType.Trash);
-            var rootFolderId = client.Inventory.Store.RootFolder.UUID;
+            var inv = client.Inventory;
+            if (inv?.Store?.RootFolder == null)
+            {
+                Logger.Warn("Inventory store not initialized, cannot modify outfit.", client);
+                return;
+            }
 
-            var cofLinks = await GetCurrentOutfitLinks(cancellationToken);
+            var trashFolderId = inv.FindFolderForType(FolderType.Trash);
+            var rootFolderId = inv.Store.RootFolder.UUID;
+
+            var cofLinks = await GetCurrentOutfitLinksAsync(cancellationToken);
             var cofRealItems = new Dictionary<UUID, InventoryBase>();
             var cofLinkAssetIds = new HashSet<UUID>();
             var currentBodyparts = new Dictionary<WearableType, InventoryWearable>();
@@ -1076,13 +1142,13 @@ namespace LibreMetaverse.Appearance
                     continue;
                 }
 
-                var isItemInTrash = await IsObjectDescendentOf(realItem, trashFolderId, cancellationToken);
+                var isItemInTrash = await IsObjectDescendentOfAsync(realItem, trashFolderId, cancellationToken);
                 if (isItemInTrash)
                 {
                     continue;
                 }
 
-                var isItemInInventory = await IsObjectDescendentOf(realItem, rootFolderId, cancellationToken);
+                var isItemInInventory = await IsObjectDescendentOfAsync(realItem, rootFolderId, cancellationToken);
                 if (!isItemInInventory)
                 {
                     continue;
@@ -1167,28 +1233,18 @@ namespace LibreMetaverse.Appearance
                 await RemoveLinksTo(itemsToRemove, cancellationToken);
             }
 
-            // Add links to new items
-            foreach (var item in itemsToAdd)
-            {
-                await AddLink(item, cancellationToken);
-            }
+            await AddLinks(itemsToAdd, cancellationToken);
 
             client.Appearance.AddToOutfit(itemsToAdd, replace);
-            _ = Task.Run(async () =>
-            {
-                await Task.Delay(2000, cancellationToken).ContinueWith(_ => { }, cancellationToken);
-                try
-                {
-                    await client.Appearance.RequestSetAppearance(true);
-                }
-                catch { }
+            _ = DelayedOutfitUpdateAsync(itemsToAdd, itemsToRemove, cancellationToken);
+        }
 
-                try
-                {
-                    await policy.ReportItemChange(itemsToAdd, itemsToRemove, cancellationToken);
-                }
-                catch { }
-            }, cancellationToken);
+        private async Task DelayedOutfitUpdateAsync(List<InventoryItem> itemsToAdd, List<InventoryItem> itemsToRemove, CancellationToken cancellationToken)
+        {
+            try { await Task.Delay(2000, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return; }
+            try { await client.Appearance.RequestSetAppearance(true); } catch { }
+            try { await policy.ReportItemChangeAsync(itemsToAdd, itemsToRemove, cancellationToken); } catch { }
         }
 
         /// <summary>
@@ -1198,7 +1254,7 @@ namespace LibreMetaverse.Appearance
         /// </summary>
         /// <param name="requestedItemsToRemove">List of items (or item links) we want to remove all links to from our COF</param>
         /// <param name="cancellationToken"></param>
-        public async Task RemoveFromOutfit(List<InventoryItem> requestedItemsToRemove, CancellationToken cancellationToken = default)
+        public async Task RemoveFromOutfitAsync(List<InventoryItem> requestedItemsToRemove, CancellationToken cancellationToken = default)
         {
             if (COF == null)
             {
@@ -1208,7 +1264,8 @@ namespace LibreMetaverse.Appearance
 
             var itemsToRemove = requestedItemsToRemove
                 .Select(n => ResolveInventoryLink(n))
-                .Where(n => n != null && !IsBodyPart(n) && policy.CanDetach(n))
+                .Where(n => n is InventoryItem it && !IsBodyPart(it) && policy.CanDetach(it))
+                .Select(n => (InventoryItem)n!)
                 .Distinct()
                 .ToList();
             foreach (var item in itemsToRemove)
@@ -1219,10 +1276,15 @@ namespace LibreMetaverse.Appearance
                 }
             }
 
-            await RemoveLinksTo(itemsToRemove, cancellationToken);
-            await policy.ReportItemChange(new List<InventoryItem>(), itemsToRemove, cancellationToken);
-
-            client.Appearance.RemoveFromOutfit(itemsToRemove);
+            try
+            {
+                await RemoveLinksTo(itemsToRemove, cancellationToken);
+                await policy.ReportItemChangeAsync(new List<InventoryItem>(), itemsToRemove, cancellationToken);
+            }
+            finally
+            {
+                client.Appearance.RemoveFromOutfit(itemsToRemove);
+            }
         }
 
         /// <summary>
@@ -1230,9 +1292,9 @@ namespace LibreMetaverse.Appearance
         /// </summary>
         /// <param name="item">Item (or item link) we want to remove all links to from our COF</param>
         /// <param name="cancellationToken"></param>
-        public async Task RemoveFromOutfit(InventoryItem item, CancellationToken cancellationToken = default)
+        public async Task RemoveFromOutfitAsync(InventoryItem item, CancellationToken cancellationToken = default)
         {
-            await RemoveFromOutfit(new List<InventoryItem>(1) { item }, cancellationToken).ConfigureAwait(false);
+            await RemoveFromOutfitAsync(new List<InventoryItem>(1) { item }, cancellationToken).ConfigureAwait(false);
         }
 
         #endregion Public methods
@@ -1251,12 +1313,12 @@ namespace LibreMetaverse.Appearance
                 return UUID.Zero;
             }
 
-            var attachmentId = prim.NameValues
+            var attachmentValue = prim.NameValues
                 .Where(n => n.Name == "AttachItemID")
-                .Select(n => new UUID(n.Value.ToString()))
-                .FirstOrDefault();
+                .Select(n => n.Value?.ToString())
+                .FirstOrDefault(s => !string.IsNullOrEmpty(s));
 
-            return attachmentId;
+            return !string.IsNullOrEmpty(attachmentValue) ? new UUID(attachmentValue!) : UUID.Zero;
         }
 
         /// <summary>
@@ -1264,19 +1326,27 @@ namespace LibreMetaverse.Appearance
         /// </summary>
         /// <param name="itemLink">The link to an inventory item</param>
         /// <returns>The original inventory item, or null if the link could not be resolved</returns>
-        public InventoryItem ResolveInventoryLink(InventoryItem itemLink)
+        public InventoryItem? ResolveInventoryLink(InventoryItem itemLink)
         {
             if (itemLink.AssetType != AssetType.Link)
             {
                 return itemLink;
             }
 
-            if (!client.Inventory.Store.TryGetValue<InventoryItem>(itemLink.AssetUUID, out var inventoryItem))
+            var store = client.Inventory?.Store;
+            if (store == null)
+            {
+                _ = client.Inventory?.RequestFetchInventoryAsync(itemLink.AssetUUID, itemLink.OwnerID);
+                return null;
+            }
+
+            if (!store.TryGetValue<InventoryItem>(itemLink.AssetUUID, out var inventoryItem))
             {
                 // Fire-and-forget request for the linked item; do not block here
-                _ = client.Inventory.RequestFetchInventoryAsync(itemLink.AssetUUID, itemLink.OwnerID);
+                if (client.Inventory != null)
+                    _ = client.Inventory.RequestFetchInventoryAsync(itemLink.AssetUUID, itemLink.OwnerID);
 
-                if (!client.Inventory.Store.TryGetValue<InventoryItem>(itemLink.AssetUUID, out inventoryItem))
+                if (!store.TryGetValue<InventoryItem>(itemLink.AssetUUID, out inventoryItem))
                 {
                     return null;
                 }
@@ -1291,11 +1361,19 @@ namespace LibreMetaverse.Appearance
         /// <param name="item">Item to retrieve the parent of</param>
         /// <param name="cancellationToken"></param>
         /// <returns>The parent of <paramref name="item"/>, or null if item has no parent or parent does not exist</returns>
-        public async Task<InventoryBase> FetchParent(InventoryBase item, CancellationToken cancellationToken = default)
+        public async Task<InventoryBase?> FetchParentAsync(InventoryBase item, CancellationToken cancellationToken = default)
         {
             if (item.ParentUUID == UUID.Zero)
             {
                 return null;
+            }
+
+            if (client.Inventory?.Store == null)
+            {
+                if (client.Inventory == null) return null;
+
+                var fetchedParent = await client.Inventory.FetchItemHttpAsync(item.ParentUUID, item.OwnerID, cancellationToken);
+                return fetchedParent;
             }
 
             if (!client.Inventory.Store.TryGetNodeFor(item.ParentUUID, out var parent))
@@ -1304,7 +1382,7 @@ namespace LibreMetaverse.Appearance
                 return fetchedParent;
             }
 
-            return parent.Data;
+            return parent!.Data;
         }
 
         /// <summary>
@@ -1314,7 +1392,7 @@ namespace LibreMetaverse.Appearance
         /// <param name="parentId">ID of the folder to check</param>
         /// <param name="cancellationToken"></param>
         /// <returns>True if <paramref name="item"/> exists as a child, or sub-child of folder <paramref name="parentId"/></returns>
-        public async Task<bool> IsObjectDescendentOf(InventoryBase item, UUID parentId, CancellationToken cancellationToken = default)
+        public async Task<bool> IsObjectDescendentOfAsync(InventoryBase item, UUID parentId, CancellationToken cancellationToken = default)
         {
             const int kArbitraryDepthLimit = 255;
 
@@ -1331,7 +1409,7 @@ namespace LibreMetaverse.Appearance
                     return true;
                 }
 
-                parentItr = await FetchParent(parentItr, cancellationToken);
+                parentItr = await FetchParentAsync(parentItr, cancellationToken);
                 if (parentItr == null)
                 {
                     return false;

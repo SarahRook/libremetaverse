@@ -25,11 +25,11 @@
  */
 
 using System;
-using OpenMetaverse.StructuredData;
-using OpenMetaverse.Interfaces;
-using OpenMetaverse.Messages.Linden;
+using LibreMetaverse.StructuredData;
+using LibreMetaverse.Interfaces;
+using LibreMetaverse.Messages.Linden;
 
-namespace OpenMetaverse.Messages
+namespace LibreMetaverse.Messages
 {
 
     public static partial class MessageUtils
@@ -41,9 +41,9 @@ namespace OpenMetaverse.Messages
         /// <param name="map">An <see cref="OSDMap"/> to decode</param>
         /// <returns>A strongly typed object containing the decoded information from the capabilities message, or null
         /// if no existing Message object exists for the specified event</returns>
-        public static IMessage DecodeEvent(string eventName, OSDMap map)
+        public static IMessage? DecodeEvent(string eventName, OSDMap map)
         {
-            IMessage message = null;
+            IMessage? message = null;
 
             switch (eventName)
             {
@@ -77,6 +77,7 @@ namespace OpenMetaverse.Messages
                 case "ViewerStats": message = new ViewerStatsMessage(); break;
                 case "EventQueueGet": message = new EventQueueGetMessage(); break;
                 case "CrossedRegion": message = new CrossedRegionMessage(); break;
+                case "SimConsoleResponse": message = new SimConsoleResponseMessage(); break;
                 case "TeleportFailed": message = new TeleportFailedMessage(); break;
                 case "PlacesReply": message = new PlacesReplyMessage(); break;
                 case "UpdateAgentInformation": message = new UpdateAgentInformationMessage(); break;
@@ -85,6 +86,7 @@ namespace OpenMetaverse.Messages
                 case "SearchStatRequest": message = new SearchStatRequestMessage(); break;
                 case "AgentDropGroup": message = new AgentDropGroupMessage(); break;
                 case "AgentStateUpdate": message = new AgentStateUpdateMessage(); break;
+                case "NavMeshStatusUpdate": message = new NavMeshStatusUpdateMessage(); break;
                 case "ForceCloseChatterBoxSession": message = new ForceCloseChatterBoxSessionMessage(); break;
                 case "UploadBakedTexture": message = new UploadBakedTextureMessage(); break;
                 case "RegionInfo": message = new RegionInfoMessage(); break;
@@ -134,6 +136,7 @@ namespace OpenMetaverse.Messages
 
             return null;
         }
+
     }
 }
 

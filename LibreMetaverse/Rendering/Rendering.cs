@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2006-2016, openmetaverse.co
+ * Copyright (c) 2026, Sjofn LLC.
  * All rights reserved.
  *
  * - Redistribution and use in source and binary forms, with or without
@@ -25,16 +26,17 @@
  */
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using OpenMetaverse.Assets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Assets;
+using LibreMetaverse.StructuredData;
 
 // The common elements shared between rendering plugins are defined here
 
-namespace OpenMetaverse.Rendering
+namespace LibreMetaverse.Rendering
 {
     #region Enums
 
@@ -114,7 +116,7 @@ namespace OpenMetaverse.Rendering
             return !(value1 == value2);
         }
 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return (obj is Vertex vertex) && this == vertex;
         }
@@ -184,10 +186,98 @@ namespace OpenMetaverse.Rendering
         public Primitive.TextureEntryFace TextureFace;
         public object UserData;
 
+        /// <summary>
+        /// Per-vertex skin weights for rigged mesh faces.
+        /// Parallel to <see cref="Vertices"/> — index <c>i</c> holds the
+        /// joint influences for vertex <c>i</c>.  Null when the face has no
+        /// skinning data.
+        /// </summary>
+        public List<VertexWeight> Weights;
+
+        /// <summary>
+        /// Optional second UV channel (e.g. lightmap / PBR).
+        /// Parallel to <see cref="Vertices"/> — index <c>i</c> holds the
+        /// second texture coordinate for vertex <c>i</c>.  Null when the
+        /// submesh has no <c>TexCoord1</c> data.
+        /// </summary>
+        public List<Vector2>? TexCoords1;
+
+        /// <summary>
+        /// Normalized scale for this face, used for mesh normalization.
+        /// Defaults to <c>(1, 1, 1)</c> when not present in the asset.
+        /// </summary>
+        public Vector3 NormalizedScale;
+
         public override string ToString()
         {
             return Mask.ToString();
         }
+    }
+
+    /// <summary>
+    /// Stores up to 4 bone influences for a single vertex in a rigged mesh.
+    /// Joint indices reference the <see cref="MeshSkinData.JointNames"/> array.
+    /// Weights are normalized so they sum to 1.
+    /// </summary>
+    public struct VertexWeight
+    {
+        public int   Joint0;
+        public int   Joint1;
+        public int   Joint2;
+        public int   Joint3;
+        public float Weight0;
+        public float Weight1;
+        public float Weight2;
+        public float Weight3;
+    }
+
+    /// <summary>
+    /// Skinning data decoded from the <c>skin</c> section of a Second Life
+    /// mesh asset.  Contains joint names, bind matrices, and per-vertex
+    /// weights needed for rigged / fitted mesh rendering.
+    /// </summary>
+    public class MeshSkinData
+    {
+        /// <summary>Ordered list of joint (bone) names referenced by this mesh.</summary>
+        public string[] JointNames = Array.Empty<string>();
+
+        /// <summary>
+        /// Inverse bind matrix for each joint — a 4×4 row-major float[16]
+        /// per joint, using row-vector convention (same as OpenTK).
+        /// Length = <c>JointNames.Length * 16</c>.
+        /// </summary>
+        public float[] InverseBindMatrices = Array.Empty<float>();
+
+        /// <summary>
+        /// The bind-shape matrix (4×4, row-major, 16 floats, row-vector convention).
+        /// Transforms vertices from mesh-local space into bind-pose space
+        /// before joint skinning is applied.
+        /// </summary>
+        public float[] BindShapeMatrix = new float[]
+        {
+            1,0,0,0,
+            0,1,0,0,
+            0,0,1,0,
+            0,0,0,1
+        };
+
+        /// <summary>
+        /// Optional pelvis offset (Z) baked into the skin section.
+        /// </summary>
+        public float PelvisOffset;
+
+        /// <summary>
+        /// Alternative inverse bind matrices for joints with overridden positions
+        /// (custom joint positions from the DAE file).  Same layout as
+        /// <see cref="InverseBindMatrices"/> — 16 floats per joint, row-major.
+        /// Empty when no overrides are present.
+        /// </summary>
+        public float[] AltInverseBindMatrices = Array.Empty<float>();
+
+        /// <summary>
+        /// When true, bone scale is locked if the mesh overrides joint positions.
+        /// </summary>
+        public bool LockScaleIfJointPosition;
     }
 
     #endregion Structs
@@ -213,14 +303,16 @@ namespace OpenMetaverse.Rendering
 
     public class Mesh
     {
-        public Primitive Prim;
+        // Initialize reference-type members to non-null defaults to satisfy nullable analysis
+        public Primitive Prim = new Primitive();
         public Path Path;
         public Profile Profile;
 
         public override string ToString()
         {
-            return !string.IsNullOrEmpty(Prim.Properties?.Name) 
-                ? Prim.Properties.Name 
+            var name = Prim.Properties?.Name;
+            return !string.IsNullOrEmpty(name)
+                ? name!
                 : $"{Prim.LocalID} ({Prim.PrimData})";
         }
     }
@@ -231,7 +323,13 @@ namespace OpenMetaverse.Rendering
     public class FacetedMesh : Mesh
     {
         /// <summary>List of primitive faces</summary>
-        public List<Face> Faces;
+        public List<Face> Faces = new List<Face>();
+
+        /// <summary>
+        /// Skinning data for rigged meshes.  Null when the mesh asset does
+        /// not contain a <c>skin</c> section (i.e. the mesh is not rigged).
+        /// </summary>
+        public MeshSkinData? SkinData;
 
         /// <summary>
         /// Decodes mesh asset into FacetedMesh
@@ -241,7 +339,7 @@ namespace OpenMetaverse.Rendering
         /// <param name="LOD">Level of detail</param>
         /// <param name="mesh">Resulting decoded FacetedMesh</param>
         /// <returns>True if mesh asset decoding was successful</returns>
-        public static bool TryDecodeFromAsset(Primitive prim, AssetMesh meshAsset, DetailLevel LOD, out FacetedMesh mesh)
+        public static bool TryDecodeFromAsset(Primitive prim, AssetMesh meshAsset, DetailLevel LOD, out FacetedMesh? mesh)
         {
             mesh = null;
 
@@ -258,15 +356,17 @@ namespace OpenMetaverse.Rendering
                 {
                     Faces = new List<Face>(),
                     Prim = prim,
-                    Profile =
-                    {
-                        Faces = new List<ProfileFace>(),
-                        Positions = new List<Vector3>()
-                    },
-                    Path = {Points = new List<PathPoint>()}
+                    Profile = new Profile { Faces = new List<ProfileFace>(), Positions = new List<Vector3>() },
+                    Path = new Path { Points = new List<PathPoint>() }
                 };
-                
-                OSD facesOSD = null;
+
+                // Parse skin section for rigged / fitted mesh support.
+                if (MeshData.TryGetValue("skin", out var skinOsd) && skinOsd is OSDMap skinMap)
+                {
+                    mesh.SkinData = DecodeSkinData(skinMap);
+                }
+
+                OSD? facesOSD = null;
 
                 switch (LOD)
                 {
@@ -304,24 +404,26 @@ namespace OpenMetaverse.Rendering
                     // of Detail Blocks (maps) contain just a NoGeometry key to signal there is no
                     // geometry for this submesh.
                     if (subMeshMap.ContainsKey("NoGeometry") && ((OSDBoolean)subMeshMap["NoGeometry"]))
+                    {
                         continue;
+                    }
 
                         Face oface = new Face
                         {
                             ID = faceNr,
                             Vertices = new List<Vertex>(),
                             Indices = new List<ushort>(),
-                            TextureFace = prim.Textures.GetFace((uint) faceNr)
+                            TextureFace = prim.Textures != null ? prim.Textures.GetFace((uint)faceNr) : new Primitive.TextureEntryFace(null)
                         };
 
                         Vector3 posMax;
                         Vector3 posMin;
 
                         // If PositionDomain is not specified, the default is from -0.5 to 0.5
-                        if (subMeshMap.ContainsKey("PositionDomain"))
+                        if (subMeshMap.TryGetValue("PositionDomain", out var positionDomainObj) && positionDomainObj is OSDMap positionDomain)
                         {
-                            posMax = ((OSDMap)subMeshMap["PositionDomain"])["Max"];
-                            posMin = ((OSDMap)subMeshMap["PositionDomain"])["Min"];
+                            posMax = (Vector3)positionDomain["Max"];
+                            posMin = (Vector3)positionDomain["Min"];
                         }
                         else
                         {
@@ -333,21 +435,57 @@ namespace OpenMetaverse.Rendering
                         byte[] posBytes = subMeshMap["Position"];
 
                         // Normals
-                        byte[] norBytes = null;
+                        byte[]? norBytes = null;
                         if (subMeshMap.TryGetValue("Normal", out var normal))
                         {
                             norBytes = normal;
                         }
 
+                        // NOTE: The SL mesh format also defines a "Tangent" binary field
+                        // (uint16 quads, domain [-1,1], w sign for bitangent handedness).
+                        // The SL viewer currently disables tangent parsing (#if 0 in
+                        // llvolume.cpp) so we skip it here as well.
+
                         // UV texture map
                         Vector2 texPosMax = Vector2.Zero;
                         Vector2 texPosMin = Vector2.Zero;
-                        byte[] texBytes = null;
+                        byte[]? texBytes = null;
                         if (subMeshMap.TryGetValue("TexCoord0", out var texCoord0))
                         {
                             texBytes = texCoord0;
                             texPosMax = ((OSDMap)subMeshMap["TexCoord0Domain"])["Max"];
                             texPosMin = ((OSDMap)subMeshMap["TexCoord0Domain"])["Min"];
+                        }
+
+                        // Second UV channel (lightmap / PBR)
+                        Vector2 tex1PosMax = Vector2.Zero;
+                        Vector2 tex1PosMin = Vector2.Zero;
+                        byte[]? tex1Bytes = null;
+                        if (subMeshMap.TryGetValue("TexCoord1", out var texCoord1))
+                        {
+                            tex1Bytes = texCoord1;
+                            if (subMeshMap.TryGetValue("TexCoord1Domain", out var tc1d) && tc1d is OSDMap tc1Domain)
+                            {
+                                tex1PosMax = (Vector2)tc1Domain["Max"];
+                                tex1PosMin = (Vector2)tc1Domain["Min"];
+                            }
+                        }
+
+                        // Per-face normalized scale
+                        if (subMeshMap.TryGetValue("NormalizedScale", out var nsOsd))
+                        {
+                            oface.NormalizedScale = (Vector3)nsOsd;
+                        }
+                        else
+                        {
+                            oface.NormalizedScale = new Vector3(1f, 1f, 1f);
+                        }
+
+                        // Allocate TexCoords1 list when second UV channel is present.
+                        if (tex1Bytes != null)
+                        {
+                            int numVerts = posBytes.Length / 6;
+                            oface.TexCoords1 = new List<Vector2>(numVerts);
                         }
 
                         // Extract the vertex position data
@@ -365,17 +503,19 @@ namespace OpenMetaverse.Rendering
                                     Utils.UInt16ToFloat(uY, posMin.Y, posMax.Y),
                                     Utils.UInt16ToFloat(uZ, posMin.Z, posMax.Z))
                             };
-                            
-                            if (norBytes != null && norBytes.Length >= i + 4)
+
+                            if (norBytes != null && norBytes.Length >= i + 6)
                             {
                                 ushort nX = Utils.BytesToUInt16(norBytes, i);
                                 ushort nY = Utils.BytesToUInt16(norBytes, i + 2);
                                 ushort nZ = Utils.BytesToUInt16(norBytes, i + 4);
 
+                                // Normal domain is always [-1, 1] per the SL mesh format
+                                // (not the position domain).
                                 vx.Normal = new Vector3(
-                                    Utils.UInt16ToFloat(nX, posMin.X, posMax.X),
-                                    Utils.UInt16ToFloat(nY, posMin.Y, posMax.Y),
-                                    Utils.UInt16ToFloat(nZ, posMin.Z, posMax.Z));
+                                    Utils.UInt16ToFloat(nX, -1f, 1f),
+                                    Utils.UInt16ToFloat(nY, -1f, 1f),
+                                    Utils.UInt16ToFloat(nZ, -1f, 1f));
                             }
 
                             var vertexIndexOffset = oface.Vertices.Count * 4;
@@ -388,6 +528,16 @@ namespace OpenMetaverse.Rendering
                                 vx.TexCoord = new Vector2(
                                     Utils.UInt16ToFloat(tX, texPosMin.X, texPosMax.X),
                                     Utils.UInt16ToFloat(tY, texPosMin.Y, texPosMax.Y));
+                            }
+
+                            if (tex1Bytes != null && tex1Bytes.Length >= vertexIndexOffset + 4)
+                            {
+                                ushort t1X = Utils.BytesToUInt16(tex1Bytes, vertexIndexOffset);
+                                ushort t1Y = Utils.BytesToUInt16(tex1Bytes, vertexIndexOffset + 2);
+
+                                oface.TexCoords1?.Add(new Vector2(
+                                    Utils.UInt16ToFloat(t1X, tex1PosMin.X, tex1PosMax.X),
+                                    Utils.UInt16ToFloat(t1Y, tex1PosMin.Y, tex1PosMax.Y)));
                             }
 
                             oface.Vertices.Add(vx);
@@ -404,7 +554,62 @@ namespace OpenMetaverse.Rendering
                             oface.Indices.Add(v3);
                         }
 
+                        // Parse per-vertex skin weights for rigged mesh faces.
+                        if (mesh.SkinData != null
+                            && subMeshMap.TryGetValue("Weights", out var weightsOsd)
+                            && weightsOsd.Type == OSDType.Binary)
+                        {
+                            oface.Weights = DecodeVertexWeights(
+                                weightsOsd.AsBinary(),
+                                mesh.SkinData.JointNames.Length,
+                                oface.Vertices.Count);
+                        }
+
                         mesh.Faces.Add(oface);
+                    }
+                }
+
+                // Apply sculpt-type modifier flags (mirror / invert) per SL viewer.
+                bool doMirror = prim.Sculpt != null && prim.Sculpt.Mirror;
+                bool doInvert = prim.Sculpt != null && prim.Sculpt.Invert;
+
+                bool doReflectX         = doMirror;
+                bool doReverseTriangles = doMirror ^ doInvert;
+                bool doInvertNormals    = doInvert;
+
+                if (doReflectX || doInvertNormals || doReverseTriangles)
+                {
+                    for (int fi = 0; fi < mesh.Faces.Count; fi++)
+                    {
+                        var face = mesh.Faces[fi];
+
+                        if (doReflectX || doInvertNormals)
+                        {
+                            for (int vi = 0; vi < face.Vertices.Count; vi++)
+                            {
+                                var v = face.Vertices[vi];
+                                if (doReflectX)
+                                {
+                                    v.Position = new Vector3(-v.Position.X, v.Position.Y, v.Position.Z);
+                                    v.Normal   = new Vector3(-v.Normal.X, v.Normal.Y, v.Normal.Z);
+                                }
+                                if (doInvertNormals)
+                                {
+                                    v.Normal = new Vector3(-v.Normal.X, -v.Normal.Y, -v.Normal.Z);
+                                }
+                                face.Vertices[vi] = v;
+                            }
+                        }
+
+                        if (doReverseTriangles)
+                        {
+                            for (int ti = 0; ti + 2 < face.Indices.Count; ti += 3)
+                            {
+                                ushort tmp = face.Indices[ti + 1];
+                                face.Indices[ti + 1] = face.Indices[ti + 2];
+                                face.Indices[ti + 2] = tmp;
+                            }
+                        }
                     }
                 }
 
@@ -417,12 +622,156 @@ namespace OpenMetaverse.Rendering
 
             return true;
         }
+
+        /// <summary>
+        /// Decodes the <c>skin</c> section from a mesh asset into a <see cref="MeshSkinData"/>.
+        /// </summary>
+        private static MeshSkinData DecodeSkinData(OSDMap skinMap)
+        {
+            var data = new MeshSkinData();
+
+            if (skinMap.TryGetValue("joint_names", out var jnOsd) && jnOsd is OSDArray jnArr)
+            {
+                data.JointNames = new string[jnArr.Count];
+                for (int i = 0; i < jnArr.Count; i++)
+                    data.JointNames[i] = jnArr[i].AsString();
+            }
+
+            if (skinMap.TryGetValue("inverse_bind_matrix", out var ibmOsd) && ibmOsd is OSDArray ibmArr)
+            {
+                data.InverseBindMatrices = new float[ibmArr.Count * 16];
+                for (int i = 0; i < ibmArr.Count; i++)
+                {
+                    if (ibmArr[i] is OSDArray matArr)
+                    {
+                        for (int j = 0; j < 16 && j < matArr.Count; j++)
+                            data.InverseBindMatrices[i * 16 + j] = (float)matArr[j].AsReal();
+                    }
+                }
+            }
+
+            if (skinMap.TryGetValue("bind_shape_matrix", out var bsmOsd) && bsmOsd is OSDArray bsmArr)
+            {
+                for (int j = 0; j < 16 && j < bsmArr.Count; j++)
+                    data.BindShapeMatrix[j] = (float)bsmArr[j].AsReal();
+            }
+
+            if (skinMap.TryGetValue("pelvis_offset", out var poOsd))
+            {
+                data.PelvisOffset = (float)poOsd.AsReal();
+            }
+
+            if (skinMap.TryGetValue("alt_inverse_bind_matrix", out var aibmOsd) && aibmOsd is OSDArray aibmArr)
+            {
+                data.AltInverseBindMatrices = new float[aibmArr.Count * 16];
+                for (int i = 0; i < aibmArr.Count; i++)
+                {
+                    if (aibmArr[i] is OSDArray aMatArr)
+                    {
+                        for (int j = 0; j < 16 && j < aMatArr.Count; j++)
+                            data.AltInverseBindMatrices[i * 16 + j] = (float)aMatArr[j].AsReal();
+                    }
+                }
+            }
+
+            if (skinMap.TryGetValue("lock_scale_if_joint_position", out var lsOsd))
+            {
+                data.LockScaleIfJointPosition = lsOsd.AsBoolean();
+            }
+
+            return data;
+        }
+
+        /// <summary>
+        /// Decodes per-vertex skin weights from binary data in a mesh sub-mesh.
+        /// </summary>
+        /// <remarks>
+        /// Each vertex is encoded as a sequence of (joint_index: u8, weight: u16 LE) triplets.
+        /// The vertex terminates when <c>joint_index &gt;= jointCount</c> (sentinel).
+        /// Weights are normalized to sum to 1.  Up to 4 influences per vertex.
+        /// </remarks>
+        private static List<VertexWeight> DecodeVertexWeights(byte[] data, int jointCount, int vertexCount)
+        {
+            var weights = new List<VertexWeight>(vertexCount);
+            int idx = 0;
+
+            for (int v = 0; v < vertexCount && idx < data.Length; v++)
+            {
+                var vw = new VertexWeight();
+                int influence = 0;
+                // SL's writer (LLModel::writeModel) only emits the 0xFF terminator when a
+                // vertex has FEWER than 4 influences ("if (count < 4) write end_list"). A
+                // vertex with exactly 4 valid influences has no terminator at all -- the next
+                // byte is the next vertex's first joint index. So this loop must stop after
+                // the 4th (joint, weight) pair unconditionally, or it desyncs into the next
+                // vertex's bytes hunting for a terminator that was never written, corrupting
+                // every vertex for the rest of the submesh.
+                int entriesRead = 0;
+
+                while (idx < data.Length)
+                {
+                    int jointIdx = data[idx++];
+                    if (jointIdx == 0xFF)
+                        break; // end-of-vertex sentinel
+
+                    if (idx + 1 >= data.Length) break;
+                    ushort rawWeight = (ushort)(data[idx] | (data[idx + 1] << 8));
+                    idx += 2;
+                    entriesRead++;
+
+                    if (jointIdx < jointCount)
+                    {
+                        // Clamp to [0.001, 0.999] to match the SL viewer.
+                        float w = rawWeight / 65535f;
+                        if (w < 0.001f) w = 0.001f;
+                        else if (w > 0.999f) w = 0.999f;
+
+                        if (influence < 4)
+                        {
+                            switch (influence)
+                            {
+                                case 0: vw.Joint0 = jointIdx; vw.Weight0 = w; break;
+                                case 1: vw.Joint1 = jointIdx; vw.Weight1 = w; break;
+                                case 2: vw.Joint2 = jointIdx; vw.Weight2 = w; break;
+                                case 3: vw.Joint3 = jointIdx; vw.Weight3 = w; break;
+                            }
+                            influence++;
+                        }
+                    }
+
+                    if (entriesRead >= 4)
+                        break;
+                }
+
+                // Normalize weights so they sum to 1.
+                float total = vw.Weight0 + vw.Weight1 + vw.Weight2 + vw.Weight3;
+                if (total > 0f && Math.Abs(total - 1f) > 0.001f)
+                {
+                    float inv = 1f / total;
+                    vw.Weight0 *= inv;
+                    vw.Weight1 *= inv;
+                    vw.Weight2 *= inv;
+                    vw.Weight3 *= inv;
+                }
+
+                weights.Add(vw);
+            }
+
+            // Pad with default weight (joint 0, weight 1.0) for vertices beyond the data.
+            // Matches SL viewer fallback where unweighted vertices bind to the first joint.
+            while (weights.Count < vertexCount)
+            {
+                weights.Add(new VertexWeight { Joint0 = 0, Weight0 = 1f });
+            }
+
+            return weights;
+        }
     }
 
     public class SimpleMesh : Mesh
     {
-        public List<Vertex> Vertices;
-        public List<ushort> Indices;
+        public List<Vertex> Vertices = new List<Vertex>();
+        public List<ushort> Indices = new List<ushort>();
 
         public SimpleMesh()
         {
@@ -451,10 +800,12 @@ namespace OpenMetaverse.Rendering
 
     public static class RenderingLoader
     {
+        [RequiresAssemblyFiles("Discovers rendering plugins by loading assemblies from disk at runtime.")]
+        [RequiresUnreferencedCode("Inspects loaded assembly types using runtime reflection. Not AOT-safe.")]
         public static List<string> ListRenderers(string path)
         {
             List<string> plugins = new List<string>();
-            string[] files = Directory.GetFiles(path, "OpenMetaverse.Rendering.*.dll");
+            string[] files = Directory.GetFiles(path, "LibreMetaverse.Rendering.*.dll");
 
             foreach (string f in files)
             {
@@ -488,6 +839,8 @@ namespace OpenMetaverse.Rendering
             return plugins;
         }
 
+        [RequiresAssemblyFiles("Loads a rendering plugin assembly from disk at runtime.")]
+        [RequiresUnreferencedCode("Instantiates types from loaded assemblies using runtime reflection. Not AOT-safe.")]
         public static IRendering LoadRenderer(string filename)
         {
             try
@@ -498,9 +851,11 @@ namespace OpenMetaverse.Rendering
                 {
                     if (type.GetInterface("IRendering") != null)
                     {
-                        if (type.GetCustomAttributes(typeof(RendererNameAttribute), false).Length == 1)
+                            if (type.GetCustomAttributes(typeof(RendererNameAttribute), false).Length == 1)
                         {
-                            return (IRendering)Activator.CreateInstance(type);
+                            var inst = Activator.CreateInstance(type) as IRendering;
+                            if (inst != null) return inst;
+                            throw new RenderingException("Failed to instantiate rendering plugin");
                         }
                         else
                         {

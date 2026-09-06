@@ -30,10 +30,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse.Assets;
-using OpenMetaverse.Imaging;
+using LibreMetaverse.Assets;
+using LibreMetaverse.Imaging;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class AppearanceManager
     {
@@ -63,8 +63,10 @@ namespace OpenMetaverse
         /// Async method to populate the Textures array with cached bakes
         /// </summary>
         /// <returns>True on success, otherwise false</returns>
-        private async Task<bool> GetCachedBakesAsync()
+        private async Task<bool> GetCachedBakesAsync(CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             EventHandler<AgentCachedBakesReplyEventArgs> CacheCallback = (sender, e) => tcs.TrySetResult(true);
 
@@ -74,13 +76,12 @@ namespace OpenMetaverse
             {
                 RequestCachedBakes();
 
-                var completed = await Task.WhenAny(tcs.Task, Task.Delay(WEARABLE_TIMEOUT)).ConfigureAwait(false);
-                if (completed == tcs.Task)
-                {
-                    return tcs.Task.Result;
-                }
+                var completed = await Task.WhenAny(tcs.Task, Task.Delay(WEARABLE_TIMEOUT, cancellationToken))
+                    .ConfigureAwait(false);
 
-                // Timeout - cancel tcs to ensure any later callback doesn't run continuations inline
+                if (completed == tcs.Task)
+                    return tcs.Task.Result;
+
                 tcs.TrySetCanceled();
                 return false;
             }
@@ -94,8 +95,10 @@ namespace OpenMetaverse
         /// Async method to download and parse currently worn wearable assets
         /// </summary>
         /// <returns>True on success, otherwise false</returns>
-        private async Task<bool> DownloadWearablesAsync()
+        private async Task<bool> DownloadWearablesAsync(CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var success = true;
             var wearables = new List<WearableData>(GetWearables());
 
@@ -126,57 +129,54 @@ namespace OpenMetaverse
                 {
                     if (wearable.Asset != null) return;
 
-                    await semaphore.WaitAsync().ConfigureAwait(false);
+                    await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        var tcs = new TaskCompletionSource<Asset>(TaskCreationOptions.RunContinuationsAsynchronously);
+                        cancellationToken.ThrowIfCancellationRequested();
 
-                        Client.Assets.RequestAsset(wearable.AssetID, wearable.AssetType, true,
-                            (transfer, asset) => { tcs.TrySetResult(asset); }
-                        );
-
-                        var completed = await Task.WhenAny(tcs.Task, Task.Delay(WEARABLE_TIMEOUT))
-                            .ConfigureAwait(false);
-                        if (completed == tcs.Task)
+                        using var wearableCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        wearableCts.CancelAfter(WEARABLE_TIMEOUT);
+                        Asset? asset = null;
+                        try
                         {
-                            var asset = await tcs.Task.ConfigureAwait(false);
-                            if (asset is AssetWearable assetWearable)
-                            {
-                                wearable.Asset = assetWearable;
+                            asset = await Client.Assets.RequestAssetAsync(wearable.AssetID, wearable.AssetType, true, wearableCts.Token)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            Logger.Error($"Timed out downloading wearable asset {wearable.AssetID} ({wearable.WearableType})", Client);
+                            success = false;
+                        }
 
-                                if (wearable.Asset.Decode())
-                                {
-                                    DecodeWearableParams(wearable, ref Textures);
-                                    Logger.DebugLog("Downloaded wearable asset " + wearable.WearableType + " with " +
-                                                    wearable.Asset.Params.Count +
-                                                    " visual params and " + wearable.Asset.Textures.Count + " textures",
-                                        Client);
-                                }
-                                else
-                                {
-                                    wearable.Asset = null;
-                                    Logger.Error("Failed to decode asset:" + Environment.NewLine +
-                                                 Utils.BytesToString(assetWearable.AssetData), Client);
-                                    success = false;
-                                }
+                        if (asset is AssetWearable assetWearable)
+                        {
+                            wearable.Asset = assetWearable;
+
+                            if (wearable.Asset.Decode())
+                            {
+                                DecodeWearableParams(wearable, ref Textures);
+                                Logger.DebugLog("Downloaded wearable asset " + wearable.WearableType + " with " +
+                                                wearable.Asset.Params.Count +
+                                                " visual params and " + wearable.Asset.Textures.Count + " textures",
+                                    Client);
                             }
                             else
                             {
-                                Logger.Warn(
-                                    "Wearable " + wearable.AssetID + "(" + wearable.WearableType +
-                                    ") failed to download or wrong asset type", Client);
+                                wearable.Asset = null;
+                                Logger.Error("Failed to decode asset:" + Environment.NewLine +
+                                             Utils.BytesToString(assetWearable.AssetData), Client);
                                 success = false;
                             }
                         }
-                        else
+                        else if (asset != null)
                         {
-                            // Timeout
-                            tcs.TrySetCanceled();
-                            Logger.Error(
-                                "Timed out downloading wearable asset " + wearable.AssetID + " (" +
-                                wearable.WearableType + ")", Client);
+                            Logger.Warn($"Wearable {wearable.AssetID} ({wearable.WearableType}) failed to download or wrong asset type", Client);
                             success = false;
                         }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
                     }
                     catch (Exception ex)
                     {
@@ -195,6 +195,7 @@ namespace OpenMetaverse
 
             return success;
         }
+
 
         /// <summary>
         /// Get a list of all textures that need to be downloaded for a single bake layer
@@ -224,8 +225,11 @@ namespace OpenMetaverse
         /// Async method to download all textures needed for baking the given bake layers
         /// </summary>
         /// <param name="bakeLayers">A list of layers that need baking</param>
-        private async Task DownloadTexturesAsync(List<BakeType> bakeLayers)
+        /// <param name="cancellationToken"></param>
+        private async Task DownloadTexturesAsync(List<BakeType> bakeLayers, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var textureIDs = new List<UUID>();
 
             foreach (var uuid in from t in bakeLayers
@@ -244,38 +248,28 @@ namespace OpenMetaverse
             {
                 var tasks = textureIDs.Select(async textureId =>
                 {
-                    await semaphore.WaitAsync().ConfigureAwait(false);
+                    await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
                     try
                     {
-                        var tcs = new TaskCompletionSource<AssetTexture>(TaskCreationOptions
-                            .RunContinuationsAsynchronously);
+                        cancellationToken.ThrowIfCancellationRequested();
 
-                        Client.Assets.RequestImage(textureId,
-                            (state, assetTexture) =>
-                            {
-                                if (state == TextureRequestState.Finished)
-                                {
-                                    tcs.TrySetResult(assetTexture);
-                                }
-                                else
-                                {
-                                    tcs.TrySetResult(null);
-                                }
-                            }
-                        );
-
-                        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TEXTURE_TIMEOUT)).ConfigureAwait(false);
-                        if (completed == tcs.Task && tcs.Task.Result != null)
+                        using var texCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                        texCts.CancelAfter(TEXTURE_TIMEOUT);
+                        AssetTexture? assetTexture = null;
+                        try
                         {
-                            var assetTexture = await tcs.Task.ConfigureAwait(false);
-                            try
-                            {
-                                assetTexture.Decode();
-                            }
-                            catch (Exception decodeEx)
-                            {
-                                Logger.Debug($"Failed to decode texture {textureId}: {decodeEx}", Client);
-                            }
+                            assetTexture = await TextureProvider.RequestTextureAsync(textureId, texCts.Token)
+                                .ConfigureAwait(false);
+                        }
+                        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            Logger.Warn($"Texture {textureId} failed to download, one or more bakes will be incomplete");
+                        }
+
+                        if (assetTexture != null)
+                        {
+                            try { assetTexture.Decode(); }
+                            catch (Exception decodeEx) { Logger.Debug($"Failed to decode texture {textureId}: {decodeEx}", Client); }
 
                             foreach (var tex in Textures)
                             {
@@ -283,13 +277,10 @@ namespace OpenMetaverse
                                     tex.Texture = assetTexture;
                             }
                         }
-                        else
-                        {
-                            // Timeout or failed
-                            tcs.TrySetCanceled();
-                            Logger.Warn("Texture " + textureId +
-                                        " failed to download, one or more bakes will be incomplete");
-                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
                     }
                     catch (Exception e)
                     {
@@ -309,20 +300,19 @@ namespace OpenMetaverse
         /// Async method to create and upload baked textures for all missing bakes
         /// </summary>
         /// <returns>True on success, otherwise false</returns>
-        private async Task<bool> CreateBakesAsync()
+        private async Task<bool> CreateBakesAsync(CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var success = true;
             var pendingBakes = new List<BakeType>();
 
-            // Check each bake layer in the Textures array for missing bakes
             for (var bakedIndex = 0; bakedIndex < BAKED_TEXTURE_COUNT; bakedIndex++)
             {
                 var textureIndex = BakeTypeToAgentTextureIndex((BakeType)bakedIndex);
 
-
                 if (Textures[(int)textureIndex].TextureID == UUID.Zero)
                 {
-                    // If this is the skirt layer, and we're not wearing a skirt then skip it
                     if (bakedIndex == (int)BakeType.Skirt && !Wearables.ContainsKey(WearableType.Skirt))
                     {
                         Logger.DebugLog($"texture: {textureIndex} skipping not attached");
@@ -340,17 +330,23 @@ namespace OpenMetaverse
 
             if (pendingBakes.Any())
             {
-                await DownloadTexturesAsync(pendingBakes).ConfigureAwait(false);
+                await DownloadTexturesAsync(pendingBakes, cancellationToken).ConfigureAwait(false);
+
+                cancellationToken.ThrowIfCancellationRequested();
 
                 using (var semaphore = new SemaphoreSlim(MAX_CONCURRENT_UPLOADS))
                 {
                     var tasks = pendingBakes.Select(async bakeType =>
                     {
-                        await semaphore.WaitAsync().ConfigureAwait(false);
+                        await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
                         try
                         {
-                            if (!await CreateBakeAsync(bakeType).ConfigureAwait(false))
+                            if (!await CreateBakeAsync(bakeType, cancellationToken).ConfigureAwait(false))
                                 success = false;
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
                         }
                         finally
                         {
@@ -375,9 +371,12 @@ namespace OpenMetaverse
         /// Async method to create and upload a baked texture for a single bake layer
         /// </summary>
         /// <param name="bakeType">Layer to bake</param>
+        /// <param name="cancellationToken"></param>
         /// <returns>True on success, otherwise false</returns>
-        private async Task<bool> CreateBakeAsync(BakeType bakeType)
+        private async Task<bool> CreateBakeAsync(BakeType bakeType, CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
             var textureIndices = BakeTypeToTextures(bakeType);
             var oven = new Baker(bakeType);
 
@@ -385,13 +384,11 @@ namespace OpenMetaverse
             {
                 var texture = Textures[(int)textureIndex];
                 texture.TextureIndex = textureIndex;
-
                 oven.AddTexture(texture);
             }
 
             var start = Environment.TickCount;
-            // Run bake on thread-pool to avoid blocking the caller thread
-            await Task.Run(() => oven.Bake()).ConfigureAwait(false);
+            await Task.Run(() => oven.Bake(), cancellationToken).ConfigureAwait(false);
             Logger.DebugLog($"Baking {bakeType} took {Environment.TickCount - start}ms");
 
             var newAssetID = UUID.Zero;
@@ -399,7 +396,15 @@ namespace OpenMetaverse
 
             while (newAssetID == UUID.Zero && retries > 0)
             {
-                newAssetID = await UploadBakeAsync(oven.BakedTexture.AssetData).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (oven.BakedTexture == null || oven.BakedTexture.AssetData == null)
+                {
+                    Logger.Warn($"Baker produced no texture data for {bakeType}", Client);
+                    break;
+                }
+
+                newAssetID = await UploadBakeAsync(oven.BakedTexture.AssetData, cancellationToken).ConfigureAwait(false);
                 --retries;
             }
 
@@ -421,25 +426,28 @@ namespace OpenMetaverse
         /// Async method to upload a baked texture
         /// </summary>
         /// <param name="textureData">Five channel JPEG2000 texture data to upload</param>
+        /// <param name="cancellationToken"></param>
         /// <returns>UUID of the newly created asset on success, otherwise UUID.Zero</returns>
-        private async Task<UUID> UploadBakeAsync(byte[] textureData)
+        private async Task<UUID> UploadBakeAsync(byte[] textureData, CancellationToken cancellationToken = default)
         {
-            var tcs = new TaskCompletionSource<UUID>(TaskCreationOptions.RunContinuationsAsynchronously);
+            cancellationToken.ThrowIfCancellationRequested();
 
-            Client.Assets.RequestUploadBakedTexture(textureData,
-                delegate(UUID newAssetID) { tcs.TrySetResult(newAssetID); }
-            );
-
-            var completed = await Task.WhenAny(tcs.Task, Task.Delay(UPLOAD_TIMEOUT)).ConfigureAwait(false);
-            if (completed == tcs.Task)
+            using var uploadCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            uploadCts.CancelAfter(UPLOAD_TIMEOUT);
+            try
             {
-                return await tcs.Task.ConfigureAwait(false);
+                return await Client.Assets.RequestUploadBakedTextureAsync(textureData, uploadCts.Token).ConfigureAwait(false);
             }
-
-            // Timeout - ensure TCS is cancelled to avoid late continuations
-            tcs.TrySetCanceled();
-            return UUID.Zero;
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return UUID.Zero;
+            }
         }
+
+
+
+
+
 
         #endregion Appearance Helpers
 
@@ -536,12 +544,14 @@ namespace OpenMetaverse
                 case BakeType.Head:
                     textures.Add(AvatarTextureIndex.HeadBodypaint);
                     textures.Add(AvatarTextureIndex.HeadTattoo);
+                    textures.Add(AvatarTextureIndex.HeadUniversalTattoo);
                     textures.Add(AvatarTextureIndex.Hair);
                     textures.Add(AvatarTextureIndex.HeadAlpha);
                     break;
                 case BakeType.UpperBody:
                     textures.Add(AvatarTextureIndex.UpperBodypaint);
                     textures.Add(AvatarTextureIndex.UpperTattoo);
+                    textures.Add(AvatarTextureIndex.UpperUniversalTattoo);
                     textures.Add(AvatarTextureIndex.UpperGloves);
                     textures.Add(AvatarTextureIndex.UpperUndershirt);
                     textures.Add(AvatarTextureIndex.UpperShirt);
@@ -551,6 +561,7 @@ namespace OpenMetaverse
                 case BakeType.LowerBody:
                     textures.Add(AvatarTextureIndex.LowerBodypaint);
                     textures.Add(AvatarTextureIndex.LowerTattoo);
+                    textures.Add(AvatarTextureIndex.LowerUniversalTattoo);
                     textures.Add(AvatarTextureIndex.LowerUnderpants);
                     textures.Add(AvatarTextureIndex.LowerSocks);
                     textures.Add(AvatarTextureIndex.LowerShoes);
@@ -560,14 +571,32 @@ namespace OpenMetaverse
                     break;
                 case BakeType.Eyes:
                     textures.Add(AvatarTextureIndex.EyesIris);
+                    textures.Add(AvatarTextureIndex.EyesTattoo);
                     textures.Add(AvatarTextureIndex.EyesAlpha);
                     break;
                 case BakeType.Skirt:
                     textures.Add(AvatarTextureIndex.Skirt);
+                    textures.Add(AvatarTextureIndex.SkirtTattoo);
                     break;
                 case BakeType.Hair:
                     textures.Add(AvatarTextureIndex.Hair);
+                    textures.Add(AvatarTextureIndex.HairTattoo);
                     textures.Add(AvatarTextureIndex.HairAlpha);
+                    break;
+                case BakeType.BakedLeftArm:
+                    textures.Add(AvatarTextureIndex.LeftArmTattoo);
+                    break;
+                case BakeType.BakedLeftLeg:
+                    textures.Add(AvatarTextureIndex.LeftLegTattoo);
+                    break;
+                case BakeType.BakedAux1:
+                    textures.Add(AvatarTextureIndex.Aux1Tattoo);
+                    break;
+                case BakeType.BakedAux2:
+                    textures.Add(AvatarTextureIndex.Aux2Tattoo);
+                    break;
+                case BakeType.BakedAux3:
+                    textures.Add(AvatarTextureIndex.Aux3Tattoo);
                     break;
             }
 

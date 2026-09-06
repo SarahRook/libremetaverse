@@ -25,9 +25,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.Packets;
+using LibreMetaverse.Packets;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Throttles the network traffic for various different traffic types.
@@ -131,7 +131,7 @@ namespace OpenMetaverse
             }
         }
 
-        private readonly GridClient Client;
+        private readonly GridClient? Client;
         private float resend;
         private float land;
         private float wind;
@@ -177,15 +177,19 @@ namespace OpenMetaverse
         /// </summary>
         public void Set()
         {
-            Set(Client.Network.CurrentSim);
+            var sim = Client?.Network?.CurrentSim;
+            if (sim == null) return;
+            Set(sim);
         }
 
         /// <summary>
-        /// Send an AgentThrottle packet to the specified server using the 
+        /// Send an AgentThrottle packet to the specified server using the
         /// current values
         /// </summary>
-        public void Set(Simulator simulator)
+        public void Set(Simulator? simulator)
         {
+            if (Client == null || simulator == null) return;
+
             AgentThrottlePacket throttle = new AgentThrottlePacket
             {
                 AgentData =
@@ -202,6 +206,9 @@ namespace OpenMetaverse
             };
 
             Client.Network.SendPacket(throttle, simulator);
+
+            // Synchronise the outgoing UDP throttle with the new rates.
+            Client.Network.UpdateUdpThrottle(this);
         }
 
         /// <summary>

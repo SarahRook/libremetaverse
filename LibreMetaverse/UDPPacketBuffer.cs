@@ -1,7 +1,7 @@
-﻿using System;
+using System;
 using System.Net;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     // this class encapsulates a single packet that
     // is either sent or received by a UDP socket
@@ -26,7 +26,7 @@ namespace OpenMetaverse
         {
             Data = new byte[DEFAULT_BUFFER_SIZE];
             // Will be modified later by BeginReceiveFrom()
-            RemoteEndPoint = new IPEndPoint(Settings.BIND_ADDR, 0);
+            RemoteEndPoint = new IPEndPoint(Settings.BindAddress, 0);
         }
 
         /// <summary>
@@ -85,7 +85,7 @@ namespace OpenMetaverse
 
         public void ResetEndpoint()
         {
-            RemoteEndPoint = new IPEndPoint(Settings.BIND_ADDR, 0);
+            RemoteEndPoint = new IPEndPoint(Settings.BindAddress, 0);
         }
     }
 }

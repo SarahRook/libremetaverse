@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2022-2025, Sjofn LLC
  * All rights reserved.
  *
@@ -31,6 +31,7 @@ using System.Linq;
 namespace LibreMetaverse
 {
     public interface ICacheDictionaryRemovalStrategy<TKey>
+        where TKey : notnull
     {
         /// <summary>
         /// Initialize the strategy and pass the maximum number of allowed items
@@ -69,6 +70,7 @@ namespace LibreMetaverse
     }
 
     public class CacheDictionary<TKey, TValue> : IDictionary<TKey, TValue>
+        where TKey : notnull
     {
         private readonly Dictionary<TKey, TValue> _data;
         private readonly int _maxSize;
@@ -120,7 +122,9 @@ namespace LibreMetaverse
             return result;
         }
 
-        public bool TryGetValue(TKey key, out TValue value)
+        #pragma warning disable CS8767
+                public bool TryGetValue(TKey key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out TValue value)
+        #pragma warning restore CS8767
         {
             bool result = _data.TryGetValue(key, out value);
             if (result)
@@ -191,7 +195,7 @@ namespace LibreMetaverse
 
         public class CacheDictionaryEnumerator : IEnumerator<KeyValuePair<TKey, TValue>>
         {
-            private IEnumerator<KeyValuePair<TKey, TValue>> _innerEnumerator;
+            private IEnumerator<KeyValuePair<TKey, TValue>>? _innerEnumerator;
             private readonly ICacheDictionaryRemovalStrategy<TKey> _removalStrategy;
 
             internal CacheDictionaryEnumerator(IEnumerator<KeyValuePair<TKey, TValue>> innerEnumerator, ICacheDictionaryRemovalStrategy<TKey> removalStrategy)
@@ -204,7 +208,7 @@ namespace LibreMetaverse
             {
                 get
                 {
-                    KeyValuePair<TKey, TValue> result = _innerEnumerator.Current;
+                    KeyValuePair<TKey, TValue> result = _innerEnumerator!.Current;
                     _removalStrategy.KeyAccessed(result.Key);
                     return result;
                 }
@@ -212,7 +216,7 @@ namespace LibreMetaverse
 
             public void Dispose()
             {
-                _innerEnumerator.Dispose();
+                _innerEnumerator?.Dispose();
                 _innerEnumerator = null;
             }
 
@@ -220,12 +224,12 @@ namespace LibreMetaverse
 
             public bool MoveNext()
             {
-                return _innerEnumerator.MoveNext();
+                return _innerEnumerator!.MoveNext();
             }
 
             public void Reset()
             {
-                _innerEnumerator.Reset();
+                _innerEnumerator!.Reset();
             }
         }
     }
@@ -237,8 +241,9 @@ namespace LibreMetaverse
     /// </summary>
     /// <typeparam name="TKey"></typeparam>
     public class EmptyRemovalStrategy<TKey> : ICacheDictionaryRemovalStrategy<TKey>
+        where TKey : notnull
     {
-        private HashSet<TKey> _currentKeys;
+        private HashSet<TKey> _currentKeys = new();
 
         public void Initialize(int maxSize)
         {
@@ -281,8 +286,9 @@ namespace LibreMetaverse
     /// </summary>
     /// <typeparam name="TKey"></typeparam>
     public class MruRemovalStrategy<TKey> : ICacheDictionaryRemovalStrategy<TKey>
+        where TKey : notnull
     {
-        private List<TKey> _items;
+        private List<TKey> _items = new();
 
         public void Initialize(int maxSize)
         {
@@ -325,8 +331,9 @@ namespace LibreMetaverse
     /// </summary>
     /// <typeparam name="TKey"></typeparam>
     public class LruRemovalStrategy<TKey> : ICacheDictionaryRemovalStrategy<TKey>
+        where TKey : notnull
     {
-        private List<TKey> _items;
+        private List<TKey> _items = new();
 
         public void Initialize(int maxSize)
         {

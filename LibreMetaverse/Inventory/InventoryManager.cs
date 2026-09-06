@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2006-2016, openmetaverse.co
- * Copyright (c) 2022-2025, Sjofn LLC.
+ * Copyright (c) 2022-2026, Sjofn LLC.
  * All rights reserved.
  *
  * - Redistribution and use in source and binary forms, with or without
@@ -30,13 +30,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse.Messages.Linden;
-using OpenMetaverse.StructuredData;
-using OpenMetaverse.Packets;
+using LibreMetaverse.StructuredData;
+using LibreMetaverse.Packets;
 using System.Collections.Concurrent;
 using LibreMetaverse.Threading;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Tools for dealing with agents inventory
@@ -46,7 +45,7 @@ namespace OpenMetaverse
     {
         /// <summary>Used for converting shadow_id to asset_id</summary>
         public static readonly UUID MAGIC_ID = new UUID("3c115e51-04f4-523c-9fa6-98aff1034730");
-        public static Task<List<InventoryBase>> NoResults = Task.FromResult<List<InventoryBase>>(null);
+        public static Task<List<InventoryBase>> NoResults => Task.FromResult(new List<InventoryBase>());
         /// <summary>Maximum items allowed to give</summary>
         public const int MAX_GIVE_ITEMS = 66; // viewer code says 66, but 42 in the notification
         protected struct InventorySearch
@@ -60,7 +59,7 @@ namespace OpenMetaverse
         [NonSerialized]
         private readonly GridClient Client;
         [NonSerialized]
-        private Inventory _Store;
+        private Inventory? _Store;
         [NonSerialized]
         private bool _disposed;
         [NonSerialized]
@@ -82,7 +81,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Get this agents Inventory data
         /// </summary>
-        public Inventory Store => _Store;
+        public Inventory? Store => _Store;
 
         #endregion Properties
 
@@ -92,7 +91,7 @@ namespace OpenMetaverse
         /// <param name="client">Reference to the GridClient object</param>
         public InventoryManager(GridClient client)
         {
-            Client = client;
+            Client = client ?? throw new ArgumentNullException(nameof(client));
 
             Client.Network.RegisterCallback(PacketType.UpdateCreateInventoryItem, UpdateCreateInventoryItemHandler);
             Client.Network.RegisterCallback(PacketType.SaveAssetIntoInventory, SaveAssetIntoInventoryHandler);
@@ -106,7 +105,7 @@ namespace OpenMetaverse
             Client.Network.RegisterCallback(PacketType.InventoryDescendents, InventoryDescendentsHandler);
             Client.Network.RegisterCallback(PacketType.FetchInventoryReply, FetchInventoryReplyHandler);
 
-            // Watch for inventory given to us through instant message            
+            // Watch for inventory given to us through instant message
             Client.Self.IM += Self_IM;
 
             // Register extra parameters with login and parse the inventory data that comes back
@@ -115,6 +114,8 @@ namespace OpenMetaverse
                 new string[] {
                     "inventory-root", "inventory-skeleton", "inventory-lib-root",
                     "inventory-lib-owner", "inventory-skel-lib"});
+
+            Client.AisClient.AISMetaReceived += OnAISMetaReceived;
         }
 
         /// <summary>
@@ -152,6 +153,7 @@ namespace OpenMetaverse
                     }
 
                     try { if (Client?.Self != null) Client.Self.IM -= Self_IM; } catch (Exception ex) { Logger.Debug("Failed to detach Self_IM event handler", ex, Client); }
+                    try { if (Client?.AisClient != null) Client.AisClient.AISMetaReceived -= OnAISMetaReceived; } catch (Exception ex) { Logger.Debug("Failed to detach AISMetaReceived handler", ex, Client); }
 
                     try { _ItemCreatedCallbacks.Clear(); } catch (Exception ex) { Logger.Debug("Failed to clear ItemCreatedCallbacks", ex, Client); }
                     try { _ItemCopiedCallbacks.Clear(); } catch (Exception ex) { Logger.Debug("Failed to clear ItemCopiedCallbacks", ex, Client); }
@@ -184,46 +186,21 @@ namespace OpenMetaverse
 
         #region Fetch
 
-        /// <summary>
-        /// Fetch an inventory item from the dataserver
-        /// </summary>
-        /// <param name="itemID">The items <see cref="UUID"/></param>
-        /// <param name="ownerID">The item Owners <see cref="OpenMetaverse.UUID"/></param>
-        /// <param name="timeout">time to wait for results represented by <see cref="TimeSpan"/></param>
-        /// <returns>An <see cref="InventoryItem"/> object on success, or null if no item was found</returns>
-        /// <remarks>Items will also be sent to the <see cref="InventoryManager.OnItemReceived"/> event</remarks>
-        [Obsolete("Use FetchItemAsync or FetchItemHttpAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public InventoryItem FetchItem(UUID itemID, UUID ownerID, TimeSpan timeout)
+        public async Task<InventoryItem?> FetchItemHttpAsync(UUID itemId, UUID ownerId, CancellationToken token = default)
         {
-            using (var cts = new CancellationTokenSource())
-            {
-                cts.CancelAfter(timeout);
-                try
-                {
-                    return FetchItemAsync(itemID, ownerID, cts.Token).GetAwaiter().GetResult();
-                }
-                catch (OperationCanceledException)
-                {
-                    return null;
-                }
-            }
-        }
-
-        public async Task<InventoryItem> FetchItemHttpAsync(UUID itemId, UUID ownerId, CancellationToken token = default)
-        {
-            InventoryItem item = null;
+            InventoryItem? item = null;
             await RequestFetchInventoryHttpAsync(itemId, ownerId, token, list =>
             {
                 item = list.FirstOrDefault();
-            });
+            }).ConfigureAwait(false);
             return item;
         }
 
         /// <summary>
         /// Request A single inventory item
         /// </summary>
-        /// <param name="itemID">The items <see cref="OpenMetaverse.UUID"/></param>
-        /// <param name="ownerID">The item Owners <see cref="OpenMetaverse.UUID"/></param>
+        /// <param name="itemID">The items <see cref="LibreMetaverse.UUID"/></param>
+        /// <param name="ownerID">The item Owners <see cref="LibreMetaverse.UUID"/></param>
         /// <param name="cancellationToken">Cancellation token to cancel the request</param>
         /// <see cref="InventoryManager.OnItemReceived"/>
         public void RequestFetchInventory(UUID itemID, UUID ownerID, CancellationToken cancellationToken = default)
@@ -282,15 +259,15 @@ namespace OpenMetaverse
         /// <summary>
         /// Request inventory items via HTTP capability
         /// </summary>
-        /// <param name="itemID">The items <see cref="OpenMetaverse.UUID"/></param>
-        /// <param name="ownerID">The item Owners <see cref="OpenMetaverse.UUID"/></param>
+        /// <param name="itemID">The items <see cref="LibreMetaverse.UUID"/></param>
+        /// <param name="ownerID">The item Owners <see cref="LibreMetaverse.UUID"/></param>
         /// <param name="cancellationToken">Cancellation token for operation</param>
         /// <param name="callback">Action</param>
         private async Task RequestFetchInventoryHttpAsync(UUID itemID, UUID ownerID,
-            CancellationToken cancellationToken, Action<List<InventoryItem>> callback = null)
+            CancellationToken cancellationToken, Action<List<InventoryItem>>? callback = null)
         {
             await RequestFetchInventoryHttpAsync(new Dictionary<UUID, UUID>(1) { { itemID, ownerID } },
-                cancellationToken, callback);
+                cancellationToken, callback).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -299,8 +276,8 @@ namespace OpenMetaverse
         /// <param name="items">Inventory items to request with owner</param>
         /// <param name="cancellationToken">Cancellation token to cancel the request</param>
         /// <param name="callback">Action</param>
-        public async Task RequestFetchInventoryHttpAsync(Dictionary<UUID, UUID> items,
-            CancellationToken cancellationToken, Action<List<InventoryItem> > callback = null)
+        private async Task RequestFetchInventoryHttpAsync(Dictionary<UUID, UUID> items,
+            CancellationToken cancellationToken, Action<List<InventoryItem>>? callback = null)
         {
 
             var cap = GetCapabilityURI("FetchInventory2");
@@ -359,64 +336,6 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Retrieve contents of a folder
-        /// </summary>
-        /// <param name="folder">The <see cref="UUID"/> of the folder to search</param>
-        /// <param name="owner">The <see cref="UUID"/> of the folders owner</param>
-        /// <param name="fetchFolders">retrieve folders</param>
-        /// <param name="fetchItems">retrieve items</param>
-        /// <param name="order">sort order to return results in</param>
-        /// <param name="timeout">time given to wait for results</param>
-        /// <param name="followLinks">Resolve link items to the actual item</param>
-        /// <returns>A list of inventory items matching search criteria within folder</returns>
-        /// <see cref="RequestFolderContents(UUID,UUID,bool,bool,InventorySortOrder,CancellationToken)"/>
-        /// <remarks>InventoryFolder.DescendentCount will only be accurate if both folders and items are
-        /// requested</remarks>
-        [Obsolete("Use FolderContentsAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public List<InventoryBase> FolderContents(UUID folder, UUID owner, bool fetchFolders, bool fetchItems,
-            InventorySortOrder order, TimeSpan timeout, bool followLinks = false)
-        {
-            if (_Store == null)
-            {
-                var msg = "Inventory store not initialized, cannot get folder contents.";
-                Logger.Warn(msg, Client);
-                return new List<InventoryBase>();
-            }
-
-            using (var cts = new CancellationTokenSource())
-            {
-                cts.CancelAfter(timeout);
-                List<InventoryBase> inventory = null;
-                try
-                {
-                    inventory = FolderContentsAsync(folder, owner, fetchFolders, fetchItems, order, cts.Token, followLinks).GetAwaiter().GetResult();
-                }
-                catch (OperationCanceledException)
-                {
-                    inventory = null;
-                }
-                catch
-                {
-                    inventory = null;
-                }
-
-                if (inventory == null)
-                {
-                    try
-                    {
-                        inventory = _Store != null ? _Store.GetContents(folder) : new List<InventoryBase>();
-                    }
-                    catch (InventoryException)
-                    {
-                        inventory = new List<InventoryBase>();
-                    }
-                }
-
-                return inventory;
-            }
-        }
-
-        /// <summary>
         /// Request the contents of an inventory folder using HTTP capabilities
         /// </summary>
         /// <param name="folderID">The folder to search</param>
@@ -426,11 +345,11 @@ namespace OpenMetaverse
         /// <param name="order">the sort order to return items in</param>
         /// <param name="cancellationToken">CancellationToken for operation</param>
         /// <see cref="InventoryManager.FolderContents"/>
-        public async Task<List<InventoryBase>> RequestFolderContents(UUID folderID, UUID ownerID, 
+        public async Task<List<InventoryBase>> RequestFolderContentsAsync(UUID folderID, UUID ownerID,
             bool fetchFolders, bool fetchItems, InventorySortOrder order, CancellationToken cancellationToken = default)
         {
             var cap = (ownerID == Client.Self.AgentID) ? "FetchInventoryDescendents2" : "FetchLibDescendents2";
-            Uri url = GetCapabilityURI(cap);
+            Uri? url = GetCapabilityURI(cap);
             if (url == null)
             {
                 OnFolderUpdated(new FolderUpdatedEventArgs(folderID, false));
@@ -441,7 +360,7 @@ namespace OpenMetaverse
                 OwnerID = ownerID,
                 UUID = folderID
             };
-            return await RequestFolderContents(new List<InventoryFolder>(1) { folder }, 
+            return await RequestFolderContentsAsync(new List<InventoryFolder>(1) { folder },
                 url, fetchFolders, fetchItems, order, cancellationToken);
         }
 
@@ -455,10 +374,10 @@ namespace OpenMetaverse
         /// <param name="order">the sort order to return items in</param>
         /// <param name="cancellationToken">CancellationToken for operation</param>
         /// <see cref="InventoryManager.FolderContents"/>
-        public async Task<List<InventoryBase>> RequestFolderContents(List<InventoryFolder> batch, Uri capabilityUri, 
+        public async Task<List<InventoryBase>> RequestFolderContentsAsync(List<InventoryFolder> batch, Uri capabilityUri,
             bool fetchFolders, bool fetchItems, InventorySortOrder order, CancellationToken cancellationToken = default)
         {
-            List <InventoryBase> ret = null;
+            List <InventoryBase> ret = new List<InventoryBase>();
             try
             {
                 var requestedFolders = new OSDArray(1);
@@ -484,7 +403,8 @@ namespace OpenMetaverse
                         var res = (OSDMap)fetchedFolderNr;
                         InventoryFolder fetchedFolder;
 
-                        if (_Store.TryGetValue(res["folder_id"], out var invFolder) && invFolder is InventoryFolder folderCast)
+                        var store = _Store;
+                        if (store != null && store.TryGetValue(res["folder_id"], out var invFolder) && invFolder is InventoryFolder folderCast)
                         {
                             fetchedFolder = folderCast;
                         }
@@ -509,7 +429,7 @@ namespace OpenMetaverse
                         fetchedFolder.OwnerID = res["owner_id"];
                         if (_Store != null && _Store.TryGetNodeFor(fetchedFolder.UUID, out var fetchedNode))
                         {
-                            fetchedNode.NeedsUpdate = false;
+                            fetchedNode!.NeedsUpdate = false;
                         }
 
                         // Do we have any descendants
@@ -525,8 +445,8 @@ namespace OpenMetaverse
                                     UUID folderID = descFolder.TryGetValue("category_id", out var category_id)
                                         ? category_id : descFolder["folder_id"];
 
-                                    if (!(_Store != null 
-                                          && _Store.TryGetValue(folderID, out var existing) 
+                                    if (!(_Store != null
+                                          && _Store.TryGetValue(folderID, out var existing)
                                           && existing is InventoryFolder existingFolder))
                                     {
                                         folder = new InventoryFolder(folderID)
@@ -557,27 +477,27 @@ namespace OpenMetaverse
                                     folder.PreferredType = (FolderType)descFolder["type_default"].AsInteger();
                                     ret.Add(folder);
                                 }
+                            }
 
-                                // Fetch descendent items
-                                if (res.TryGetValue("items", out var items))
+                            // Fetch descendent items
+                            if (res.TryGetValue("items", out var items))
+                            {
+                                var arr = (OSDArray)items;
+                                foreach (var it in arr)
                                 {
-                                    var arr = (OSDArray)items;
-                                    foreach (var it in arr)
+                                    var item = InventoryItem.FromOSD(it);
+                                    if (_Store != null)
                                     {
-                                        var item = InventoryItem.FromOSD(it);
-                                        if (_Store != null)
+                                        using (var writeLock = _storeLock.WriteLock())
                                         {
-                                            using (var writeLock = _storeLock.WriteLock())
-                                            {
-                                                _Store[item.UUID] = item;
-                                            }
+                                            _Store[item.UUID] = item;
                                         }
-                                        else
-                                        {
-                                            Logger.Debug("Inventory store is not initialized, descendent item will not be cached locally", Client);
-                                        }
-                                        ret.Add(item);
                                     }
+                                    else
+                                    {
+                                        Logger.Debug("Inventory store is not initialized, descendent item will not be cached locally", Client);
+                                    }
+                                    ret.Add(item);
                                 }
                             }
                         }
@@ -598,6 +518,44 @@ namespace OpenMetaverse
         }
 
         #endregion Fetch
+
+        #region AIS meta application
+
+        /// <summary>
+        /// Applies AIS3 response side-effect metadata to the local inventory store.
+        /// Removes broken links and collateral deletions; updates folder version numbers.
+        /// Subscribed to <see cref="LibreMetaverse.InventoryAISClient.AISMetaReceived"/>.
+        /// </summary>
+        private void OnAISMetaReceived(LibreMetaverse.AISResponseMeta meta)
+        {
+            var store = _Store;
+            if (store == null || !meta.HasAnyData) return;
+
+            using var writeLock = _storeLock.WriteLock();
+
+            foreach (var id in meta.BrokenLinksRemoved)
+            {
+                if (store.TryGetValue(id, out var obj) && obj != null)
+                    store.RemoveNodeFor(obj);
+            }
+            foreach (var id in meta.ItemsRemoved)
+            {
+                if (store.TryGetValue(id, out var obj) && obj != null)
+                    store.RemoveNodeFor(obj);
+            }
+            foreach (var id in meta.CategoriesRemoved)
+            {
+                if (store.TryGetValue(id, out var obj) && obj != null)
+                    store.RemoveNodeFor(obj);
+            }
+            foreach (var kv in meta.CategoryVersionUpdates)
+            {
+                if (store.TryGetValue<InventoryFolder>(kv.Key, out var folder))
+                    folder!.Version = kv.Value;
+            }
+        }
+
+        #endregion AIS meta application
 
         #region Find
 
@@ -644,6 +602,12 @@ namespace OpenMetaverse
             return _Store.RootFolder.UUID;
         }
 
+        /// <summary>
+        /// Find the UUID of the default folder for a given folder type
+        /// </summary>
+        /// <remarks>Returns the root folder UUID if no matching folder is found</remarks>
+        /// <param name="type">The <see cref="FolderType"/> to search for</param>
+        /// <returns>The UUID of the matching folder, or the root folder UUID if not found</returns>
         public UUID FindFolderForType(FolderType type)
         {
             if (_Store == null)
@@ -652,8 +616,14 @@ namespace OpenMetaverse
                 return UUID.Zero;
             }
 
+            if (_Store.RootFolder == null)
+            {
+                Logger.Error("Inventory RootFolder not initialized, FindFolderForType() lookup cannot continue", Client);
+                return UUID.Zero;
+            }
+
             var contents = _Store.GetContents(_Store.RootFolder.UUID);
-            foreach (var folder in contents.Select(inv => inv as InventoryFolder).Where(folder => folder?.PreferredType == type))
+            foreach (var folder in contents.OfType<InventoryFolder>().Where(f => f.PreferredType == type))
             {
                 return folder.UUID;
             }
@@ -663,38 +633,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Find an object in inventory using a specific path to search
-        /// </summary>
-        /// <param name="baseFolder">The folder to begin the search in</param>
-        /// <param name="inventoryOwner">The object owners <see cref="UUID"/></param>
-        /// <param name="path">A string path to search</param>
-        /// <param name="timeout">time to wait for reply</param>
-        /// <returns>Found items <see cref="UUID"/> or <see cref="UUID.Zero"/> if 
-        /// timeout occurs or item is not found</returns>
-        public UUID FindObjectByPath(UUID baseFolder, UUID inventoryOwner, string path, TimeSpan timeout)
-        {
-            using (var cts = new CancellationTokenSource())
-            {
-                cts.CancelAfter(timeout);
-                try
-                {
-                    return FindObjectByPathAsync(baseFolder, inventoryOwner, path, cts.Token).GetAwaiter().GetResult();
-                }
-                catch (OperationCanceledException)
-                {
-                    return UUID.Zero;
-                }
-            }
-        }
-
-        /// <summary>
         /// Find inventory items by path
         /// </summary>
         /// <param name="baseFolder">The folder to begin the search in</param>
         /// <param name="inventoryOwner">The object owners <see cref="UUID"/></param>
         /// <param name="path">A string path to search, folders/objects separated by a '/'</param>
+        /// <param name="cancellationToken">Cancellation token for the operation</param>
         /// <remarks>Results are sent to the <see cref="InventoryManager.OnFindObjectByPath"/> event</remarks>
-        public async Task RequestFindObjectByPath(UUID baseFolder, UUID inventoryOwner, string path, CancellationToken cancellationToken = default)
+        public async Task RequestFindObjectByPathAsync(UUID baseFolder, UUID inventoryOwner, string path, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrEmpty(path))
                 throw new ArgumentException("Empty path is not supported");
@@ -716,7 +662,7 @@ namespace OpenMetaverse
             _Searches[id] = search;
 
             // Start the search
-            await RequestFolderContents(baseFolder, inventoryOwner, true, true, InventorySortOrder.ByName, cancellationToken);
+            await RequestFolderContentsAsync(baseFolder, inventoryOwner, true, true, InventorySortOrder.ByName, cancellationToken);
         }
 
         /// <summary>
@@ -751,6 +697,8 @@ namespace OpenMetaverse
                 Logger.Warn($"Inventory LocalFind exceeded maximum depth of {maxDepth} at folder {baseFolder}. Possible circular reference or extremely deep hierarchy.", Client);
                 return objects;
             }
+
+            if (_Store == null) return objects;
 
             var contents = _Store.GetContents(baseFolder);
 
@@ -788,33 +736,6 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Move an inventory item or folder to a new location and change its name
-        /// </summary>
-        /// <param name="item">The <see cref="T:InventoryBase"/> item or folder to move</param>
-        /// <param name="newParent">The <see cref="T:InventoryFolder"/> to move item or folder to</param>
-        /// <param name="newName">The name to change the item or folder to</param>
-        [Obsolete("Method broken with AISv3. Use Move(item, parent) instead.")]
-        public void Move(InventoryBase item, InventoryFolder newParent, string newName)
-        {
-            if (item is InventoryFolder)
-                MoveFolder(item.UUID, newParent.UUID, newName);
-            else
-                MoveItem(item.UUID, newParent.UUID, newName);
-        }
-
-        /// <summary>
-        /// Move and rename a folder
-        /// </summary>
-        /// <param name="folderID">The source folders <see cref="UUID"/></param>
-        /// <param name="newParentID">The destination folders <see cref="UUID"/></param>
-        /// <param name="newName">The name to change the folder to</param>
-        [Obsolete("Method broken with AISv3. Use MoveFolder(folder, parent) and UpdateFolderProperties(folder, parent, name, type) instead")]
-        public void MoveFolder(UUID folderID, UUID newParentID, string newName)
-        {
-            UpdateFolderProperties(folderID, newParentID, newName, FolderType.None);
-        }
-
-        /// <summary>
         /// Update folder properties
         /// </summary>
         /// <param name="folderID"><see cref="UUID"/> of the folder to update</param>
@@ -823,12 +744,12 @@ namespace OpenMetaverse
         /// <param name="type">Folder type</param>
         public void UpdateFolderProperties(UUID folderID, UUID parentID, string name, FolderType type)
         {
-            InventoryFolder inv = null;
+            InventoryFolder? inv = null;
 
             using (var upg = _storeLock.UpgradeableLock())
             {
-                if (_Store != null 
-                    && _Store.TryGetValue(folderID, out var storeItem) 
+                if (_Store != null
+                    && _Store.TryGetValue(folderID, out var storeItem)
                     && storeItem is InventoryFolder item)
                 {
                     // Retrieve node under read lock
@@ -839,7 +760,8 @@ namespace OpenMetaverse
                     inv.Name = name;
                     inv.ParentUUID = parentID;
                     inv.PreferredType = type;
-                    _Store.UpdateNodeFor(inv);
+                    if (_Store != null)
+                        _Store.UpdateNodeFor(inv);
                 }
             }
 
@@ -847,17 +769,7 @@ namespace OpenMetaverse
             {
                 if (inv != null)
                 {
-                    _ = Client.AisClient.UpdateCategory(folderID, inv.GetOSD(), success =>
-                    {
-                        if (success)
-                        {
-                            // Ensure local store is updated (already updated above) but keep parity
-                            using (var writeLock = _storeLock.WriteLock())
-                            {
-                                _Store.UpdateNodeFor(inv);
-                            }
-                        }
-                    }).ConfigureAwait(false);
+                    _ = Client.AisClient.UpdateCategoryAsync(folderID, inv.GetOSD());
                 }
             }
             else
@@ -888,12 +800,13 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="folderID">The source folders <see cref="UUID"/></param>
         /// <param name="newParentID">The destination folders <see cref="UUID"/></param>
+        /// <param name="cancellationToken">Cancellation token for the operation</param>
         public void MoveFolder(UUID folderID, UUID newParentID, CancellationToken cancellationToken = default)
         {
             using (var writeLock = _storeLock.WriteLock())
             {
-                if (_Store != null 
-                    && _Store.TryGetValue(folderID, out var storeItem) 
+                if (_Store != null
+                    && _Store.TryGetValue(folderID, out var storeItem)
                     && storeItem is InventoryFolder inv)
                 {
                     inv.ParentUUID = newParentID;
@@ -903,9 +816,7 @@ namespace OpenMetaverse
 
             if (Client.AisClient.IsAvailable)
             {
-                // Fire-and-forget AIS move using Task-based API. Log failures and run onSuccess on success
-                var moveTask = Client.AisClient.MoveCategoryAsync(folderID, newParentID, CancellationToken.None);
-                ContinueWithLog(moveTask, $"MoveCategory {folderID} -> {newParentID}");
+                _ = Client.AisClient.MoveCategoryAsync(folderID, newParentID, cancellationToken);
                 return;
             }
 
@@ -915,7 +826,7 @@ namespace OpenMetaverse
                 {
                     AgentID = Client.Self.AgentID,
                     SessionID = Client.Self.SessionID,
-                    Stamp = false //FIXME: ??
+                    Stamp = false
                 },
                 InventoryData = new MoveInventoryFolderPacket.InventoryDataBlock[1]
             };
@@ -932,17 +843,18 @@ namespace OpenMetaverse
         /// Move multiple folders, the keys in the Dictionary parameter,
         /// to a new parents, the value of that folder's key.
         /// </summary>
-        /// <param name="foldersNewParents">A Dictionary containing the 
-        /// <see cref="UUID"/> of the source as the key, and the 
+        /// <param name="foldersNewParents">A Dictionary containing the
+        /// <see cref="UUID"/> of the source as the key, and the
         /// <see cref="UUID"/> of the destination as the value</param>
+        /// <param name="cancellationToken">Cancellation token for the operation</param>
         public void MoveFolders(Dictionary<UUID, UUID> foldersNewParents, CancellationToken cancellationToken = default)
         {
             using (var writeLock = _storeLock.WriteLock())
             {
                 foreach (var entry in foldersNewParents)
                 {
-                    if (_Store != null 
-                        && _Store.TryGetValue(entry.Key, out var storeItem) 
+                    if (_Store != null
+                        && _Store.TryGetValue(entry.Key, out var storeItem)
                         && storeItem is InventoryFolder inv)
                     {
                         inv.ParentUUID = entry.Value;
@@ -954,7 +866,7 @@ namespace OpenMetaverse
             if (Client.AisClient.IsAvailable)
             {
                 // Fire-and-forget AIS calls for each folder move. Run concurrently and log failures.
-                var tasks = foldersNewParents.Select(kv => Client.AisClient.MoveCategoryAsync(kv.Key, kv.Value, CancellationToken.None)).ToArray();
+                var tasks = foldersNewParents.Select(kv => Client.AisClient.MoveCategoryAsync(kv.Key, kv.Value, cancellationToken)).ToArray();
                 var whenAll = Task.WhenAll(tasks);
                 ContinueWithWhenAllLog(whenAll, "MoveFolders", results =>
                 {
@@ -1003,6 +915,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="itemID">The <see cref="UUID"/> of the source item to move</param>
         /// <param name="folderID">The <see cref="UUID"/> of the destination folder</param>
+        /// <param name="cancellationToken">Cancellation token for the operation</param>
         public void MoveItem(UUID itemID, UUID folderID, CancellationToken cancellationToken = default)
         {
             MoveItem(itemID, folderID, string.Empty, cancellationToken);
@@ -1014,12 +927,13 @@ namespace OpenMetaverse
         /// <param name="itemID">The <see cref="UUID"/> of the source item to move</param>
         /// <param name="folderID">The <see cref="UUID"/> of the destination folder</param>
         /// <param name="newName">Optional new name for the item</param>
+        /// <param name="cancellationToken">Cancellation token for the operation</param>
         public void MoveItem(UUID itemID, UUID folderID, string newName, CancellationToken cancellationToken = default)
         {
             // Update local store under write lock
             try
             {
-                using (var writeLock = _storeLock?.WriteLock())
+                using (_storeLock.WriteLock())
                 {
                     if (_Store != null && _Store.TryGetValue(itemID, out var storeItem) && storeItem is InventoryItem inv)
                     {
@@ -1034,15 +948,14 @@ namespace OpenMetaverse
                 Logger.Warn($"MoveItem local update failed: {ex.Message}", Client);
             }
 
-            // Prefer AISv3 when available
-            if (Client?.AisClient?.IsAvailable == true)
+            // AIS3 supports move-only; fall through to UDP when a rename is also requested
+            // (renaming on move is deprecated per the [Obsolete] on Move(item, parent, name))
+            if (string.IsNullOrEmpty(newName) && Client.AisClient.IsAvailable)
             {
-                var task = Client.AisClient.MoveItemAsync(itemID, folderID, CancellationToken.None);
-                ContinueWithLog(task, $"MoveItem {itemID} -> {folderID}");
+                _ = Client.AisClient.MoveItemAsync(itemID, folderID, cancellationToken);
                 return;
             }
 
-            // Fallback to LLUDP packet
             var move = new MoveInventoryItemPacket
             {
                 AgentData =
@@ -1068,9 +981,10 @@ namespace OpenMetaverse
         /// Move multiple items, the keys in the Dictionary parameter,
         /// to a new folders, the value of that item's key.
         /// </summary>
-        /// <param name="itemsNewFolders">A Dictionary containing the 
-        /// <see cref="UUID"/> of the source as the key, and the 
+        /// <param name="itemsNewFolders">A Dictionary containing the
+        /// <see cref="UUID"/> of the source as the key, and the
         /// <see cref="UUID"/> of the destination as the value</param>
+        /// <param name="cancellationToken">Cancellation token for the operation</param>
         public void MoveItems(Dictionary<UUID, UUID> itemsNewFolders, CancellationToken cancellationToken = default)
         {
             using (var writeLock = _storeLock.WriteLock())
@@ -1088,7 +1002,7 @@ namespace OpenMetaverse
             if (Client.AisClient.IsAvailable)
             {
                 // Fire-and-forget for each item move using token-aware AIS calls
-                var tasks = itemsNewFolders.Select(kv => Client.AisClient.MoveItemAsync(kv.Key, kv.Value, CancellationToken.None)).ToArray();
+                var tasks = itemsNewFolders.Select(kv => Client.AisClient.MoveItemAsync(kv.Key, kv.Value, cancellationToken)).ToArray();
                 var whenAll = Task.WhenAll(tasks);
                 ContinueWithWhenAllLog(whenAll, "MoveItems", results =>
                 {
@@ -1159,20 +1073,20 @@ namespace OpenMetaverse
                 var visited = new HashSet<UUID>();
                 int iterations = 0;
                 const int maxIterations = 100000;
-                
+
                 stack.Push(itemId);
 
                 while (stack.Count > 0)
                 {
                     iterations++;
-                    
+
                     // Defensive iteration limit
                     if (iterations > maxIterations)
                     {
                         Logger.Warn($"RemoveLocalUi exceeded maximum iterations ({maxIterations}). Possible circular reference in inventory hierarchy.", Client);
                         break;
                     }
-                    
+
                     var id = stack.Pop();
 
                     // Defensive loop detection
@@ -1197,7 +1111,7 @@ namespace OpenMetaverse
                 }
 
                 // Finally add the root node itself to the removal list
-                toRemove.Add(rootNode.Data);
+                toRemove.Add(rootNode.Data!);
             }
 
             // Perform removals under write lock
@@ -1222,12 +1136,6 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="folder">The <see cref="UUID"/> of the folder</param>
         /// <param name="cancellationToken">Cancellation token to cancel the operation</param>
-        public void RemoveDescendants(UUID folder, CancellationToken cancellationToken = default)
-        {
-            // Preserve synchronous API by delegating to async-first implementation
-            RemoveDescendantsAsync(folder, cancellationToken).GetAwaiter().GetResult();
-        }
-
         public async Task RemoveDescendantsAsync(UUID folder, CancellationToken cancellationToken = default)
         {
             if (Client.AisClient.IsAvailable)
@@ -1257,12 +1165,6 @@ namespace OpenMetaverse
                 Client.Network.SendPacket(purge);
                 RemoveLocalUi(true, folder);
             }
-        }
-
-        public void RemoveItems(UUID[] items, CancellationToken cancellationToken = default)
-        {
-            // Preserve synchronous API by delegating to async-first implementation
-            RemoveItemsAsync(items, cancellationToken).GetAwaiter().GetResult();
         }
 
         public async Task RemoveItemsAsync(IEnumerable<UUID> items, CancellationToken cancellationToken = default)
@@ -1299,15 +1201,17 @@ namespace OpenMetaverse
             }
             else
             {
-#pragma warning disable CS0612 // Type or member is obsolete
-                Remove(items.ToList(), new List<UUID>());
-#pragma warning restore CS0612 // Type or member is obsolete
+                var itemList = items.ToList();
+                var rem = new RemoveInventoryObjectsPacket
+                {
+                    AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID }
+                };
+                rem.ItemData = itemList.Select(id => new RemoveInventoryObjectsPacket.ItemDataBlock { ItemID = id }).ToArray();
+                rem.FolderData = new RemoveInventoryObjectsPacket.FolderDataBlock[0];
+                Client.Network.SendPacket(rem);
+                foreach (var id in itemList)
+                    RemoveLocalUi(true, id);
             }
-        }
-
-        public void RemoveItem(UUID item, CancellationToken cancellationToken = default)
-        {
-            RemoveItemAsync(item, cancellationToken).GetAwaiter().GetResult();
         }
 
         public async Task RemoveItemAsync(UUID item, CancellationToken cancellationToken = default)
@@ -1334,16 +1238,15 @@ namespace OpenMetaverse
             }
             else
             {
-                var items = new List<UUID>(1) { item };
-#pragma warning disable CS0612 // Type or member is obsolete
-                Remove(items, null);
-#pragma warning restore CS0612 // Type or member is obsolete
+                var rem = new RemoveInventoryObjectsPacket
+                {
+                    AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID }
+                };
+                rem.ItemData = new RemoveInventoryObjectsPacket.ItemDataBlock[] { new RemoveInventoryObjectsPacket.ItemDataBlock { ItemID = item } };
+                rem.FolderData = new RemoveInventoryObjectsPacket.FolderDataBlock[0];
+                Client.Network.SendPacket(rem);
+                RemoveLocalUi(true, item);
             }
-        }
-
-        public void RemoveFolder(UUID folder, CancellationToken cancellationToken = default)
-        {
-            RemoveFolderAsync(folder, cancellationToken).GetAwaiter().GetResult();
         }
 
         public async Task RemoveFolderAsync(UUID folder, CancellationToken cancellationToken = default)
@@ -1370,90 +1273,31 @@ namespace OpenMetaverse
             }
             else
             {
-                var folders = new List<UUID>(1) { folder };
-#pragma warning disable CS0612 // Type or member is obsolete
-                Remove(null, folders);
-#pragma warning restore CS0612 // Type or member is obsolete
-            }
-        }
-
-        /// <summary>
-        /// Remove multiple items or folders from inventory. Note that this uses the LLUDP method
-        /// which Second Life has deprecated and removed.
-        /// </summary>
-        /// <param name="items">A List containing the <see cref="UUID"/>s of items to remove</param>
-        /// <param name="folders">A List containing the <see cref="UUID"/>s of the folders to remove</param>
-        [Obsolete]
-        public void Remove(List<UUID> items, List<UUID> folders)
-        {
-            if ((items == null || items.Count == 0) && (folders == null || folders.Count == 0))
-                return;
-
-            var rem = new RemoveInventoryObjectsPacket
-            {
-                AgentData =
+                var rem = new RemoveInventoryObjectsPacket
                 {
-                    AgentID = Client.Self.AgentID,
-                    SessionID = Client.Self.SessionID
-                }
-            };
-
-            if (items == null || items.Count == 0)
-            {
-                // To indicate that we want no items removed:
+                    AgentData =
+                    {
+                        AgentID = Client.Self.AgentID,
+                        SessionID = Client.Self.SessionID
+                    }
+                };
                 rem.ItemData = new RemoveInventoryObjectsPacket.ItemDataBlock[1];
                 rem.ItemData[0] = new RemoveInventoryObjectsPacket.ItemDataBlock { ItemID = UUID.Zero };
-            }
-            else
-            {
                 using (var writeLock = _storeLock.WriteLock())
                 {
-                    rem.ItemData = new RemoveInventoryObjectsPacket.ItemDataBlock[items.Count];
-                    for (var i = 0; i < items.Count; i++)
-                    {
-                        rem.ItemData[i] = new RemoveInventoryObjectsPacket.ItemDataBlock { ItemID = items[i] };
-
-                        // Update local copy
-                        if (_Store != null && _Store.TryGetValue(items[i], out var storeItem))
-                            _Store.RemoveNodeFor(storeItem);
-                    }
+                    rem.FolderData = new RemoveInventoryObjectsPacket.FolderDataBlock[1];
+                    rem.FolderData[0] = new RemoveInventoryObjectsPacket.FolderDataBlock { FolderID = folder };
+                    if (_Store != null && _Store.TryGetValue(folder, out var storeItem))
+                        _Store.RemoveNodeFor(storeItem!);
                 }
+                Client.Network.SendPacket(rem);
             }
-
-            if (folders == null || folders.Count == 0)
-            {
-                // To indicate we want no folders removed:
-                rem.FolderData = new RemoveInventoryObjectsPacket.FolderDataBlock[1];
-                rem.FolderData[0] = new RemoveInventoryObjectsPacket.FolderDataBlock { FolderID = UUID.Zero };
-            }
-            else
-            {
-                using (var writeLock = _storeLock.WriteLock())
-                {
-                    rem.FolderData = new RemoveInventoryObjectsPacket.FolderDataBlock[folders.Count];
-                    for (var i = 0; i < folders.Count; i++)
-                    {
-                        rem.FolderData[i] = new RemoveInventoryObjectsPacket.FolderDataBlock { FolderID = folders[i] };
-
-                        // Update local copy
-                        if (_Store != null && _Store.TryGetValue(folders[i], out var storeItem))
-                            _Store.RemoveNodeFor(storeItem);
-                    }
-                }
-            }
-            Client.Network.SendPacket(rem);
         }
 
         /// <summary>
         /// Empty the Lost and Found folder
         /// </summary>
         /// <param name="cancellationToken">Cancellation token to cancel the operation</param>
-        public void EmptyLostAndFound(CancellationToken cancellationToken = default)
-        {
-            // Preserve synchronous API by delegating to async-first implementation
-            EmptyLostAndFoundAsync(cancellationToken).GetAwaiter().GetResult();
-        }
-
         public async Task EmptyLostAndFoundAsync(CancellationToken cancellationToken = default)
         {
             // Try to locate the Lost and Found system folder in local store so we can update UI after successful server-side empty
@@ -1478,15 +1322,20 @@ namespace OpenMetaverse
 
             if (Client.AisClient.IsAvailable)
             {
+                if (folderKey == UUID.Zero)
+                {
+                    Logger.Warn("LostAndFound folder not found in local store; cannot empty via AIS", Client);
+                    return;
+                }
+
                 try
                 {
-                    // Use AIS async purge if available
                     var success = await Client.AisClient.PurgeDescendentsAsync(folderKey, cancellationToken).ConfigureAwait(false);
-                    if (success && folderKey != UUID.Zero)
+                    if (success)
                     {
                         RemoveLocalUi(true, folderKey);
                     }
-                    else if (!success)
+                    else
                     {
                         Logger.Warn("AIS PurgeDescendents (LostAndFound) failed", Client);
                     }
@@ -1507,11 +1356,6 @@ namespace OpenMetaverse
         /// Empty the Trash folder
         /// </summary>
         /// <param name="cancellationToken">Cancellation token to cancel the operation</param>
-        public void EmptyTrash(CancellationToken cancellationToken = default)
-        {
-            EmptyTrashAsync(cancellationToken).GetAwaiter().GetResult();
-        }
-
         public async Task EmptyTrashAsync(CancellationToken cancellationToken = default)
         {
             // Try to locate the Trash system folder in local store so we can update UI after successful server-side empty
@@ -1538,7 +1382,7 @@ namespace OpenMetaverse
             {
                 try
                 {
-                    var success = await Client.AisClient.EmptyTrash(cancellationToken).ConfigureAwait(false);
+                    var success = await Client.AisClient.EmptyTrashAsync(cancellationToken).ConfigureAwait(false);
                     if (success && folderKey != UUID.Zero)
                     {
                         RemoveLocalUi(true, folderKey);
@@ -1570,7 +1414,7 @@ namespace OpenMetaverse
 
             var folderKey = UUID.Zero;
 
-            var items = _Store.GetContents(_Store.RootFolder);
+            var items = _Store.RootFolder != null ? _Store.GetContents(_Store.RootFolder) : new List<InventoryBase>();
             foreach (var item in items)
             {
                 var folder = item as InventoryFolder;
@@ -1586,7 +1430,8 @@ namespace OpenMetaverse
                 if (folderKey != UUID.Zero)
                 {
                     // Fire-and-forget AIS call
-                    _ = Client.AisClient.PurgeDescendents(folderKey, RemoveLocalUi, cancellationToken);
+                    _ = Client.AisClient.PurgeDescendentsAsync(folderKey, cancellationToken)
+                        .ContinueWith(t => RemoveLocalUi(t.Status == TaskStatus.RanToCompletion && t.Result, folderKey), TaskScheduler.Default);
                 }
             }
             else
@@ -1606,9 +1451,15 @@ namespace OpenMetaverse
                     }
                 }
 
-#pragma warning disable CS0612 // Type or member is obsolete
-                Remove(remItems, remFolders);
-#pragma warning restore CS0612 // Type or member is obsolete
+                var rem = new RemoveInventoryObjectsPacket
+                {
+                    AgentData = { AgentID = Client.Self.AgentID, SessionID = Client.Self.SessionID }
+                };
+                rem.ItemData = remItems.Select(id => new RemoveInventoryObjectsPacket.ItemDataBlock { ItemID = id }).ToArray();
+                rem.FolderData = remFolders.Select(id => new RemoveInventoryObjectsPacket.FolderDataBlock { FolderID = id }).ToArray();
+                Client.Network.SendPacket(rem);
+                foreach (var id in remItems) RemoveLocalUi(true, id);
+                foreach (var id in remFolders) RemoveLocalUi(true, id);
             }
         }
         #endregion Remove
@@ -1616,61 +1467,56 @@ namespace OpenMetaverse
         #region Create
 
         /// <summary>
-        /// Send a create item request
+        /// Creates a new inventory item and returns it when confirmed by the server.
+        /// Uses the UDP protocol path; for capabilities-based uploads use <see cref="CreateItemFromAssetAsync"/>.
         /// </summary>
-        /// <param name="parentFolder"></param>
-        /// <param name="name"></param>
-        /// <param name="description"></param>
-        /// <param name="type"></param>
-        /// <param name="assetTransactionID">Proper use is to upload the inventory's asset first, then provide the Asset's TransactionID here.</param>
-        /// <param name="invType"></param>
-        /// <param name="nextOwnerMask"></param>
-        /// <param name="callback"></param>
-        public void RequestCreateItem(UUID parentFolder, string name, string description, AssetType type, UUID assetTransactionID,
-            InventoryType invType, PermissionMask nextOwnerMask, ItemCreatedCallback callback)
+        public Task<InventoryItem?> CreateItemAsync(UUID parentFolder, string name, string description, AssetType type,
+            UUID assetTransactionID, InventoryType invType, PermissionMask nextOwnerMask,
+            CancellationToken cancellationToken = default)
         {
-            // Even though WearableType 0 is Shape, in this context it is treated as NOT_WEARABLE
-            RequestCreateItem(parentFolder, name, description, type, assetTransactionID, invType, (WearableType)0, nextOwnerMask,
-                callback);
+            return CreateItemAsync(parentFolder, name, description, type, assetTransactionID, invType,
+                (WearableType)0, nextOwnerMask, cancellationToken);
         }
 
         /// <summary>
-        /// Send a create item request
+        /// Creates a new inventory item and returns it when confirmed by the server.
+        /// Uses the UDP protocol path; for capabilities-based uploads use <see cref="CreateItemFromAssetAsync"/>.
         /// </summary>
-        /// <param name="parentFolder"></param>
-        /// <param name="name"></param>
-        /// <param name="description"></param>
-        /// <param name="type"></param>
-        /// <param name="assetTransactionID">Proper use is to upload the inventory's asset first, then provide the Asset's TransactionID here.</param>
-        /// <param name="invType"></param>
-        /// <param name="wearableType"></param>
-        /// <param name="nextOwnerMask"></param>
-        /// <param name="callback"></param>
-        public void RequestCreateItem(UUID parentFolder, string name, string description, AssetType type, UUID assetTransactionID,
-            InventoryType invType, WearableType wearableType, PermissionMask nextOwnerMask, ItemCreatedCallback callback)
+        public Task<InventoryItem?> CreateItemAsync(UUID parentFolder, string name, string description, AssetType type,
+            UUID assetTransactionID, InventoryType invType, WearableType wearableType, PermissionMask nextOwnerMask,
+            CancellationToken cancellationToken = default)
         {
-            var create = new CreateInventoryItemPacket
+            var tcs = new TaskCompletionSource<InventoryItem?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ItemCreatedCallback callback = (success, item) =>
             {
-                AgentData =
-                {
-                    AgentID = Client.Self.AgentID,
-                    SessionID = Client.Self.SessionID
-                },
-                InventoryBlock =
-                {
-                    CallbackID = RegisterItemCreatedCallback(callback),
-                    FolderID = parentFolder,
-                    TransactionID = assetTransactionID,
-                    NextOwnerMask = (uint) nextOwnerMask,
-                    Type = (sbyte) type,
-                    InvType = (sbyte) invType,
-                    WearableType = (byte) wearableType,
-                    Name = Utils.StringToBytes(name),
-                    Description = Utils.StringToBytes(description)
-                }
+                if (success) tcs.TrySetResult(item);
+                else tcs.TrySetResult(null);
             };
-
-            Client.Network.SendPacket(create);
+            using (cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken)))
+            {
+                var create = new CreateInventoryItemPacket
+                {
+                    AgentData =
+                    {
+                        AgentID = Client.Self.AgentID,
+                        SessionID = Client.Self.SessionID
+                    },
+                    InventoryBlock =
+                    {
+                        CallbackID = RegisterItemCreatedCallback(callback),
+                        FolderID = parentFolder,
+                        TransactionID = assetTransactionID,
+                        NextOwnerMask = (uint)nextOwnerMask,
+                        Type = (sbyte)type,
+                        InvType = (sbyte)invType,
+                        WearableType = (byte)wearableType,
+                        Name = Utils.StringToBytes(name),
+                        Description = Utils.StringToBytes(description)
+                    }
+                };
+                Client.Network.SendPacket(create);
+                return tcs.Task;
+            }
         }
 
         /// <summary>
@@ -1786,154 +1632,18 @@ namespace OpenMetaverse
             return id;
         }
 
-        /// <summary>
-        /// Create an inventory item and upload asset data
-        /// </summary>
-        /// <param name="data">Asset data</param>
-        /// <param name="name">Inventory item name</param>
-        /// <param name="description">Inventory item description</param>
-        /// <param name="assetType">Asset type</param>
-        /// <param name="invType">Inventory type</param>
-        /// <param name="folderID">Put newly created inventory in this folder</param>
-        /// <param name="callback">Delegate that will receive feedback on success or failure</param>
-        public void RequestCreateItemFromAsset(byte[] data, string name, string description, AssetType assetType,
-            InventoryType invType, UUID folderID, ItemCreatedFromAssetCallback callback)
-        {
-            var permissions = new Permissions
-            {
-                EveryoneMask = PermissionMask.None,
-                GroupMask = PermissionMask.None,
-                NextOwnerMask = PermissionMask.All
-            };
-
-            try
-            {
-                // Forward to async-first implementation
-                RequestCreateItemFromAssetAsync(data, name, description, assetType, invType, folderID, permissions, callback, CancellationToken.None).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"RequestCreateItemFromAsset failed: {ex.Message}", ex, Client);
-            }
-        }
-
-        /// <summary>
-        /// Create an inventory item and upload asset data
-        /// </summary>
-        /// <param name="data">Asset data</param>
-        /// <param name="name">Inventory item name</param>
-        /// <param name="description">Inventory item description</param>
-        /// <param name="assetType">Asset type</param>
-        /// <param name="invType">Inventory type</param>
-        /// <param name="folderID">Put newly created inventory in this folder</param>
-        /// <param name="permissions">Permission of the newly created item 
-        /// (EveryoneMask, GroupMask, and NextOwnerMask of Permissions struct are supported)</param>
-        /// <param name="callback">Delegate that will receive feedback on success or failure</param>
-        /// <param name="cancellationToken"></param>
-        [Obsolete("Use RequestCreateItemFromAssetAsync")]
-        public void RequestCreateItemFromAsset(byte[] data, string name, string description, AssetType assetType,
-            InventoryType invType, UUID folderID, Permissions permissions, ItemCreatedFromAssetCallback callback, CancellationToken cancellationToken = default)
-        {
-            var cap = GetCapabilityURI("NewFileAgentInventory", false);
-            if (cap == null)
-            {
-                throw new Exception("NewFileAgentInventory capability is not currently available");
-            }
-
-            var query = new OSDMap
-            {
-                {"folder_id", OSD.FromUUID(folderID)},
-                {"asset_type", OSD.FromString(Utils.AssetTypeToString(assetType))},
-                {"inventory_type", OSD.FromString(Utils.InventoryTypeToString(invType))},
-                {"name", OSD.FromString(name)},
-                {"description", OSD.FromString(description)},
-                {"everyone_mask", OSD.FromInteger((int) permissions.EveryoneMask)},
-                {"group_mask", OSD.FromInteger((int) permissions.GroupMask)},
-                {"next_owner_mask", OSD.FromInteger((int) permissions.NextOwnerMask)},
-                {"expected_upload_cost", OSD.FromInteger(Client.Settings.UPLOAD_COST)}
-            };
-
-            // Fire-and-forget using the async helper to preserve original non-blocking behavior
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var res = await PostCapAsync(cap, query, cancellationToken).ConfigureAwait(false);
-                    CreateItemFromAssetResponse(callback, data, query, res, null, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    CreateItemFromAssetResponse(callback, data, query, null, ex, cancellationToken);
-                }
-            }, cancellationToken);
-        }
-
-        /// <summary>
-        /// Creates inventory link to another inventory item or folder
-        /// </summary>
-        /// <param name="folderID">Put newly created link in folder with this UUID</param>
-        /// <param name="bse">Inventory item or folder</param>
-        /// <param name="callback">Method to call upon creation of the link</param>
-        /// <param name="cancellationToken"></param>
-        public void CreateLink(UUID folderID, InventoryBase bse, ItemCreatedCallback callback, CancellationToken cancellationToken = default)
-        {
-            switch (bse)
-            {
-                case InventoryFolder folder:
-                    CreateLink(folderID, folder, callback, cancellationToken);
-                    break;
-                case InventoryItem item:
-                    CreateLink(folderID, item.UUID, item.Name, item.Description, item.InventoryType, UUID.Random(), callback, cancellationToken);
-                    break;
-            }
-        }
-
-        /// <summary>
-        /// Creates inventory link to another inventory item
-        /// </summary>
-        /// <param name="folderID">Put newly created link in folder with this UUID</param>
-        /// <param name="item">Original inventory item</param>
-        /// <param name="callback">Method to call upon creation of the link</param>
-        /// <param name="cancellationToken"></param>
-        public void CreateLink(UUID folderID, InventoryItem item, ItemCreatedCallback callback, CancellationToken cancellationToken = default)
-        {
-            CreateLink(folderID, item.UUID, item.Name, item.Description, item.InventoryType, UUID.Random(), callback, cancellationToken);
-        }
-
-        /// <summary>
-        /// Creates inventory link to another inventory folder
-        /// </summary>
-        /// <param name="folderID">Put newly created link in folder with this UUID</param>
-        /// <param name="folder">Original inventory folder</param>
-        /// <param name="callback">Method to call upon creation of the link</param>
-        /// <param name="cancellationToken"></param>
-        public void CreateLink(UUID folderID, InventoryFolder folder, ItemCreatedCallback callback, CancellationToken cancellationToken = default)
-        {
-            CreateLink(folderID, folder.UUID, folder.Name, "", InventoryType.Folder, UUID.Random(), callback, cancellationToken);
-        }
-
-        /// <summary>
-        /// Creates inventory link to another inventory item or folder
-        /// </summary>
-        /// <param name="folderID">Put newly created link in folder with this UUID</param>
-        /// <param name="itemID">Original item's UUID</param>
-        /// <param name="name">Name</param>
-        /// <param name="description">Description</param>
-        /// <param name="invType">Inventory Type</param>
-        /// <param name="transactionID">Transaction UUID</param>
-        /// <param name="callback">Method to call upon creation of the link</param>
-        /// <param name="cancellationToken"></param>
-        public void CreateLink(UUID folderID, UUID itemID, string name, string description, 
-             InventoryType invType, UUID transactionID, ItemCreatedCallback callback, CancellationToken cancellationToken = default)
-         {
-            // preserve synchronous API by delegating to async-first implementation
-            CreateLinkAsync(folderID, itemID, name, description, invType, transactionID, callback, cancellationToken).GetAwaiter().GetResult();
-        }
-        
-        public async Task CreateLinkAsync(UUID folderID, UUID itemID, string name, string description,
-            InventoryType invType, UUID transactionID, ItemCreatedCallback callback, CancellationToken cancellationToken = default)
+        public async Task<InventoryItem?> CreateLinkAsync(UUID folderID, UUID itemID, string name, string description,
+            InventoryType invType, UUID transactionID, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            var tcs = new TaskCompletionSource<InventoryItem?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+            ItemCreatedCallback innerCallback = (success, item) =>
+            {
+                if (success) tcs.TrySetResult(item);
+                else tcs.TrySetResult(null);
+            };
 
             AssetType linkType = invType == InventoryType.Folder ? AssetType.LinkFolder : AssetType.Link;
             if (Client.AisClient.IsAvailable)
@@ -1950,16 +1660,17 @@ namespace OpenMetaverse
                 links.Add(link);
 
                 var newInventory = new OSDMap { { "links", links } };
-
-                var wrapped = WrapItemCreatedCallback(callback);
+                var wrapped = WrapItemCreatedCallback(innerCallback);
                 try
                 {
-                    await Client.AisClient.CreateInventory(folderID, newInventory, true, wrapped, cancellationToken).ConfigureAwait(false);
+                    var (aisSuccess, aisCreated) = await Client.AisClient.CreateInventoryAsync(folderID, newInventory, true, cancellationToken).ConfigureAwait(false);
+                    wrapped?.Invoke(aisSuccess, aisCreated);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception ex)
                 {
                     Logger.Warn(ex.Message, Client);
+                    tcs.TrySetResult(null);
                 }
             }
             else
@@ -1971,7 +1682,7 @@ namespace OpenMetaverse
                         AgentID = Client.Self.AgentID,
                         SessionID = Client.Self.SessionID
                     },
-                    InventoryBlock = { CallbackID = RegisterItemCreatedCallback(callback) }
+                    InventoryBlock = { CallbackID = RegisterItemCreatedCallback(WrapItemCreatedCallback(innerCallback)) }
                 };
 
                 _ItemInventoryTypeRequest[create.InventoryBlock.CallbackID] = invType;
@@ -1985,6 +1696,92 @@ namespace OpenMetaverse
 
                 Client.Network.SendPacket(create);
             }
+
+            return await tcs.Task.ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Creates multiple inventory links in a single AIS3 request when available,
+        /// falling back to sequential UDP link creation for non-AIS3 connections.
+        /// </summary>
+        /// <param name="folderID">Destination folder UUID</param>
+        /// <param name="linksToCreate">Items paired with their link description strings</param>
+        /// <param name="callback">Optional callback invoked with overall success/failure</param>
+        /// <param name="cancellationToken"></param>
+        public async Task CreateLinksAsync(
+            UUID folderID,
+            IEnumerable<(InventoryBase item, string description)> linksToCreate,
+            Action<bool>? callback,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var linkList = linksToCreate.ToList();
+            if (linkList.Count == 0) { callback?.Invoke(true); return; }
+
+            if (Client.AisClient.IsAvailable)
+            {
+                var links = new OSDArray();
+                foreach (var (item, description) in linkList)
+                {
+                    var isFolder = item is InventoryFolder;
+                    links.Add(new OSDMap
+                    {
+                        ["linked_id"] = OSD.FromUUID(item.UUID),
+                        ["type"] = OSD.FromInteger((sbyte)(isFolder ? AssetType.LinkFolder : AssetType.Link)),
+                        ["inv_type"] = OSD.FromInteger((sbyte)(isFolder ? InventoryType.Folder : ((InventoryItem)item).InventoryType)),
+                        ["name"] = OSD.FromString(item.Name),
+                        ["desc"] = OSD.FromString(description)
+                    });
+                }
+
+                try
+                {
+                    var createdLinks = await Client.AisClient.CreateInventoryLinksAsync(
+                        folderID, new OSDMap { { "links", links } }, cancellationToken).ConfigureAwait(false);
+
+                    if (_Store != null && createdLinks.Count > 0)
+                    {
+                        using (var writeLock = _storeLock.WriteLock())
+                        {
+                            foreach (var link in createdLinks)
+                                _Store[link.UUID] = link;
+                        }
+                        foreach (var link in createdLinks)
+                        {
+                            try { OnItemReceived(new ItemReceivedEventArgs(link)); }
+                            catch (Exception ex) { Logger.Debug($"OnItemReceived handler threw: {ex.Message}", ex, Client); }
+                        }
+                    }
+                    callback?.Invoke(true);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    Logger.Warn(ex.Message, Client);
+                    callback?.Invoke(false);
+                }
+            }
+            else
+            {
+                var allSucceeded = true;
+                foreach (var (item, description) in linkList)
+                {
+                    switch (item)
+                    {
+                        case InventoryItem invItem:
+                            if (await CreateLinkAsync(folderID, invItem.UUID, invItem.Name, description,
+                                invItem.InventoryType, UUID.Random(), cancellationToken).ConfigureAwait(false) == null)
+                                allSucceeded = false;
+                            break;
+                        case InventoryFolder folder:
+                            if (await CreateLinkAsync(folderID, folder.UUID, folder.Name, "",
+                                InventoryType.Folder, UUID.Random(), cancellationToken).ConfigureAwait(false) == null)
+                                allSucceeded = false;
+                            break;
+                    }
+                }
+                callback?.Invoke(allSucceeded);
+            }
         }
 
         #endregion Create
@@ -1992,110 +1789,26 @@ namespace OpenMetaverse
         #region Copy
 
         /// <summary>
-        /// Send a copy item request
+        /// Copies a single inventory item to a new folder and returns the copy.
         /// </summary>
-        /// <param name="item"></param>
-        /// <param name="newParent"></param>
-        /// <param name="newName"></param>
-        /// <param name="callback"></param>
-        public void RequestCopyItem(UUID item, UUID newParent, string newName, ItemCopiedCallback callback)
+        public Task<InventoryBase?> CopyItemAsync(UUID item, UUID newParent, string newName,
+            CancellationToken cancellationToken = default)
         {
-            RequestCopyItem(item, newParent, newName, Client.Self.AgentID, callback);
+            return CopyItemAsync(item, newParent, newName, Client.Self.AgentID, cancellationToken);
         }
 
         /// <summary>
-        /// Send a copy item request
+        /// Copies a single inventory item to a new folder and returns the copy.
         /// </summary>
-        /// <param name="item"></param>
-        /// <param name="newParent"></param>
-        /// <param name="newName"></param>
-        /// <param name="oldOwnerID"></param>
-        /// <param name="callback"></param>
-        public void RequestCopyItem(UUID item, UUID newParent, string newName, UUID oldOwnerID,
-            ItemCopiedCallback callback)
+        public async Task<InventoryBase?> CopyItemAsync(UUID item, UUID newParent, string newName, UUID oldOwnerID,
+            CancellationToken cancellationToken = default)
         {
-            var items = new List<UUID>(1) { item };
-            var folders = new List<UUID>(1) { newParent };
-            var names = new List<string>(1) { newName };
-
-            RequestCopyItems(items, folders, names, oldOwnerID, callback);
-        }
-
-        /// <summary>
-        /// Send a copy items request
-        /// </summary>
-        /// <param name="items"></param>
-        /// <param name="targetFolders"></param>
-        /// <param name="newNames"></param>
-        /// <param name="oldOwnerID"></param>
-        /// <param name="callback"></param>
-        public void RequestCopyItems(List<UUID> items, List<UUID> targetFolders, List<string> newNames,
-            UUID oldOwnerID, ItemCopiedCallback callback)
-        {
-            // Forward to async-first implementation for consistency. Execute synchronously to preserve original API semantics.
-            try
-            {
-                RequestCopyItemsAsync(items, targetFolders, newNames, oldOwnerID, callback).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"RequestCopyItems failed: {ex.Message}", ex, Client);
-            }
-        }
-
-        /// <summary>
-        /// Request a copy of an asset embedded within a notecard
-        /// </summary>
-        /// <param name="objectID">Usually UUID.Zero for copying an asset from a notecard</param>
-        /// <param name="notecardID">UUID of the notecard to request an asset from</param>
-        /// <param name="folderID">Put newly created inventory in this folder</param>
-        /// <param name="itemID">UUID of the embedded asset</param>
-        /// <param name="callback">callback to run when item is copied to inventory</param>
-        /// <param name="cancellationToken"></param>
-        public void RequestCopyItemFromNotecard(UUID objectID, UUID notecardID, UUID folderID, UUID itemID, ItemCopiedCallback callback, CancellationToken cancellationToken = default)
-        {
-            _ItemCopiedCallbacks[0] = callback; //Notecards always use callback ID 0
-
-            var cap = GetCapabilityURI("CopyInventoryFromNotecard");
-            if (cap != null)
-            {
-                var message = new CopyInventoryFromNotecardMessage
-                {
-                    CallbackID = 0,
-                    FolderID = folderID,
-                    ItemID = itemID,
-                    NotecardID = notecardID,
-                    ObjectID = objectID
-                };
-
-                _ = Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, message.Serialize(), cancellationToken);
-            }
-            else
-            {
-                var copy = new CopyInventoryFromNotecardPacket
-                {
-                    AgentData =
-                    {
-                        AgentID = Client.Self.AgentID,
-                        SessionID = Client.Self.SessionID
-                    },
-                    NotecardData =
-                    {
-                        ObjectID = objectID,
-                        NotecardItemID = notecardID
-                    },
-                    InventoryData = new CopyInventoryFromNotecardPacket.InventoryDataBlock[1]
-                };
-
-
-                copy.InventoryData[0] = new CopyInventoryFromNotecardPacket.InventoryDataBlock
-                {
-                    FolderID = folderID,
-                    ItemID = itemID
-                };
-
-                Client.Network.SendPacket(copy);
-            }
+            var result = await RequestCopyItemsWithResultAsync(
+                new List<UUID>(1) { item },
+                new List<UUID>(1) { newParent },
+                new List<string>(1) { newName },
+                oldOwnerID, cancellationToken).ConfigureAwait(false);
+            return result.CopiedItems?.Count > 0 ? result.CopiedItems[0] : null;
         }
 
         #endregion Copy
@@ -2148,10 +1861,9 @@ namespace OpenMetaverse
                             update["hash_id"] = item.TransactionID;
                         }
                     }
-                    // Fire-and-forget AIS update — wrap callback to merge into local store
-                    Action<bool> aisCallback = success => { if (success) MergeUpdateIntoStore(update, item.UUID); };
-
-                    _ = Client.AisClient.UpdateItem(item.UUID, update, aisCallback);
+                    // Fire-and-forget AIS update ï¿½ wrap callback to merge into local store
+                    _ = Client.AisClient.UpdateItemAsync(item.UUID, update)
+                        .ContinueWith(t => { if (t.Status == TaskStatus.RanToCompletion && t.Result) MergeUpdateIntoStore(update, item.UUID); }, TaskScheduler.Default);
                 }
             }
             else
@@ -2203,64 +1915,6 @@ namespace OpenMetaverse
             }
         }
 
-        /// <summary>
-        /// Update an existing script in an agents Inventory
-        /// </summary>
-        /// <param name="data">A byte[] array containing the encoded scripts contents</param>
-        /// <param name="itemID">the itemID of the script</param>
-        /// <param name="mono">if true, sets the script content to run on the mono interpreter</param>
-        /// <param name="callback"></param>
-        /// <param name="cancellationToken"></param>
-        [Obsolete("Use RequestUpdateScriptAgentInventoryAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public void RequestUpdateScriptAgentInventory(byte[] data, UUID itemID, bool mono, ScriptUpdatedCallback callback, CancellationToken cancellationToken = default)
-        {
-            // Forward to the async-first implementation and fire-and-forget to preserve original non-blocking behavior
-            _ = RequestUpdateScriptAgentInventoryAsync(data, itemID, mono, callback, cancellationToken);
-        }
-
-        /// <summary>
-        /// Send an upload notecard request
-        /// </summary>
-        /// <param name="data"></param>
-        /// <param name="notecardID"></param>
-        /// <param name="callback"></param>
-        /// <param name="cancellationToken"></param>
-        public void RequestUploadNotecardAsset(byte[] data, UUID notecardID, InventoryUploadedAssetCallback callback, CancellationToken cancellationToken = default)
-        {
-            var cap = GetCapabilityURI("UpdateNotecardAgentInventory", false);
-            if (cap == null)
-            {
-                throw new Exception("Capability system not initialized to send asset");
-            }
-
-            var query = new OSDMap { { "item_id", OSD.FromUUID(notecardID) } };
-
-            // Fire-and-forget the async-first implementation which will invoke the upload response handling
-            _ = RequestUploadNotecardAssetAsync(data, notecardID, callback, cancellationToken);
-        }
-
-        /// <summary>
-        /// Send an upload gesture request (synchronous wrapper preserved for compatibility)
-        /// </summary>
-        /// <param name="data">Gesture asset bytes</param>
-        /// <param name="gestureID">UUID of the gesture item</param>
-        /// <param name="callback">Callback invoked when upload completes</param>
-        /// <param name="cancellationToken">Cancellation token for operation</param>
-        [Obsolete("Use RequestUploadGestureAssetAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public void RequestUploadGestureAsset(byte[] data, UUID gestureID, InventoryUploadedAssetCallback callback, CancellationToken cancellationToken = default)
-        {
-            var cap = GetCapabilityURI("UpdateGestureAgentInventory", false);
-            if (cap == null)
-            {
-                throw new Exception("UpdateGestureAgentInventory capability is not currently available");
-            }
-
-            var query = new OSDMap { { "item_id", OSD.FromUUID(gestureID) } };
-
-            // Fire-and-forget the async-first implementation which will invoke the upload response handling
-            _ = RequestUploadGestureAssetAsync(data, gestureID, callback, cancellationToken);
-        }
-
         #endregion Update
 
         /// <summary>
@@ -2301,12 +1955,13 @@ namespace OpenMetaverse
         /// <seealso cref="CreateInventoryItem"/>
         public InventoryItem CreateOrRetrieveInventoryItem(InventoryType InvType, UUID ItemID)
         {
-            InventoryItem ret = null;
+            InventoryItem? ret = null;
 
             if (_Store == null)
             {
                 Logger.Warn("Inventory store not initialized, cannot create or retrieve inventory item", Client);
-                return null;
+                // Create a new item instance to return so callers do not get null
+                return CreateInventoryItem(InvType, ItemID);
             }
 
             if (_Store.TryGetValue(ItemID, out var storeItem) && storeItem is InventoryItem inventoryItem)
@@ -2341,7 +1996,7 @@ namespace OpenMetaverse
             // The rest of the CRC fields
             CRC += (uint)iitem.Flags; // Flags
             CRC += (uint)iitem.InventoryType; // InvType
-            CRC += (uint)iitem.AssetType; // Type 
+            CRC += (uint)iitem.AssetType; // Type
             CRC += (uint)Utils.DateTimeToUnixTime(iitem.CreationDate); // CreationDate
             CRC += (uint)iitem.SalePrice;    // SalePrice
             CRC += (uint)((uint)iitem.SaleType * 0x07073096); // SaleType
@@ -2465,7 +2120,7 @@ namespace OpenMetaverse
             return id;
         }
 
-        private static bool ParseLine(string line, out string key, out string value)
+        private static bool ParseLine(string line, out string? key, out string? value)
         {
             // Clean up and convert tabs to spaces
             line = line.Trim();
@@ -2499,10 +2154,10 @@ namespace OpenMetaverse
         }
 
         // Centralized capability lookup helper to reduce duplicated null checks
-        private Uri GetCapabilityURI(string capName, bool logOnMissing = true)
+        private Uri? GetCapabilityURI(string capName, bool logOnMissing = true)
         {
             var sim = Client?.Network?.CurrentSim;
-            Uri uri = sim?.Caps?.CapabilityURI(capName);
+            Uri? uri = sim?.Caps?.CapabilityURI(capName);
             if (uri == null && logOnMissing)
             {
                 var simName = sim?.Name ?? "unknown";
@@ -2510,6 +2165,25 @@ namespace OpenMetaverse
             }
             return uri;
         }
+
+        /// <summary>
+        /// Returns the correct <c>expected_upload_cost</c> in L$ for the given asset type,
+        /// using account-level benefit costs where available and falling back to
+        /// <see cref="Settings.UploadCost"/> when a specific cost is unavailable.
+        /// </summary>
+        private int GetUploadCostForAssetType(AssetType assetType)
+        {
+            var b = Client.Self.Benefits;
+            return assetType switch
+            {
+                AssetType.Texture => b.TextureUploadCost >= 0
+                    ? b.TextureUploadCost
+                    : Client.Settings.UploadCost,
+                AssetType.Animation => b.AnimationUploadCost >= 0 ? b.AnimationUploadCost : Client.Settings.UploadCost,
+                AssetType.Sound     => b.SoundUploadCost     >= 0 ? b.SoundUploadCost     : Client.Settings.UploadCost,
+                AssetType.Object    => b.MeshUploadCost      >= 0 ? b.MeshUploadCost      : Client.Settings.UploadCost,
+                _                   => Client.Settings.UploadCost
+            };
+        }
     }
 }
-

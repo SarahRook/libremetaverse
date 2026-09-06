@@ -25,10 +25,11 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.Interfaces;
-using OpenMetaverse.Messages.Linden;
-using OpenMetaverse.Packets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Assets;
+using LibreMetaverse.Interfaces;
+using LibreMetaverse.Messages.Linden;
+using LibreMetaverse.Packets;
+using LibreMetaverse.StructuredData;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -36,9 +37,8 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using LibreMetaverse;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>Describes tasks returned in LandStatReply</summary>
     public class EstateTask
@@ -48,8 +48,36 @@ namespace OpenMetaverse
         public float MonoScore;
         public UUID TaskID;
         public uint TaskLocalID;
-        public string TaskName;
-        public string OwnerName;
+        public string TaskName = string.Empty;
+        public string OwnerName = string.Empty;
+    }
+
+    /// <summary>Weekday flags for a weekly region restart schedule, matching the reference viewer's
+    /// day-letter scheme (llfloaterregionrestartschedule.cpp CHECKBOX_PREFIXES: s,m,t,w,r,f,a).</summary>
+    [Flags]
+    public enum RegionRestartDays
+    {
+        None = 0,
+        Sunday = 1 << 0,
+        Monday = 1 << 1,
+        Tuesday = 1 << 2,
+        Wednesday = 1 << 3,
+        Thursday = 1 << 4,
+        Friday = 1 << 5,
+        Saturday = 1 << 6,
+        All = Sunday | Monday | Tuesday | Wednesday | Thursday | Friday | Saturday
+    }
+
+    /// <summary>A region's automatic restart schedule, as returned/set by the RegionSchedule capability.</summary>
+    public class RegionRestartSchedule
+    {
+        /// <summary>True for a daily restart; false for a weekly schedule on specific <see cref="Days"/>.</summary>
+        public bool IsDaily { get; set; }
+        /// <summary>Days of the week the region restarts on. Only meaningful when <see cref="IsDaily"/>
+        /// is false; an empty set with IsDaily false clears/disables the schedule.</summary>
+        public RegionRestartDays Days { get; set; }
+        /// <summary>Time of day the restart occurs, relative to midnight UTC.</summary>
+        public TimeSpan Time { get; set; }
     }
 
     /// <summary>
@@ -60,6 +88,7 @@ namespace OpenMetaverse
         private readonly GridClient Client;
         // Stored event callback so it can be unregistered later
         private readonly Caps.EventQueueCallback m_LandStatCapsCallback;
+        private readonly Caps.EventQueueCallback m_SimConsoleResponseCallback;
         private bool disposed = false;
 
         /// <summary>Textures for each of the four terrain height levels</summary>
@@ -85,6 +114,9 @@ namespace OpenMetaverse
             // Store the delegate instance so we can unregister the same instance on dispose
             m_LandStatCapsCallback = new Caps.EventQueueCallback(LandStatCapsReplyHandler);
             Client.Network.RegisterEventCallback("LandStatReply", m_LandStatCapsCallback);
+
+            m_SimConsoleResponseCallback = new Caps.EventQueueCallback(SimConsoleResponseHandler);
+            Client.Network.RegisterEventCallback("SimConsoleResponse", m_SimConsoleResponseCallback);
         }
 
         #region Enums
@@ -181,7 +213,7 @@ namespace OpenMetaverse
         #region Event delegates, Raise Events
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<TopCollidersReplyEventArgs> m_TopCollidersReply;
+        private EventHandler<TopCollidersReplyEventArgs>? m_TopCollidersReply;
 
         /// <summary>Raises the TopCollidersReply event</summary>
         /// <param name="e">A TopCollidersReplyEventArgs object containing the
@@ -203,7 +235,7 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<TopScriptsReplyEventArgs> m_TopScriptsReply;
+        private EventHandler<TopScriptsReplyEventArgs>? m_TopScriptsReply;
 
         /// <summary>Raises the TopScriptsReply event</summary>
         /// <param name="e">A TopScriptsReplyEventArgs object containing the
@@ -226,7 +258,7 @@ namespace OpenMetaverse
 
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<EstateUsersReplyEventArgs> m_EstateUsersReply;
+        private EventHandler<EstateUsersReplyEventArgs>? m_EstateUsersReply;
 
         /// <summary>Raises the EstateUsersReply event</summary>
         /// <param name="e">A EstateUsersReplyEventArgs object containing the
@@ -249,7 +281,7 @@ namespace OpenMetaverse
 
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<EstateGroupsReplyEventArgs> m_EstateGroupsReply;
+        private EventHandler<EstateGroupsReplyEventArgs>? m_EstateGroupsReply;
 
         /// <summary>Raises the EstateGroupsReply event</summary>
         /// <param name="e">A EstateGroupsReplyEventArgs object containing the
@@ -271,7 +303,7 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<EstateManagersReplyEventArgs> m_EstateManagersReply;
+        private EventHandler<EstateManagersReplyEventArgs>? m_EstateManagersReply;
 
         /// <summary>Raises the EstateManagersReply event</summary>
         /// <param name="e">A EstateManagersReplyEventArgs object containing the
@@ -293,7 +325,30 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<EstateBansReplyEventArgs> m_EstateBansReply;
+        private EventHandler<EstateExperienceReplyEventArgs>? m_EstateExperienceReply;
+
+        /// <summary>Raises the EstateExperienceReply event</summary>
+        /// <param name="e">A EstateExperienceReplyEventArgs object containing the
+        /// data returned from the data server</param>
+        protected virtual void OnEstateExperienceReply(EstateExperienceReplyEventArgs e)
+        {
+            var handler = m_EstateExperienceReply;
+            handler?.Invoke(this, e);
+        }
+
+        /// <summary>Thread sync lock object</summary>
+        private readonly object m_EstateExperienceReply_Lock = new object();
+
+        /// <summary>Raised when the data server responds to a request for the estate's
+        /// key/trusted/allowed/blocked experience lists (Region/Estate &gt; Experiences tab).</summary>
+        public event EventHandler<EstateExperienceReplyEventArgs> EstateExperienceReply
+        {
+            add { lock (m_EstateExperienceReply_Lock) { m_EstateExperienceReply += value; } }
+            remove { lock (m_EstateExperienceReply_Lock) { m_EstateExperienceReply -= value; } }
+        }
+
+        /// <summary>The event subscribers. null if no subscribers</summary>
+        private EventHandler<EstateBansReplyEventArgs>? m_EstateBansReply;
 
         /// <summary>Raises the EstateBansReply event</summary>
         /// <param name="e">A EstateBansReplyEventArgs object containing the
@@ -315,7 +370,7 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<EstateCovenantReplyEventArgs> m_EstateCovenantReply;
+        private EventHandler<EstateCovenantReplyEventArgs>? m_EstateCovenantReply;
 
         /// <summary>Raises the EstateCovenantReply event</summary>
         /// <param name="e">A EstateCovenantReplyEventArgs object containing the
@@ -338,7 +393,7 @@ namespace OpenMetaverse
 
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<EstateUpdateInfoReplyEventArgs> m_EstateUpdateInfoReply;
+        private EventHandler<EstateUpdateInfoReplyEventArgs>? m_EstateUpdateInfoReply;
 
         /// <summary>Raises the EstateUpdateInfoReply event</summary>
         /// <param name="e">A EstateUpdateInfoReplyEventArgs object containing the
@@ -498,7 +553,7 @@ namespace OpenMetaverse
                 },
                 MethodData =
                 {
-                    Invoice = UUID.Random(), // FIXME:
+                    Invoice = UUID.Random(),
                     Method = Utils.StringToBytes(method)
                 },
                 ParamList = new EstateOwnerMessagePacket.ParamListBlock[listParams.Count]
@@ -615,24 +670,6 @@ namespace OpenMetaverse
             EstateOwnerMessage("restart", "-1");
         }
 
-        [Obsolete("Use SetRegionInfo with new arguments or SetRegionInfoUdp")]
-        public void SetRegionInfo(bool blockTerraform, bool blockFly, bool allowDamage, bool allowLandResell,
-            bool restrictPushing, bool allowParcelJoinDivide, float agentLimit, float objectBonus,
-            RegionMaturity maturity)
-        {
-            SetRegionInfo(blockTerraform, blockFly, false, allowDamage, allowLandResell, restrictPushing,
-                allowParcelJoinDivide, agentLimit, objectBonus, false, maturity);
-        }
-        
-        public void SetRegionInfo(bool blockTerraform, bool blockFly, bool blockFlyOver, bool allowDamage, 
-            bool allowLandResell, bool restrictPushing, bool allowParcelJoinDivide, float agentLimit, float objectBonus, 
-            bool blockParcelSearch, RegionMaturity maturity)
-        {
-            // Preserve synchronous API while avoiding Task.Result to prevent deadlocks.
-            SetRegionInfoAsync(blockTerraform, blockFly, blockFlyOver, allowDamage, allowLandResell, restrictPushing,
-                allowParcelJoinDivide, agentLimit, objectBonus, blockParcelSearch, maturity).GetAwaiter().GetResult();
-        }
-
         /// <summary>
         /// Async-first variant of SetRegionInfo. Awaits capability call and falls back to UDP if necessary.
         /// </summary>
@@ -650,7 +687,7 @@ namespace OpenMetaverse
             }
         }
         
-        public async Task<bool> SetRegionInfoHttp(bool blockTerraform, bool blockFly, bool blockFlyOver, bool allowDamage, 
+        private async Task<bool> SetRegionInfoHttp(bool blockTerraform, bool blockFly, bool blockFlyOver, bool allowDamage, 
             bool allowLandResell, bool restrictPushing, bool allowParcelJoinDivide, float agentLimit, float objectBonus, 
             bool blockParcelSearch, RegionMaturity maturity)
         {
@@ -767,25 +804,33 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Requests Estate Covenant notecard from <see cref="Client.Network.CurrentSim" /> asset service
+        /// Requests Estate Covenant notecard from <see cref="Client.Network.CurrentSim" /> asset service.
         /// </summary>
         /// <param name="covenantId">Asset UUID for estate covenant notecard</param>
-        /// <param name="callback">Asset Received callback</param>
-        /// <seealso cref="AssetManager.RequestAssetUDP"/>
-        public void RequestCovenantNotecard(UUID covenantId, AssetManager.AssetReceivedCallback callback)
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>The notecard asset on success, null on failure</returns>
+        public Task<Asset?> RequestCovenantNotecardAsync(UUID covenantId, CancellationToken cancellationToken = default)
         {
-            RequestCovenantNotecard(covenantId, Client.Network.CurrentSim, callback);
+            var sim = Client.Network.CurrentSim;
+            if (sim == null)
+            {
+                Logger.Warn("Cannot request covenant notecard: no current simulator available", Client);
+                return Task.FromResult<Asset?>(null);
+            }
+            return RequestCovenantNotecardAsync(covenantId, sim, cancellationToken);
         }
 
         /// <summary>
-        /// Requests Estate Covenant notecard from asset service
+        /// Requests Estate Covenant notecard from asset service.
         /// </summary>
         /// <param name="covenantId">Asset UUID for estate covenant notecard</param>
-        /// <param name="simulator">Requested simulator</param>
-        /// <param name="callback">Asset Received callback</param>
-        /// <seealso cref="AssetManager.RequestAssetUDP"/>
-        public void RequestCovenantNotecard(UUID covenantId, Simulator simulator, AssetManager.AssetReceivedCallback callback)
+        /// <param name="simulator">Simulator to request from</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>The notecard asset on success, null on failure</returns>
+        public Task<Asset?> RequestCovenantNotecardAsync(UUID covenantId, Simulator simulator, CancellationToken cancellationToken = default)
         {
+            var tcs = new TaskCompletionSource<Asset?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
             var transfer = new AssetDownload
             {
                 ID = UUID.Random(),
@@ -795,9 +840,10 @@ namespace OpenMetaverse
                 Channel = ChannelType.Asset,
                 Source = SourceType.SimEstate,
                 Simulator = simulator,
-                Callback = callback
+                Callback = (t, asset) => { if (t.Success) tcs.TrySetResult(asset); else tcs.TrySetResult(null); }
             };
             Client.Assets.RequestEstateAsset(transfer, EstateAssetType.Covenant);
+            return tcs.Task;
         }
 
         /// <summary>
@@ -942,13 +988,13 @@ namespace OpenMetaverse
         /// <param name="estateName">Name of estate to change</param>
         /// <param name="sunHour">Sun hour</param>
         /// <param name="flags"><see cref="RegionFlags"/> to commit</param>
-        /// <returns></returns>
-        public async Task SendEstateChangeInfo(string estateName, float sunHour, RegionFlags flags)
+        /// <param name="cancellationToken">Cancellation token for the request</param>
+        public async Task SendEstateChangeInfoAsync(string estateName, float sunHour, RegionFlags flags, CancellationToken cancellationToken = default)
         {
-            var cap = Client.Network.CurrentSim.Caps.CapabilityURI("EstateChangeInfo");
+            var cap = Client.Network.CurrentSim?.Caps?.CapabilityURI("EstateChangeInfo");
             if (cap != null)
             {
-                if (await SendEstateChangeInfoHttp(cap, estateName, sunHour, flags))
+                if (await SendEstateChangeInfoHttp(cap, estateName, sunHour, flags, cancellationToken))
                 {
                     return;
                 }
@@ -965,9 +1011,9 @@ namespace OpenMetaverse
         /// <param name="flags"></param>
         /// <param name="cancellationToken"></param>
         /// <returns>Success of request</returns>
-        /// <seealso cref="SendEstateChangeInfo"/>
-        /// <remarks>Prefer <see cref="SendEstateChangeInfo"/> which handles HTTP with LLUDP fallback</remarks>
-        public async Task<bool> SendEstateChangeInfoHttp(Uri uri, string estateName, float sunHour, RegionFlags flags, CancellationToken cancellationToken = default)
+        /// <seealso cref="SendEstateChangeInfoAsync"/>
+        /// <remarks>Prefer <see cref="SendEstateChangeInfoAsync"/> which handles HTTP with LLUDP fallback</remarks>
+        private async Task<bool> SendEstateChangeInfoHttp(Uri uri, string estateName, float sunHour, RegionFlags flags, CancellationToken cancellationToken = default)
         {
             var payload = new OSDMap
             {
@@ -980,7 +1026,7 @@ namespace OpenMetaverse
                 ["block_bots"] = flags.HasFlag(RegionFlags.DenyBots),
                 ["allow_voice_chat"] = flags.HasFlag(RegionFlags.AllowVoice),
                 ["override_public_access"] = flags.HasFlag(RegionFlags.AllowAccessOverride),
-                ["invoice"] = UUID.Random() // FIXME:
+                ["invoice"] = UUID.Random()
             };
             using (var content = new StringContent(OSDParser.SerializeLLSDXmlString(payload), Encoding.UTF8, HttpCapsClient.LLSD_XML)) 
             {
@@ -1003,9 +1049,9 @@ namespace OpenMetaverse
         /// <param name="estateName"></param>
         /// <param name="sunHour"></param>
         /// <param name="flags"></param>
-        /// <seealso cref="SendEstateChangeInfo"/>
+        /// <seealso cref="SendEstateChangeInfoAsync"/>
         /// <remarks>This is the deprecated way of doing things and is best NOT to use outright.
-        /// Prefer <see cref="SendEstateChangeInfo"/></remarks>
+        /// Prefer <see cref="SendEstateChangeInfoAsync"/></remarks>
         public void SendEstateChangeInfoDataserver(string estateName, float sunHour, RegionFlags flags)
         {
             var payload = new List<string>
@@ -1026,7 +1072,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void EstateCovenantReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void EstateCovenantReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             var reply = (EstateCovenantReplyPacket)e.Packet;
             OnEstateCovenantReply(new EstateCovenantReplyEventArgs(
@@ -1039,7 +1085,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void EstateOwnerMessageHandler(object sender, PacketReceivedEventArgs e)
+        protected void EstateOwnerMessageHandler(object? sender, PacketReceivedEventArgs e)
         {
             var message = (EstateOwnerMessagePacket)e.Packet;
             var method = Utils.BytesToString(message.MethodData.Method);
@@ -1162,59 +1208,75 @@ namespace OpenMetaverse
             } 
             else if (method == "setexperience")
             {
-                // TODO: Implement me!
+                // key = "setexperience"
+                // ParamList[0] = str(estate_id)            (unused here)
+                // ParamList[1] = str(send_to_agent_only)    (unused here)
+                // ParamList[2] = str(num blocked)
+                // ParamList[3] = str(num trusted)
+                // ParamList[4] = str(num allowed)
+                // ParamList[5..] = bin(uuid) x num blocked, then x num trusted, then x num allowed
+                if (message.ParamList.Length >= 5
+                    && int.TryParse(Utils.BytesToString(message.ParamList[2].Parameter), out var numBlocked)
+                    && int.TryParse(Utils.BytesToString(message.ParamList[3].Parameter), out var numTrusted)
+                    && int.TryParse(Utils.BytesToString(message.ParamList[4].Parameter), out var numAllowed))
+                {
+                    var index = 5;
+                    var blocked = ReadEstateExperienceIds(message, ref index, numBlocked);
+                    var trusted = ReadEstateExperienceIds(message, ref index, numTrusted);
+                    var allowed = ReadEstateExperienceIds(message, ref index, numAllowed);
+
+                    OnEstateExperienceReply(new EstateExperienceReplyEventArgs(blocked, trusted, allowed));
+                }
             }
+        }
+
+        /// <summary>Reads <paramref name="count"/> binary-packed UUIDs from an EstateOwnerMessage's
+        /// ParamList starting at <paramref name="index"/>, advancing it past the entries consumed.</summary>
+        private List<UUID> ReadEstateExperienceIds(EstateOwnerMessagePacket message, ref int index, int count)
+        {
+            var ids = new List<UUID>(Math.Max(0, count));
+            for (var n = 0; n < count && index < message.ParamList.Length; n++, index++)
+            {
+                try
+                {
+                    ids.Add(new UUID(message.ParamList[index].Parameter, 0));
+                }
+                catch (Exception ex) { Logger.Error(ex.Message, ex, Client); }
+            }
+            return ids;
         }
 
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void LandStatReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void LandStatReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
-            //if (OnLandStatReply != null || OnGetTopScripts != null || OnGetTopColliders != null)
-            //if (OnGetTopScripts != null || OnGetTopColliders != null)
+            var p = (LandStatReplyPacket)e.Packet;
+            var Tasks = new Dictionary<UUID, EstateTask>();
+
+            foreach (var rep in p.ReportData)
             {
-                var p = (LandStatReplyPacket)e.Packet;
-                var Tasks = new Dictionary<UUID, EstateTask>();
-
-                foreach (var rep in p.ReportData)
+                var task = new EstateTask
                 {
-                    var task = new EstateTask
-                    {
-                        Position = new Vector3(rep.LocationX, rep.LocationY, rep.LocationZ),
-                        Score = rep.Score,
-                        TaskID = rep.TaskID,
-                        TaskLocalID = rep.TaskLocalID,
-                        TaskName = Utils.BytesToString(rep.TaskName),
-                        OwnerName = Utils.BytesToString(rep.OwnerName)
-                    };
-                    Tasks.Add(task.TaskID, task);
-                }
+                    Position = new Vector3(rep.LocationX, rep.LocationY, rep.LocationZ),
+                    Score = rep.Score,
+                    TaskID = rep.TaskID,
+                    TaskLocalID = rep.TaskLocalID,
+                    TaskName = Utils.BytesToString(rep.TaskName),
+                    OwnerName = Utils.BytesToString(rep.OwnerName)
+                };
+                Tasks.Add(task.TaskID, task);
+            }
 
-                var type = (LandStatReportType)p.RequestData.ReportType;
+            var type = (LandStatReportType)p.RequestData.ReportType;
 
-                if (type == LandStatReportType.TopScripts)
-                {
-                    OnTopScriptsReply(new TopScriptsReplyEventArgs((int)p.RequestData.TotalObjectCount, Tasks));
-                }
-                else if (type == LandStatReportType.TopColliders)
-                {
-                    OnTopCollidersReply(new TopCollidersReplyEventArgs((int)p.RequestData.TotalObjectCount, Tasks));
-                }
-
-                /*
-                if (OnGetTopColliders != null)
-                {
-                    //FIXME - System.UnhandledExceptionEventArgs
-                    OnLandStatReply(
-                        type,
-                        p.RequestData.RequestFlags,
-                        (int)p.RequestData.TotalObjectCount,
-                        Tasks
-                    );
-                }
-                */
-
+            if (type == LandStatReportType.TopScripts)
+            {
+                OnTopScriptsReply(new TopScriptsReplyEventArgs((int)p.RequestData.TotalObjectCount, Tasks));
+            }
+            else if (type == LandStatReportType.TopColliders)
+            {
+                OnTopCollidersReply(new TopCollidersReplyEventArgs((int)p.RequestData.TotalObjectCount, Tasks));
             }
         }
         private void LandStatCapsReplyHandler(string capsKey, IMessage message, Simulator simulator)
@@ -1250,6 +1312,240 @@ namespace OpenMetaverse
         }
         #endregion
 
+        #region SimConsoleAsync
+
+        // Only one console command can be outstanding at a time: the SimConsoleAsync capability's
+        // POST response carries no output, and the real reply arrives later via the untargeted
+        // SimConsoleResponse event, with no request/response correlation ID (matching the reference
+        // viewer's own single-floater, single-outstanding-command model in llfloaterregiondebugconsole.cpp).
+        private readonly SemaphoreSlim m_SimConsoleLock = new SemaphoreSlim(1, 1);
+        private TaskCompletionSource<string>? m_PendingSimConsoleResponse;
+
+        /// <summary>
+        /// Sends a console command to the simulator via the SimConsoleAsync capability and
+        /// returns the simulator's text output.
+        /// Requires estate owner/manager privileges or god mode.
+        /// Corresponds to LLFloaterRegionDebugConsole::onInput in the SL C++ viewer
+        /// (llfloaterregiondebugconsole.cpp). The POST response itself carries no output for this
+        /// capability; the simulator's reply arrives separately via the SimConsoleResponse event.
+        /// </summary>
+        /// <param name="command">The console command to execute</param>
+        /// <param name="responseTimeout">How long to wait for the SimConsoleResponse event before giving up</param>
+        /// <param name="cancellationToken"></param>
+        /// <returns>The simulator's text response, or null if the capability is unavailable, the
+        /// request fails, or no response arrives before <paramref name="responseTimeout"/> elapses</returns>
+        public async Task<string?> SendSimConsoleCommandAsync(string command, TimeSpan responseTimeout = default,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Uri? cap = Client.Network.CurrentSim?.Caps?.CapabilityURI("SimConsoleAsync");
+            if (cap == null)
+            {
+                Logger.Warn("SimConsoleAsync capability not available.", Client);
+                return null;
+            }
+
+            if (responseTimeout == default) { responseTimeout = TimeSpan.FromSeconds(10); }
+
+            var msg = new SimConsoleAsyncMessage { Command = command };
+
+            await m_SimConsoleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+                m_PendingSimConsoleResponse = tcs;
+
+                try
+                {
+                    var (response, _) = await Client.HttpCapsClient.PostAsync(cap, OSDFormat.Xml, msg.Serialize(), cancellationToken).ConfigureAwait(false);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        Logger.Warn($"SimConsoleAsync POST non-success status: {response.StatusCode}", Client);
+                        return null;
+                    }
+                }
+                catch (Exception ex) when (!(ex is OperationCanceledException))
+                {
+                    Logger.Warn($"SimConsoleAsync failed: {ex.Message}", Client);
+                    return null;
+                }
+
+                using var timeoutCts = new CancellationTokenSource(responseTimeout);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+                var delayTask = Task.Delay(Timeout.InfiniteTimeSpan, linkedCts.Token);
+
+                var completed = await Task.WhenAny(tcs.Task, delayTask).ConfigureAwait(false);
+                if (completed == tcs.Task)
+                {
+                    return await tcs.Task.ConfigureAwait(false);
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                Logger.Warn("SimConsoleAsync timed out waiting for SimConsoleResponse.", Client);
+                return null;
+            }
+            finally
+            {
+                m_PendingSimConsoleResponse = null;
+                m_SimConsoleLock.Release();
+            }
+        }
+
+        /// <summary>Handles the SimConsoleResponse event queue message, completing whichever
+        /// <see cref="SendSimConsoleCommandAsync"/> call is currently awaiting a response.</summary>
+        private void SimConsoleResponseHandler(string capsKey, IMessage message, Simulator simulator)
+        {
+            if (!(message is SimConsoleResponseMessage msg)) { return; }
+            m_PendingSimConsoleResponse?.TrySetResult(msg.Body);
+        }
+
+        #endregion
+
+        #region RegionSchedule
+
+        /// <summary>Matches the reference viewer's CHECKBOX_PREFIXES order exactly
+        /// (llfloaterregionrestartschedule.cpp): s,m,t,w,r,f,a = Sun..Sat. Note "r" for Thursday and
+        /// "a" for Saturday disambiguate from Tuesday ("t") and Sunday ("s").</summary>
+        private static readonly (char Letter, RegionRestartDays Day)[] DayLetters =
+        {
+            ('s', RegionRestartDays.Sunday),
+            ('m', RegionRestartDays.Monday),
+            ('t', RegionRestartDays.Tuesday),
+            ('w', RegionRestartDays.Wednesday),
+            ('r', RegionRestartDays.Thursday),
+            ('f', RegionRestartDays.Friday),
+            ('a', RegionRestartDays.Saturday)
+        };
+
+        private static string DaysToLetters(RegionRestartDays days)
+        {
+            var sb = new StringBuilder();
+            foreach (var (letter, day) in DayLetters)
+            {
+                if (days.HasFlag(day)) { sb.Append(char.ToUpperInvariant(letter)); }
+            }
+            return sb.ToString();
+        }
+
+        private static RegionRestartDays LettersToDays(string letters)
+        {
+            var days = RegionRestartDays.None;
+            if (string.IsNullOrEmpty(letters)) { return days; }
+            foreach (var c in letters.ToLowerInvariant())
+            {
+                foreach (var (letter, day) in DayLetters)
+                {
+                    if (letter == c) { days |= day; break; }
+                }
+            }
+            return days;
+        }
+
+        /// <summary>
+        /// Retrieves the region's automatic restart schedule via the RegionSchedule capability.
+        /// Corresponds to LLFloaterRegionRestartSchedule::requestRegionShcheduleCoro in the SL C++
+        /// viewer (llfloaterregionrestartschedule.cpp). Requires estate owner/manager privileges.
+        /// </summary>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>The region's restart schedule, or null if no schedule is configured, the
+        /// capability is unavailable, or the request fails</returns>
+        public async Task<RegionRestartSchedule?> GetRegionRestartScheduleAsync(CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Uri? cap = Client.Network.CurrentSim?.Caps?.CapabilityURI("RegionSchedule");
+            if (cap == null)
+            {
+                Logger.Warn("RegionSchedule capability not available.", Client);
+                return null;
+            }
+
+            try
+            {
+                var (response, data) = await Client.HttpCapsClient.GetAsync(cap, cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Warn($"RegionSchedule GET non-success status: {response.StatusCode}", Client);
+                    return null;
+                }
+                if (data == null) { return null; }
+
+                if (!(OSDParser.Deserialize(data) is OSDMap map) || !(map["restart"] is OSDMap restart))
+                {
+                    return null; // no restart schedule currently configured
+                }
+
+                bool isDaily = restart["type"].AsString() != "W";
+                return new RegionRestartSchedule
+                {
+                    IsDaily = isDaily,
+                    Days = isDaily ? RegionRestartDays.All : LettersToDays(restart["days"].AsString()),
+                    Time = TimeSpan.FromSeconds(restart["time"].AsInteger())
+                };
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                Logger.Error("Failed fetching RegionSchedule", ex, Client);
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Sets or clears the region's automatic restart schedule via the RegionSchedule capability.
+        /// Corresponds to LLFloaterRegionRestartSchedule::onSaveButtonClicked in the SL C++ viewer
+        /// (llfloaterregionrestartschedule.cpp). Pass a non-daily schedule with
+        /// <see cref="RegionRestartSchedule.Days"/> set to <see cref="RegionRestartDays.None"/> to
+        /// clear/disable the schedule (matches the reference viewer's "if days are empty, will
+        /// reset schedule" behavior). Requires estate owner/manager privileges.
+        /// </summary>
+        /// <param name="schedule">The schedule to apply</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>True if the server accepted the change</returns>
+        public async Task<bool> SetRegionRestartScheduleAsync(RegionRestartSchedule schedule, CancellationToken cancellationToken = default)
+        {
+            if (schedule == null) throw new ArgumentNullException(nameof(schedule));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Uri? cap = Client.Network.CurrentSim?.Caps?.CapabilityURI("RegionSchedule");
+            if (cap == null)
+            {
+                Logger.Warn("RegionSchedule capability not available.", Client);
+                return false;
+            }
+
+            var restart = new OSDMap();
+            if (schedule.IsDaily)
+            {
+                restart["type"] = OSD.FromString("D");
+            }
+            else
+            {
+                restart["type"] = OSD.FromString("W");
+                restart["days"] = OSD.FromString(DaysToLetters(schedule.Days));
+            }
+            restart["time"] = OSD.FromInteger((int)schedule.Time.TotalSeconds);
+
+            var body = new OSDMap { ["restart"] = restart };
+
+            try
+            {
+                var (response, _) = await Client.HttpCapsClient.PostAsync(cap, OSDFormat.Xml, body, cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Warn($"RegionSchedule POST non-success status: {response.StatusCode}", Client);
+                }
+                return response.IsSuccessStatusCode;
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                Logger.Error("Failed setting RegionSchedule", ex, Client);
+                return false;
+            }
+        }
+
+        #endregion
+
         #region IDisposable
 
         /// <summary>
@@ -1270,7 +1566,9 @@ namespace OpenMetaverse
                         try { Client.Network.UnregisterCallback(PacketType.EstateOwnerMessage, EstateOwnerMessageHandler); } catch { }
                         try { Client.Network.UnregisterCallback(PacketType.EstateCovenantReply, EstateCovenantReplyHandler); } catch { }
                         try { if (m_LandStatCapsCallback != null) Client.Network.UnregisterEventCallback("LandStatReply", m_LandStatCapsCallback); } catch { }
+                        try { if (m_SimConsoleResponseCallback != null) Client.Network.UnregisterEventCallback("SimConsoleResponse", m_SimConsoleResponseCallback); } catch { }
                     }
+                    try { m_SimConsoleLock.Dispose(); } catch { }
                 }
                 catch (Exception ex)
                 {
@@ -1465,6 +1763,31 @@ namespace OpenMetaverse
             this.EstateID = estateID;
             this.Count = count;
             this.Managers = managers;
+        }
+    }
+
+    /// <summary>Returned when the data server sends the estate's key/trusted/allowed/blocked
+    /// experience lists (Region/Estate &gt; Experiences tab)</summary>
+    public class EstateExperienceReplyEventArgs : EventArgs
+    {
+        /// <summary>Experiences blocked estate-wide</summary>
+        public List<UUID> Blocked { get; }
+
+        /// <summary>Experiences trusted (key) by the estate</summary>
+        public List<UUID> Trusted { get; }
+
+        /// <summary>Experiences explicitly allowed on the estate</summary>
+        public List<UUID> Allowed { get; }
+
+        /// <summary>Construct a new instance of the EstateExperienceReplyEventArgs class</summary>
+        /// <param name="blocked">Blocked experience UUIDs</param>
+        /// <param name="trusted">Trusted (key) experience UUIDs</param>
+        /// <param name="allowed">Allowed experience UUIDs</param>
+        public EstateExperienceReplyEventArgs(List<UUID> blocked, List<UUID> trusted, List<UUID> allowed)
+        {
+            this.Blocked = blocked;
+            this.Trusted = trusted;
+            this.Allowed = allowed;
         }
     }
 

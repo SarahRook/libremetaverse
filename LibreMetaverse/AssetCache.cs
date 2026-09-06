@@ -32,7 +32,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Class that handles the local asset cache
@@ -42,11 +42,17 @@ namespace OpenMetaverse
         // User can plug in a routine to compute the asset cache location
         public delegate string ComputeAssetCacheFilenameDelegate(string cacheDir, UUID assetID);
 
-        public ComputeAssetCacheFilenameDelegate ComputeAssetCacheFilename = null;
+        public ComputeAssetCacheFilenameDelegate? ComputeAssetCacheFilename = null;
 
         private readonly GridClient Client;
         private readonly ManualResetEventSlim cleanerEvent = new ManualResetEventSlim();
-        private System.Timers.Timer cleanerTimer;
+#if NET6_0_OR_GREATER
+        private PeriodicTimer? _cleanerPeriodicTimer;
+        private Task? _cleanerTask;
+        private CancellationTokenSource? _cleanerCts;
+#else
+        private System.Timers.Timer? cleanerTimer;
+#endif
         private double pruneInterval = 1000 * 60 * 5;
         private bool autoPruneEnabled = true;
 
@@ -141,50 +147,74 @@ namespace OpenMetaverse
             }
         }
 
-        /// <summary>
-        /// Disposes cleanup timer
-        /// </summary>
         private void DestroyTimer()
         {
+#if NET6_0_OR_GREATER
+            _cleanerCts?.Cancel();
+            _cleanerCts?.Dispose();
+            _cleanerCts = null;
+            _cleanerPeriodicTimer?.Dispose();
+            _cleanerPeriodicTimer = null;
+            _cleanerTask = null;
+#else
             if (cleanerTimer != null)
             {
                 cleanerTimer.Dispose();
                 cleanerTimer = null;
             }
+#endif
         }
 
-        /// <summary>
-        /// Only create timer when needed
-        /// </summary>
         private void SetupTimer()
         {
-            if (Operational() && autoPruneEnabled && Client.Network.Connected)
+            if (!Operational() || !autoPruneEnabled || !Client.Network.Connected) return;
+#if NET6_0_OR_GREATER
+            DestroyTimer();
+            _cleanerCts = new CancellationTokenSource();
+            _cleanerPeriodicTimer = new PeriodicTimer(TimeSpan.FromMilliseconds(pruneInterval));
+            var timer = _cleanerPeriodicTimer;
+            var cts = _cleanerCts;
+            _cleanerTask = Task.Run(async () =>
             {
-                if (cleanerTimer == null)
+                try
                 {
-                    cleanerTimer = new System.Timers.Timer(pruneInterval);
-                    cleanerTimer.Elapsed += cleanerTimer_Elapsed;
+                    while (await timer.WaitForNextTickAsync(cts.Token).ConfigureAwait(false))
+                        BeginPrune();
                 }
-                cleanerTimer.Interval = pruneInterval;
-                cleanerTimer.Enabled = true;
+                catch (OperationCanceledException) { }
+            });
+#else
+            if (cleanerTimer == null)
+            {
+                cleanerTimer = new System.Timers.Timer(pruneInterval);
+                cleanerTimer.Elapsed += cleanerTimer_Elapsed;
             }
+            cleanerTimer.Interval = pruneInterval;
+            cleanerTimer.Enabled = true;
+#endif
         }
+
+#if !NET6_0_OR_GREATER
+        private void cleanerTimer_Elapsed(object? sender, System.Timers.ElapsedEventArgs e)
+        {
+            BeginPrune();
+        }
+#endif
 
         /// <summary>
         /// Return bytes read from the local asset cache, null if it does not exist
         /// </summary>
         /// <param name="assetID">UUID of the asset we want to get</param>
         /// <returns>Raw bytes of the asset, or null on failure</returns>
-        public byte[] GetCachedAssetBytes(UUID assetID)
+        public byte[]? GetCachedAssetBytes(UUID assetID)
         {
-            // Keep synchronous wrapper for compatibility
-            return GetCachedAssetBytesAsync(assetID, CancellationToken.None).GetAwaiter().GetResult();
+            return TryGetCachedAssetBytes(assetID, out var data) ? data : null;
         }
 
         /// <summary>
         /// Async variant that returns bytes read from the local asset cache, null if it does not exist
         /// </summary>
-        public async Task<byte[]> GetCachedAssetBytesAsync(UUID assetID, CancellationToken cancellationToken = default)
+        public async Task<byte[]?> GetCachedAssetBytesAsync(UUID assetID, CancellationToken cancellationToken = default)
         {
             if (!Operational())
             {
@@ -247,7 +277,7 @@ namespace OpenMetaverse
         /// Try to read cached bytes synchronously in a safe manner.
         /// Returns false on any failure (locked file, IO error, missing file).
         /// </summary>
-        public bool TryGetCachedAssetBytes(UUID assetID, out byte[] data)
+        public bool TryGetCachedAssetBytes(UUID assetID, out byte[]? data)
         {
             data = null;
 
@@ -286,7 +316,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Async variant of TryGetCachedAssetBytes. Returns (false, null) on failure.
         /// </summary>
-        public async Task<(bool Success, byte[] Data)> TryGetCachedAssetBytesAsync(UUID assetID, CancellationToken cancellationToken = default)
+        public async Task<(bool Success, byte[]? Data)> TryGetCachedAssetBytesAsync(UUID assetID, CancellationToken cancellationToken = default)
         {
             if (!Operational())
             {
@@ -351,7 +381,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="imageID">UUID of the image we want to get</param>
         /// <returns>ImageDownload object containing the image, or null on failure</returns>
-        public ImageDownload GetCachedImage(UUID imageID)
+        public ImageDownload? GetCachedImage(UUID imageID)
         {
             if (!Operational()) { return null; }
 
@@ -364,7 +394,7 @@ namespace OpenMetaverse
             {
                 AssetType = AssetType.Texture,
                 ID = imageID,
-                Simulator = Client.Network.CurrentSim,
+                Simulator = Client.Network.CurrentSim!,
                 Size = imageData.Length,
                 Success = true,
                 Transferred = imageData.Length,
@@ -382,9 +412,9 @@ namespace OpenMetaverse
         {
             if (ComputeAssetCacheFilename != null)
             {
-                return ComputeAssetCacheFilename(Client.Settings.ASSET_CACHE_DIR, assetID);
+                return ComputeAssetCacheFilename(Client.Settings.AssetCache.Dir, assetID);
             }
-            return Client.Settings.ASSET_CACHE_DIR + Path.DirectorySeparatorChar + assetID;
+            return Client.Settings.AssetCache.Dir + Path.DirectorySeparatorChar + assetID;
         }
 
         /// <summary>
@@ -394,7 +424,7 @@ namespace OpenMetaverse
         /// <returns>String with the file name of the static cached asset</returns>
         private string StaticFileName(UUID assetID)
         {
-            return Path.Combine(Settings.RESOURCE_DIR, "static_assets", assetID.ToString());
+            return Path.Combine(Settings.ResourceDir, "static_assets", assetID.ToString());
         }
 
         /// <summary>
@@ -405,8 +435,38 @@ namespace OpenMetaverse
         /// <returns>Whether the operation was successful</returns>
         public bool SaveAssetToCache(UUID assetID, byte[] assetData)
         {
-            // Keep synchronous wrapper for compatibility
-            return SaveAssetToCacheAsync(assetID, assetData, CancellationToken.None).GetAwaiter().GetResult();
+            if (!Operational()) return false;
+            try
+            {
+                var path = FileName(assetID);
+                Logger.Trace($"Saving {path} to asset cache.");
+                if (File.Exists(path)) return true; // already cached by a concurrent writer
+                if (!Directory.Exists(Client.Settings.AssetCache.Dir))
+                    Directory.CreateDirectory(Client.Settings.AssetCache.Dir);
+                // Temp name must be unique PER WRITER: the same asset is often saved by
+                // concurrent downloaders, and a shared "<id>.tmp" makes the writers collide
+                // ("file in use by another process"), so the asset never lands in the cache
+                // and is re-downloaded forever. Both writers carry identical bytes, so the
+                // overwriting move is race-tolerant — last-in wins harmlessly.
+                var tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.WriteAllBytes(tempPath, assetData);
+#if NET5_0_OR_GREATER
+                    File.Move(tempPath, path, overwrite: true);
+#else
+                    if (File.Exists(path)) File.Delete(path);
+                    File.Move(tempPath, path);
+#endif
+                }
+                catch
+                {
+                    try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
+                    throw;
+                }
+                return true;
+            }
+            catch (Exception ex) { Logger.Warn("Failed saving asset to cache (" + ex.Message + ")", Client); return false; }
         }
 
         /// <summary>
@@ -424,14 +484,33 @@ namespace OpenMetaverse
                 var path = FileName(assetID);
                 Logger.Trace($"Saving {path} to asset cache.");
 
-                if (!Directory.Exists(Client.Settings.ASSET_CACHE_DIR))
+                if (File.Exists(path)) return true; // already cached by a concurrent writer
+
+                if (!Directory.Exists(Client.Settings.AssetCache.Dir))
                 {
-                    Directory.CreateDirectory(Client.Settings.ASSET_CACHE_DIR);
+                    Directory.CreateDirectory(Client.Settings.AssetCache.Dir);
                 }
 
-                using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
+                // Unique temp per writer — see SaveAssetToCache for why a shared "<id>.tmp"
+                // breaks concurrent saves of the same asset.
+                var tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
                 {
-                    await fs.WriteAsync(assetData, 0, assetData.Length, cancellationToken).ConfigureAwait(false);
+                    using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 4096, true))
+                    {
+                        await fs.WriteAsync(assetData, 0, assetData.Length, cancellationToken).ConfigureAwait(false);
+                    }
+#if NET5_0_OR_GREATER
+                    File.Move(tempPath, path, overwrite: true);
+#else
+                    if (File.Exists(path)) File.Delete(path);
+                    File.Move(tempPath, path);
+#endif
+                }
+                catch
+                {
+                    try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { /* best effort */ }
+                    throw;
                 }
             }
             catch (OperationCanceledException)
@@ -449,7 +528,7 @@ namespace OpenMetaverse
 
         private void DebugLog(string message)
         {
-            if (Client.Settings.LOG_DISKCACHE) Logger.DebugLog(message, Client);
+            if (Client.Settings.Logging.LogDiskCache) Logger.DebugLog(message, Client);
         }
 
         /// <summary>
@@ -457,7 +536,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="assetID">UUID of the asset</param>
         /// <returns>Null if we don't have that UUID cached on disk, file name if found in the cache folder</returns>
-        public string AssetFileName(UUID assetID)
+        public string? AssetFileName(UUID assetID)
         {
             if (!Operational())
             {
@@ -486,7 +565,7 @@ namespace OpenMetaverse
         /// </summary>
         public void Clear()
         {
-            string cacheDir = Client.Settings.ASSET_CACHE_DIR;
+            string cacheDir = Client.Settings.AssetCache.Dir;
             if (!Directory.Exists(cacheDir)) { return; }
 
             const string pattern = "????????-????-????-????-????????????";
@@ -513,7 +592,7 @@ namespace OpenMetaverse
         /// </summary>
         public async Task PruneAsync(CancellationToken cancellationToken = default)
         {
-            string cacheDir = Client.Settings.ASSET_CACHE_DIR;
+            string cacheDir = Client.Settings.AssetCache.Dir;
             if (!Directory.Exists(cacheDir))
             {
                 cleanerEvent.Reset();
@@ -545,7 +624,7 @@ namespace OpenMetaverse
                         }
                     }
 
-                    if (size > Client.Settings.ASSET_CACHE_MAX_SIZE)
+                    if (size > Client.Settings.AssetCache.MaxSize)
                     {
                         // Build a lightweight list of file metadata for sorting by LastAccessTime
                         var entries = new List<(string Path, long Length, DateTime LastAccess)>();
@@ -566,7 +645,7 @@ namespace OpenMetaverse
                         // Sort by LastAccessTime ascending (oldest first)
                         entries.Sort((a, b) => a.LastAccess.CompareTo(b.LastAccess));
 
-                        long targetSize = (long)(Client.Settings.ASSET_CACHE_MAX_SIZE * 0.9);
+                        long targetSize = (long)(Client.Settings.AssetCache.MaxSize * 0.9);
                         int num = 0;
                         foreach (var entry in entries)
                         {
@@ -601,14 +680,6 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Synchronous wrapper for PruneAsync for compatibility
-        /// </summary>
-        public void Prune()
-        {
-            PruneAsync(CancellationToken.None).GetAwaiter().GetResult();
-        }
-
-        /// <summary>
         /// Asynchronously brings cache size to the 90% of the max size
         /// </summary>
         public void BeginPrune()
@@ -617,7 +688,7 @@ namespace OpenMetaverse
             if (!cleanerEvent.IsSet)
             {
                 cleanerEvent.Set();
-                _ = Task.Run(() => PruneAsync());
+                _ = PruneAsync();
             }
         }
 
@@ -634,15 +705,7 @@ namespace OpenMetaverse
         /// </summary>
         private bool Operational()
         {
-            return Client.Settings.USE_ASSET_CACHE;
-        }
-
-        /// <summary>
-        /// Periodically prune the cache
-        /// </summary>
-        private void cleanerTimer_Elapsed(object sender, System.Timers.ElapsedEventArgs e)
-        {
-            BeginPrune();
+            return Client.Settings.AssetCache.Enabled;
         }
 
         /// <summary>
@@ -670,7 +733,7 @@ namespace OpenMetaverse
         /// </summary>
         private class SortFilesByAccessTimeHelper : IComparer<FileInfo>
         {
-            int IComparer<FileInfo>.Compare(FileInfo f1, FileInfo f2)
+            int IComparer<FileInfo>.Compare(FileInfo? f1, FileInfo? f2)
             {
                 if (f2 != null && f1 != null && f1.LastAccessTime > f2.LastAccessTime)
                     return 1;

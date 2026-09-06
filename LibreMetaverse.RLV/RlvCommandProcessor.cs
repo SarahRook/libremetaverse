@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -156,14 +156,14 @@ namespace LibreMetaverse.RLV
                 return false;
             }
 
-            if (enforceNostrip && item.Name.ToLowerInvariant().Contains("nostrip"))
+            if (enforceNostrip && item.Name.Contains("nostrip", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
 
             // Special exception: If a folder with (nostrip) contains inventory links to other items, those linked items can still
             //   be removed. Only the objects actual parent folder or the actual item itself counts.
-            if (enforceNostrip && !item.IsLink && item.Folder != null && item.Folder.Name.ToLowerInvariant().Contains("nostrip"))
+            if (enforceNostrip && !item.IsLink && item.Folder != null && item.Folder.Name.Contains("nostrip", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
             }
@@ -635,7 +635,9 @@ namespace LibreMetaverse.RLV
         //  * If any links to the targeted item exists in a locked folder (restricted detach), then
         //    the item will be ignored and not removed.
         //
-        // TODO: Add support for Attachment groups (RLVa)
+        // NOTE: Attachment groups (head/torso/arms/legs/hud) are an RLVa concept that only applies to
+        // @detach/@remattach; the reference RLVa implementation's @remoutfit only accepts a wearable
+        // type (or, per this implementation, a folder path) as its option.
         private async Task<bool> HandleRemOutfit(RlvMessage command, CancellationToken cancellationToken)
         {
             var (hasInventoryMap, inventoryMap) = await _queryCallbacks.TryGetInventoryMapAsync(cancellationToken).ConfigureAwait(false);

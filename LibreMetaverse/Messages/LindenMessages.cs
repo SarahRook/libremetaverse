@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2006-2016, openmetaverse.co
- * Copyright (c) 2021-2022, Sjofn LLC
+ * Copyright (c) 2021-2026, Sjofn LLC
  * All rights reserved.
  *
  * - Redistribution and use in source and binary forms, with or without 
@@ -26,12 +26,15 @@
  */
 
 using System;
+#nullable enable
 using System.Collections.Generic;
 using System.Net;
-using OpenMetaverse.StructuredData;
-using OpenMetaverse.Interfaces;
+using LibreMetaverse.StructuredData;
+using LibreMetaverse.Interfaces;
 
-namespace OpenMetaverse.Messages.Linden
+#pragma warning disable CS8618 // Non-nullable field is uninitialized. Generated message classes initialize during deserialization.
+
+namespace LibreMetaverse.Messages.Linden
 {
     #region Teleport/Region/Movement Messages
 
@@ -47,13 +50,13 @@ namespace OpenMetaverse.Messages.Linden
         /// <summary>The simulators handle the agent teleported to</summary>
         public ulong RegionHandle;
         /// <summary>A Uri which contains a list of Capabilities the simulator supports</summary>
-        public Uri SeedCapability;
+        public Uri SeedCapability = new Uri("about:blank");
         /// <summary>Indicates the level of access required
         /// to access the simulator, or the content rating, or the simulators 
         /// map status</summary>
         public SimAccess SimAccess;
         /// <summary>The IP Address of the simulator</summary>
-        public IPAddress IP;
+        public IPAddress IP = IPAddress.None;
         /// <summary>The UDP Port the simulator will listen for UDP traffic on</summary>
         public int Port;
         /// <summary>Status flags indicating the state of the Agent upon arrival, Flying, etc.</summary>
@@ -107,13 +110,48 @@ namespace OpenMetaverse.Messages.Linden
             AgentID = blockMap["AgentID"].AsUUID();
             LocationID = blockMap["LocationID"].AsInteger();
             RegionHandle = blockMap["RegionHandle"].AsULong();
-            SeedCapability = blockMap["SeedCapability"].AsUri();
+            SeedCapability = blockMap["SeedCapability"].AsUri() ?? new Uri("about:blank");
             SimAccess = (SimAccess)blockMap["SimAccess"].AsInteger();
-            IP = MessageUtils.ToIP(blockMap["SimIP"]);
+            IP = MessageUtils.ToIP(blockMap["SimIP"]) ?? IPAddress.None;
             Port = blockMap["SimPort"].AsInteger();
             Flags = (TeleportFlags)blockMap["TeleportFlags"].AsUInteger();
             RegionSizeX = blockMap.ContainsKey("RegionSizeX") ? blockMap["RegionSizeX"].AsUInteger() : Simulator.DefaultRegionSizeX;
             RegionSizeY = blockMap.ContainsKey("RegionSizeY") ? blockMap["RegionSizeY"].AsUInteger() : Simulator.DefaultRegionSizeY;
+        }
+    }
+
+    /// <summary>
+    /// Sent from the simulator to the viewer when the region's navmesh status changes.
+    /// Delivered via the NavMeshStatusUpdate event queue event.
+    /// Fields: region_id, status ("pending"|"building"|"complete"|"repending"), version.
+    /// </summary>
+    public class NavMeshStatusUpdateMessage : IMessage
+    {
+        /// <summary>Raw OSD data from the server (for forward-compatibility)</summary>
+        public OSDMap RawData;
+        /// <summary>UUID of the region whose navmesh status changed</summary>
+        public UUID RegionID;
+        /// <summary>Navmesh build status string: "pending", "building", "complete", or "repending"</summary>
+        public string Status;
+        /// <summary>Navmesh version number</summary>
+        public uint Version;
+
+        public void Deserialize(OSDMap map)
+        {
+            RawData = map;
+            RegionID = map["region_id"].AsUUID();
+            Status = map["status"].AsString();
+            Version = map["version"].AsUInteger();
+        }
+
+        public OSDMap Serialize()
+        {
+            return new OSDMap(3)
+            {
+                ["region_id"] = OSD.FromUUID(RegionID),
+                ["status"] = OSD.FromString(Status),
+                ["version"] = OSD.FromUInteger(Version)
+            };
         }
     }
 
@@ -123,9 +161,9 @@ namespace OpenMetaverse.Messages.Linden
     public class EstablishAgentCommunicationMessage : IMessage
     {
         public UUID AgentID;
-        public IPAddress Address;
+        public IPAddress Address = IPAddress.None;
         public int Port;
-        public Uri SeedCapability;
+        public Uri SeedCapability = new Uri("about:blank");
 
         /// <summary>
         /// Serialize the object
@@ -154,7 +192,7 @@ namespace OpenMetaverse.Messages.Linden
             AgentID = map["agent-id"].AsUUID();
             Address = IPAddress.Parse(ipAndPort.Substring(0, i));
             Port = int.Parse(ipAndPort.Substring(i + 1));
-            SeedCapability = map["seed-capability"].AsUri();
+            SeedCapability = map["seed-capability"].AsUri() ?? new Uri("about:blank");
         }
     }
 
@@ -229,8 +267,8 @@ namespace OpenMetaverse.Messages.Linden
 
             OSDMap regionDataMap = (OSDMap)((OSDArray)map["RegionData"])[0];
             RegionHandle = regionDataMap["RegionHandle"].AsULong();
-            SeedCapability = regionDataMap["SeedCapability"].AsUri();
-            IP = MessageUtils.ToIP(regionDataMap["SimIP"]);
+            SeedCapability = regionDataMap["SeedCapability"].AsUri() ?? new Uri("about:blank");
+            IP = MessageUtils.ToIP(regionDataMap["SimIP"]) ?? IPAddress.None;
             Port = regionDataMap["SimPort"].AsInteger();
             RegionSizeX = regionDataMap.ContainsKey("RegionSizeX") ? regionDataMap["RegionSizeX"].AsUInteger() : Simulator.DefaultRegionSizeX;
             RegionSizeY = regionDataMap.ContainsKey("RegionSizeY") ? regionDataMap["RegionSizeY"].AsUInteger() : Simulator.DefaultRegionSizeY;
@@ -627,7 +665,7 @@ namespace OpenMetaverse.Messages.Linden
         /// <summary>Appears to always be zero</summary>
         public int ClaimPrice;
         /// <summary>Parcel Description</summary>
-        public string Desc;
+        public string Desc = string.Empty;
         /// <summary></summary>
         public ParcelFlags ParcelFlags;
         /// <summary></summary>
@@ -645,13 +683,13 @@ namespace OpenMetaverse.Messages.Linden
         /// primitive will display the media</summary>
         public UUID MediaID;
         /// <summary>A URL which points to any Quicktime supported media type</summary>
-        public string MediaURL;
+        public string MediaURL = string.Empty;
         /// <summary>A byte, if 0x1 viewer should auto scale media to fit object</summary>
         public bool MediaAutoScale;
         /// <summary>URL For Music Stream</summary>
-        public string MusicURL;
+        public string MusicURL = string.Empty;
         /// <summary>Parcel Name</summary>
-        public string Name;
+        public string Name = string.Empty;
         /// <summary>Autoreturn value in minutes for others' objects</summary>
         public int OtherCleanTime;
         /// <summary></summary>
@@ -722,7 +760,7 @@ namespace OpenMetaverse.Messages.Linden
         /// <summary></summary>
         public Vector3 UserLookAt;
         /// <summary>A description of the media</summary>
-        public string MediaDesc;
+        public string MediaDesc = string.Empty;
         /// <summary>An Integer which represents the height of the media</summary>
         public int MediaHeight;
         /// <summary>An integer which represents the width of the media</summary>
@@ -730,7 +768,7 @@ namespace OpenMetaverse.Messages.Linden
         /// <summary>A boolean, if true the viewer should loop the media</summary>
         public bool MediaLoop;
         /// <summary>A string which contains the mime type of the media</summary>
-        public string MediaType;
+        public string MediaType = string.Empty;
         /// <summary>true to obscure (hide) media url</summary>
         public bool ObscureMedia;
         /// <summary>true to obscure (hide) music url</summary>
@@ -1251,7 +1289,7 @@ namespace OpenMetaverse.Messages.Linden
     public class NewFileAgentInventoryReplyMessage : IMessage
     {
         public string State;
-        public Uri Uploader;
+        public Uri Uploader = new Uri("about:blank");
 
         public NewFileAgentInventoryReplyMessage()
         {
@@ -1272,7 +1310,7 @@ namespace OpenMetaverse.Messages.Linden
         public void Deserialize(OSDMap map)
         {
             State = map["state"].AsString();
-            Uploader = map["uploader"].AsUri();
+            Uploader = map["uploader"].AsUri() ?? new Uri("about:blank");
         }
     }
 
@@ -1331,7 +1369,7 @@ namespace OpenMetaverse.Messages.Linden
         public int ResourceCost;
         public string State;
         public int UploadPrice;
-        public Uri Rsvp;
+        public Uri Rsvp = new Uri("about:blank");
 
         public NewFileAgentInventoryVariablePriceReplyMessage()
         {
@@ -1356,7 +1394,7 @@ namespace OpenMetaverse.Messages.Linden
             ResourceCost = map["resource_cost"].AsInteger();
             State = map["state"].AsString();
             UploadPrice = map["upload_price"].AsInteger();
-            Rsvp = map["rsvp"].AsUri();
+            Rsvp = map["rsvp"].AsUri() ?? new Uri("about:blank");
         }
     }
 
@@ -1491,7 +1529,67 @@ namespace OpenMetaverse.Messages.Linden
 
         public OSDMap Serialize()
         {
-            throw new NotImplementedException();
+            var agentData = new OSDArray(1);
+            agentData.Add(new OSDMap(2)
+            {
+                ["AgentID"] = OSD.FromUUID(AgentID),
+                ["TransactionID"] = OSD.FromUUID(TransactionID)
+            });
+
+            var folderData = new OSDArray(FolderData?.Length ?? 0);
+            if (FolderData != null)
+            {
+                foreach (var folder in FolderData)
+                {
+                    folderData.Add(new OSDMap(4)
+                    {
+                        ["FolderID"] = OSD.FromUUID(folder.FolderID),
+                        ["ParentID"] = OSD.FromUUID(folder.ParentID),
+                        ["Name"] = OSD.FromString(folder.Name),
+                        ["Type"] = OSD.FromInteger((int)folder.Type)
+                    });
+                }
+            }
+
+            var itemData = new OSDArray(ItemData?.Length ?? 0);
+            if (ItemData != null)
+            {
+                foreach (var item in ItemData)
+                {
+                    itemData.Add(new OSDMap(22)
+                    {
+                        ["ItemID"] = OSD.FromUUID(item.ItemID),
+                        ["CallbackID"] = OSD.FromUInteger(item.CallbackID),
+                        ["FolderID"] = OSD.FromUUID(item.FolderID),
+                        ["CreatorID"] = OSD.FromUUID(item.CreatorID),
+                        ["OwnerID"] = OSD.FromUUID(item.OwnerID),
+                        ["GroupID"] = OSD.FromUUID(item.GroupID),
+                        ["BaseMask"] = OSD.FromUInteger((uint)item.BaseMask),
+                        ["OwnerMask"] = OSD.FromUInteger((uint)item.OwnerMask),
+                        ["GroupMask"] = OSD.FromUInteger((uint)item.GroupMask),
+                        ["EveryoneMask"] = OSD.FromUInteger((uint)item.EveryoneMask),
+                        ["NextOwnerMask"] = OSD.FromUInteger((uint)item.NextOwnerMask),
+                        ["GroupOwned"] = OSD.FromBoolean(item.GroupOwned),
+                        ["AssetID"] = OSD.FromUUID(item.AssetID),
+                        ["Type"] = OSD.FromInteger((int)item.Type),
+                        ["InvType"] = OSD.FromInteger((int)item.InvType),
+                        ["Flags"] = OSD.FromUInteger(item.Flags),
+                        ["SaleType"] = OSD.FromInteger((int)item.SaleType),
+                        ["SalePrice"] = OSD.FromInteger(item.SalePrice),
+                        ["Name"] = OSD.FromString(item.Name),
+                        ["Description"] = OSD.FromString(item.Description),
+                        ["CreationDate"] = OSD.FromUInteger(Utils.DateTimeToUnixTime(item.CreationDate)),
+                        ["CRC"] = OSD.FromUInteger(item.CRC)
+                    });
+                }
+            }
+
+            return new OSDMap(3)
+            {
+                ["AgentData"] = agentData,
+                ["FolderData"] = folderData,
+                ["ItemData"] = itemData
+            };
         }
 
         public void Deserialize(OSDMap map)
@@ -1904,7 +2002,7 @@ namespace OpenMetaverse.Messages.Linden
     public class UploaderRequestUpload : AssetUploaderBlock
     {
         /// <summary>The Capability URL sent by the simulator to upload the baked texture to</summary>
-        public Uri Url;
+        public Uri Url = new Uri("about:blank");
 
         public UploaderRequestUpload()
         {
@@ -1924,7 +2022,7 @@ namespace OpenMetaverse.Messages.Linden
 
         public override void Deserialize(OSDMap map)
         {
-            Url = map["uploader"].AsUri();
+            Url = map["uploader"].AsUri() ?? new Uri("about:blank");
             State = map["state"].AsString();
         }
     }
@@ -2082,7 +2180,7 @@ namespace OpenMetaverse.Messages.Linden
             RegionName = map["region_name"].AsString();
 
             OSDMap vcMap = (OSDMap)map["voice_credentials"];
-            SipChannelUri = vcMap["channel_uri"].AsUri();
+            SipChannelUri = vcMap["channel_uri"].AsUri() ?? new Uri("about:blank");
         }
     }
 
@@ -2639,9 +2737,13 @@ namespace OpenMetaverse.Messages.Linden
     }
 
 
+    /// <summary>
+    /// Metadata POSTed to the SendPostcard capability. This is the first step of a two-phase
+    /// upload: the response contains an "uploader" URL that the postcard's JPEG image bytes
+    /// must be POSTed to in order to complete the send.
+    /// </summary>
     public class SendPostcardMessage : IMessage
     {
-        public string FromEmail;
         public string Message;
         public string FromName;
         public Vector3 GlobalPosition;
@@ -2654,9 +2756,8 @@ namespace OpenMetaverse.Messages.Linden
         /// <returns>An <see cref="OSDMap"/> containing the objects data</returns>
         public OSDMap Serialize()
         {
-            OSDMap map = new OSDMap(6)
+            OSDMap map = new OSDMap(5)
             {
-                ["from"] = OSD.FromString(FromEmail),
                 ["msg"] = OSD.FromString(Message),
                 ["name"] = OSD.FromString(FromName),
                 ["pos-global"] = OSD.FromVector3(GlobalPosition),
@@ -2672,7 +2773,6 @@ namespace OpenMetaverse.Messages.Linden
         /// <param name="map">An <see cref="OSDMap"/> containing the data</param>
         public void Deserialize(OSDMap map)
         {
-            FromEmail = map["from"].AsString();
             Message = map["msg"].AsString();
             FromName = map["name"].AsString();
             GlobalPosition = map["pos-global"].AsVector3();
@@ -2844,17 +2944,46 @@ namespace OpenMetaverse.Messages.Linden
     #region Session/Communication
 
     /// <summary>
-    /// New as of 1.23 RC1, no details yet.
+    /// Message for the ProductInfoRequest capability.
+    /// HTTP GET returns a bare LLSD array translating region-type SKUs to human-readable
+    /// descriptions (e.g. "Homestead", "Full Region"). Verified against the reference viewer's
+    /// LLProductInfoRequestManager::getLandDescriptionsCoro/getDescriptionForSku
+    /// (llproductinforequest.cpp), which reads exactly three fields per entry: sku, name,
+    /// description -- there is no separate sale/renewal description.
     /// </summary>
     public class ProductInfoRequestMessage : IMessage
     {
+        /// <summary>Represents a single region-type SKU-to-description entry</summary>
+        public class ProductInfo
+        {
+            /// <summary>The internal SKU identifier for this region type</summary>
+            public string Sku;
+            /// <summary>Human-readable region type name</summary>
+            public string Name;
+            /// <summary>Human-readable description of the region type</summary>
+            public string Description;
+        }
+
+        /// <summary>The list of SKU-to-description entries returned by the capability</summary>
+        public List<ProductInfo> Products = new List<ProductInfo>();
+
         /// <summary>
         /// Serialize the object
         /// </summary>
         /// <returns>An <see cref="OSDMap"/> containing the objects data</returns>
         public OSDMap Serialize()
         {
-            throw new NotImplementedException();
+            OSDArray arr = new OSDArray(Products.Count);
+            foreach (ProductInfo p in Products)
+            {
+                arr.Add(new OSDMap(3)
+                {
+                    ["sku"] = OSD.FromString(p.Sku),
+                    ["name"] = OSD.FromString(p.Name),
+                    ["description"] = OSD.FromString(p.Description)
+                });
+            }
+            return new OSDMap(1) { ["products"] = arr };
         }
 
         /// <summary>
@@ -2863,7 +2992,19 @@ namespace OpenMetaverse.Messages.Linden
         /// <param name="map">An <see cref="OSDMap"/> containing the data</param>
         public void Deserialize(OSDMap map)
         {
-            throw new NotImplementedException();
+            Products = new List<ProductInfo>();
+            OSD raw = map.ContainsKey("products") ? map["products"] : (OSD)map;
+            if (!(raw is OSDArray arr)) return;
+            foreach (OSD item in arr)
+            {
+                if (!(item is OSDMap entry)) continue;
+                Products.Add(new ProductInfo
+                {
+                    Sku = entry["sku"].AsString(),
+                    Name = entry["name"].AsString(),
+                    Description = entry["description"].AsString()
+                });
+            }
         }
     }
 
@@ -3286,6 +3427,10 @@ namespace OpenMetaverse.Messages.Linden
         public byte[] BinaryBucket;
         /// <summary>Is this invitation for voice group/conference chat</summary>
         public bool Voice;
+        /// <summary>Voice channel URI (only set when <see cref="Voice"/> is true)</summary>
+        public string VoiceChannelUri = string.Empty;
+        /// <summary>Voice channel credentials (only set when <see cref="Voice"/> is true)</summary>
+        public string VoiceChannelCredentials = string.Empty;
 
         /// <summary>
         /// Serialize the object
@@ -3332,6 +3477,13 @@ namespace OpenMetaverse.Messages.Linden
                 IMSessionID = map["session_id"].AsUUID();
                 BinaryBucket = Utils.StringToBytes(map["session_name"].AsString());
                 Voice = true;
+
+                // Extract voice channel URI and credentials from the voice submap
+                if (map["voice"] is OSDMap voiceMap)
+                {
+                    VoiceChannelUri = voiceMap.ContainsKey("channel_uri") ? voiceMap["channel_uri"].AsString() : string.Empty;
+                    VoiceChannelCredentials = voiceMap.ContainsKey("channel_credentials") ? voiceMap["channel_credentials"].AsString() : string.Empty;
+                }
             }
             else
             {
@@ -3632,7 +3784,7 @@ namespace OpenMetaverse.Messages.Linden
     {
         public class QueueEvent
         {
-            public IMessage EventMessage;
+            public IMessage? EventMessage;
             public string MessageKey;
         }
 
@@ -3653,7 +3805,7 @@ namespace OpenMetaverse.Messages.Linden
             {
                 OSDMap eventMap = new OSDMap(2)
                 {
-                    ["body"] = t.EventMessage.Serialize(),
+                    ["body"] = t.EventMessage != null ? t.EventMessage.Serialize() : new OSDMap(),
                     ["message"] = OSD.FromString(t.MessageKey)
                 };
                 eventsArray.Add(eventMap);
@@ -4379,7 +4531,10 @@ namespace OpenMetaverse.Messages.Linden
                     for (int i = 0; i < extraParams.Count; i++)
                     {
                         ExtraParam extraParam = new ExtraParam();
-                        extraParam.Deserialize(extraParams[i] as OSDMap);
+                        if (extraParams[i] is OSDMap extraMap)
+                        {
+                            extraParam.Deserialize(extraMap);
+                        }
                         ExtraParams[i] = extraParam;
                     }
                 }
@@ -4395,7 +4550,10 @@ namespace OpenMetaverse.Messages.Linden
                     for (int i = 0; i < faces.Count; i++)
                     {
                         Face face = new Face();
-                        face.Deserialize(faces[i] as OSDMap);
+                        if (faces[i] is OSDMap faceMap)
+                        {
+                            face.Deserialize(faceMap);
+                        }
                         Faces[i] = face;
                     }
                 }
@@ -4405,39 +4563,46 @@ namespace OpenMetaverse.Messages.Linden
                 }
 
                 // Shape
-                OSDMap shape = map["shape"] as OSDMap;
-                OSDMap path = shape["path"] as OSDMap;
-                PathBegin = (float)path["begin"].AsReal();
-                PathCurve = path["curve"].AsInteger();
-                PathEnd = (float)path["end"].AsReal();
-                RadiusOffset = (float)path["radius_offset"].AsReal();
-                Revolutions = (float)path["revolutions"].AsReal();
-                ScaleX = (float)path["scale_x"].AsReal();
-                ScaleY = (float)path["scale_y"].AsReal();
-                ShearX = (float)path["shear_x"].AsReal();
-                ShearY = (float)path["shear_y"].AsReal();
-                Skew = (float)path["skew"].AsReal();
-                TaperX = (float)path["taper_x"].AsReal();
-                TaperY = (float)path["taper_y"].AsReal();
-                Twist = (float)path["twist"].AsReal();
-                TwistBegin = (float)path["twist_begin"].AsReal();
-
-                OSDMap profile = shape["profile"] as OSDMap;
-                ProfileBegin = (float)profile["begin"].AsReal();
-                ProfileCurve = profile["curve"].AsInteger();
-                ProfileEnd = (float)profile["end"].AsReal();
-                ProfileHollow = (float)profile["hollow"].AsReal();
-
-                if (shape["sculpt"] is OSDMap sculpt)
+                if (map["shape"] is OSDMap shape)
                 {
-                    SculptID = sculpt["id"].AsUUID();
-                    SculptType = (SculptType)sculpt["type"].AsInteger();
+                    if (shape["path"] is OSDMap path)
+                    {
+                        PathBegin = (float)path["begin"].AsReal();
+                        PathCurve = path["curve"].AsInteger();
+                        PathEnd = (float)path["end"].AsReal();
+                        RadiusOffset = (float)path["radius_offset"].AsReal();
+                        Revolutions = (float)path["revolutions"].AsReal();
+                        ScaleX = (float)path["scale_x"].AsReal();
+                        ScaleY = (float)path["scale_y"].AsReal();
+                        ShearX = (float)path["shear_x"].AsReal();
+                        ShearY = (float)path["shear_y"].AsReal();
+                        Skew = (float)path["skew"].AsReal();
+                        TaperX = (float)path["taper_x"].AsReal();
+                        TaperY = (float)path["taper_y"].AsReal();
+                        Twist = (float)path["twist"].AsReal();
+                        TwistBegin = (float)path["twist_begin"].AsReal();
+                    }
+
+                    if (shape["profile"] is OSDMap profile)
+                    {
+                        ProfileBegin = (float)profile["begin"].AsReal();
+                        ProfileCurve = profile["curve"].AsInteger();
+                        ProfileEnd = (float)profile["end"].AsReal();
+                        ProfileHollow = (float)profile["hollow"].AsReal();
+                    }
+
+                    if (shape["sculpt"] is OSDMap sculpt)
+                    {
+                        SculptID = sculpt["id"].AsUUID();
+                        SculptType = (SculptType)sculpt["type"].AsInteger();
+                    }
+                    else
+                    {
+                        SculptID = UUID.Zero;
+                        SculptType = 0;
+                    }
                 }
-                else
-                {
-                    SculptID = UUID.Zero;
-                    SculptType = 0;
-                }
+                
             }
         }
 
@@ -4661,7 +4826,7 @@ namespace OpenMetaverse.Messages.Linden
         /// </summary>
         /// <param name="map">An <see cref="OSDMap"/> containing the data</param>
         /// <returns>Object capable of decoding this message</returns>
-        public static IMessage GetMessageHandler(OSDMap map)
+        public static IMessage? GetMessageHandler(OSDMap map)
         {
             if (map == null)
             {
@@ -5090,7 +5255,40 @@ namespace OpenMetaverse.Messages.Linden
         /// <returns><see cref="OSDMap"/> serialized data</returns>
         public virtual OSDMap Serialize()
         {
-            throw new NotImplementedException();
+            var available = new OSDArray(SummaryAvailable?.Count ?? 0);
+            if (SummaryAvailable != null)
+            {
+                foreach (var kvp in SummaryAvailable)
+                {
+                    available.Add(new OSDMap(2)
+                    {
+                        ["type"] = OSD.FromString(kvp.Key),
+                        ["amount"] = OSD.FromInteger(kvp.Value)
+                    });
+                }
+            }
+
+            var used = new OSDArray(SummaryUsed?.Count ?? 0);
+            if (SummaryUsed != null)
+            {
+                foreach (var kvp in SummaryUsed)
+                {
+                    used.Add(new OSDMap(2)
+                    {
+                        ["type"] = OSD.FromString(kvp.Key),
+                        ["amount"] = OSD.FromInteger(kvp.Value)
+                    });
+                }
+            }
+
+            return new OSDMap(1)
+            {
+                ["summary"] = new OSDMap(2)
+                {
+                    ["available"] = available,
+                    ["used"] = used
+                }
+            };
         }
 
         /// <summary>
@@ -5170,7 +5368,7 @@ namespace OpenMetaverse.Messages.Linden
         /// </summary>
         /// <param name="map">An <see cref="OSDMap"/> containing the data</param>
         /// <returns>Object capable of decoding this message</returns>
-        public static IMessage GetMessageHandler(OSDMap map)
+        public static IMessage? GetMessageHandler(OSDMap map)
         {
             return map == null ? null : new AttachmentResourcesMessage();
         }
@@ -5250,7 +5448,7 @@ namespace OpenMetaverse.Messages.Linden
         /// </summary>
         /// <param name="map">An <see cref="OSDMap"/> containing the data</param>
         /// <returns>Object capable of decoding this message</returns>
-        public static IMessage GetMessageHandler(OSDMap map)
+        public static IMessage? GetMessageHandler(OSDMap map)
         {
             if (map.ContainsKey("parcel_id"))
             {
@@ -5535,7 +5733,7 @@ namespace OpenMetaverse.Messages.Linden
         public string HomePage;
         public int? CaptionIndex;
         /// <summary>May be null</summary>
-        public string CaptionText;
+        public string? CaptionText;
         public List<GroupData> Groups;
         public List<PickData> Picks;
         public ProfileFlags Flags;
@@ -5711,76 +5909,812 @@ namespace OpenMetaverse.Messages.Linden
             }
 
             Groups = new List<GroupData>();
-            var groupsMap = map["groups"] as OSDArray;
-            foreach (var group in groupsMap)
+            if (map["groups"] is OSDArray groupsMap)
             {
-                var groupData = group as OSDMap;
-
-                var groupDescription = groupData["description"].AsString();
-                var groupEnabled = groupData["enabled"].AsBoolean();
-                var groupFounderId = groupData["founder_id"].AsUUID();
-                var groupId = groupData["id"].AsUUID();
-                var groupImageId = groupData["image_id"].AsUUID();
-                var groupIsMaturePublish = groupData["mature_publish"].AsBoolean();
-                var groupName = groupData["name"].AsString();
-                var groupIsOpenEnrollment = groupData["open_enrollment"].AsBoolean();
-                var groupIsShownInSearch = groupData["show_in_search"].AsBoolean();
-
-                Groups.Add(new GroupData()
+                foreach (var group in groupsMap)
                 {
-                    Description = groupDescription,
-                    Enabled = groupEnabled,
-                    FounderID = groupFounderId,
-                    ID = groupId,
-                    ImageID = groupImageId,
-                    IsMaturePublish = groupIsMaturePublish,
-                    Name = groupName,
-                    IsOpenEnrollment = groupIsOpenEnrollment,
-                    IsShownInSearch = groupIsShownInSearch,
-                });
+                    if (group is OSDMap groupData)
+                    {
+                        var groupDescription = groupData["description"].AsString();
+                        var groupEnabled = groupData["enabled"].AsBoolean();
+                        var groupFounderId = groupData["founder_id"].AsUUID();
+                        var groupId = groupData["id"].AsUUID();
+                        var groupImageId = groupData["image_id"].AsUUID();
+                        var groupIsMaturePublish = groupData["mature_publish"].AsBoolean();
+                        var groupName = groupData["name"].AsString();
+                        var groupIsOpenEnrollment = groupData["open_enrollment"].AsBoolean();
+                        var groupIsShownInSearch = groupData["show_in_search"].AsBoolean();
+
+                        Groups.Add(new GroupData()
+                        {
+                            Description = groupDescription,
+                            Enabled = groupEnabled,
+                            FounderID = groupFounderId,
+                            ID = groupId,
+                            ImageID = groupImageId,
+                            IsMaturePublish = groupIsMaturePublish,
+                            Name = groupName,
+                            IsOpenEnrollment = groupIsOpenEnrollment,
+                            IsShownInSearch = groupIsShownInSearch,
+                        });
+                    }
+                }
             }
 
             Picks = new List<PickData>();
-            var picksMap = map["picks"] as OSDArray;
-            foreach (var pick in picksMap)
+            if (map["picks"] is OSDArray picksMap)
             {
-                var pickData = pick as OSDMap;
-
-                var pickDescription = pickData["description"].AsString();
-                var pickEnabled = pickData["enabled"].AsBoolean();
-                var pickGridX = pickData["grid_x"].AsReal();
-                var pickGridY = pickData["grid_y"].AsReal();
-                var pickId = pickData["id"].AsUUID();
-                var pickName = pickData["name"].AsString();
-                var pickParcelId = pickData["parcel_id"].AsUUID();
-                var pickParcelName = pickData["parcel_name"].AsString();
-                var pickRegionName = pickData["region_name"].AsString();
-                var pickRegionX = pickData["region_x"].AsReal();
-                var pickRegionY = pickData["region_y"].AsReal();
-                var pickRegionZ = pickData["region_z"].AsReal();
-                var pickSlurl = pickData["slurl"].AsUri();
-                var pickSnapshotId = pickData["snapshot_id"].AsUUID();
-
-                Picks.Add(new PickData()
+                foreach (var pick in picksMap)
                 {
-                    ID = pickId,
-                    Description = pickDescription,
-                    Enabled = pickEnabled,
-                    GridX = pickGridX,
-                    GridY = pickGridY,
-                    Name = pickName,
-                    ParcelID = pickParcelId,
-                    ParcelName = pickParcelName,
-                    RegionName = pickRegionName,
-                    RegionX = pickRegionX,
-                    RegionY = pickRegionY,
-                    RegionZ = pickRegionZ,
-                    Slurl = pickSlurl,
-                    SnapshotID = pickSnapshotId,
-                });
+                    if (pick is OSDMap pickData)
+                    {
+                        var pickDescription = pickData["description"].AsString();
+                        var pickEnabled = pickData["enabled"].AsBoolean();
+                        var pickGridX = pickData["grid_x"].AsReal();
+                        var pickGridY = pickData["grid_y"].AsReal();
+                        var pickId = pickData["id"].AsUUID();
+                        var pickName = pickData["name"].AsString();
+                        var pickParcelId = pickData["parcel_id"].AsUUID();
+                        var pickParcelName = pickData["parcel_name"].AsString();
+                        var pickRegionName = pickData["region_name"].AsString();
+                        var pickRegionX = pickData["region_x"].AsReal();
+                        var pickRegionY = pickData["region_y"].AsReal();
+                        var pickRegionZ = pickData["region_z"].AsReal();
+                        var pickSlurl = pickData["slurl"].AsUri() ?? new Uri("about:blank");
+                        var pickSnapshotId = pickData["snapshot_id"].AsUUID();
+
+                        Picks.Add(new PickData()
+                        {
+                            ID = pickId,
+                            Description = pickDescription,
+                            Enabled = pickEnabled,
+                            GridX = pickGridX,
+                            GridY = pickGridY,
+                            Name = pickName,
+                            ParcelID = pickParcelId,
+                            ParcelName = pickParcelName,
+                            RegionName = pickRegionName,
+                            RegionX = pickRegionX,
+                            RegionY = pickRegionY,
+                            RegionZ = pickRegionZ,
+                            Slurl = pickSlurl,
+                            SnapshotID = pickSnapshotId,
+                        });
+                    }
+                }
             }
         }
     }
+
+    /// <summary>
+    /// Message for the AvatarRenderInfo capability.
+    /// GET response contains per-avatar render weight and complexity info.
+    /// POST sends local render weight and too-complex flag to the simulator.
+    /// </summary>
+    public class AvatarRenderInfoMessage : IMessage
+    {
+        /// <summary>Per-avatar render info reported by or sent to the simulator</summary>
+        public class AvatarInfo
+        {
+            /// <summary>Render weight of the avatar</summary>
+            public int Weight;
+            /// <summary>True if the avatar is considered too complex to render</summary>
+            public bool TooComplex;
+        }
+
+        /// <summary>Map of agent UUID to render info, keyed by UUID string</summary>
+        public Dictionary<UUID, AvatarInfo> Agents = new Dictionary<UUID, AvatarInfo>();
+        /// <summary>Region-wide count of avatars currently over the complexity limit (GET response only)</summary>
+        public int OverLimit;
+        /// <summary>Complexity threshold at which the region begins reporting (GET response only)</summary>
+        public int ReportingLimit;
+
+        /// <summary>
+        /// Serialize the object (POST form: weight and tooComplex only)
+        /// </summary>
+        /// <returns>An <see cref="OSDMap"/> containing the objects data</returns>
+        public OSDMap Serialize()
+        {
+            OSDMap agentsMap = new OSDMap(Agents.Count);
+            foreach (KeyValuePair<UUID, AvatarInfo> kvp in Agents)
+            {
+                OSDMap infoMap = new OSDMap(2)
+                {
+                    ["weight"] = OSD.FromInteger(kvp.Value.Weight),
+                    ["tooComplex"] = OSD.FromBoolean(kvp.Value.TooComplex)
+                };
+                agentsMap[kvp.Key.ToString()] = infoMap;
+            }
+            return new OSDMap(1) { ["agents"] = agentsMap };
+        }
+
+        /// <summary>
+        /// Deserialize the message (GET response form)
+        /// </summary>
+        /// <param name="map">An <see cref="OSDMap"/> containing the data</param>
+        public void Deserialize(OSDMap map)
+        {
+            Agents = new Dictionary<UUID, AvatarInfo>();
+            if (map["agents"] is OSDMap agentsMap)
+            {
+                foreach (KeyValuePair<string, OSD> kvp in agentsMap)
+                {
+                    if (!UUID.TryParse(kvp.Key, out UUID agentID)) continue;
+                    if (!(kvp.Value is OSDMap infoMap)) continue;
+                    Agents[agentID] = new AvatarInfo
+                    {
+                        Weight = infoMap["weight"].AsInteger(),
+                        TooComplex = infoMap["tooComplex"].AsBoolean()
+                    };
+                }
+            }
+            OverLimit = map["overlimit"].AsInteger();
+            ReportingLimit = map["reportinglimit"].AsInteger();
+        }
+    }
+
+    /// <summary>
+    /// Message for the ViewerBenefits capability.
+    /// Contains the account type and benefit package details for the current agent.
+    /// </summary>
+    public class ViewerBenefitsMessage : IMessage
+    {
+        /// <summary>A set of benefit values associated with a membership package</summary>
+        public class BenefitPackage
+        {
+            /// <summary>Maximum number of animated objects the agent may have attached</summary>
+            public int AnimatedObjectLimit;
+            /// <summary>Cost in L$ to upload an animation</summary>
+            public int AnimationUploadCost;
+            /// <summary>Maximum number of attachments the agent may wear</summary>
+            public int AttachmentLimit;
+            /// <summary>Cost in L$ to create a group</summary>
+            public int CreateGroupCost;
+            /// <summary>Maximum number of groups the agent may join</summary>
+            public int GroupMembershipLimit;
+            /// <summary>Maximum number of picks the agent may have in their profile</summary>
+            public int PicksLimit;
+            /// <summary>Cost in L$ to upload a sound</summary>
+            public int SoundUploadCost;
+            /// <summary>Cost in L$ to upload a texture</summary>
+            public int TextureUploadCost;
+            /// <summary>Tiered upload costs for large textures, sorted ascending. May be empty.</summary>
+            public int[] LargeTextureUploadCost = Array.Empty<int>();
+        }
+
+        /// <summary>Account type string (e.g. "Base", "Premium", "PremiumPlus")</summary>
+        public string AccountType = string.Empty;
+        /// <summary>Benefits that apply to the agent's current account level</summary>
+        public BenefitPackage AccountLevelBenefits = new BenefitPackage();
+        /// <summary>All available premium packages, keyed by package name</summary>
+        public Dictionary<string, BenefitPackage> PremiumPackages = new Dictionary<string, BenefitPackage>();
+
+        private static BenefitPackage DeserializePackage(OSDMap map)
+        {
+            BenefitPackage pkg = new BenefitPackage
+            {
+                AnimatedObjectLimit = map["animated_object_limit"].AsInteger(),
+                AnimationUploadCost = map["animation_upload_cost"].AsInteger(),
+                AttachmentLimit = map["attachment_limit"].AsInteger(),
+                CreateGroupCost = map["create_group_cost"].AsInteger(),
+                GroupMembershipLimit = map["group_membership_limit"].AsInteger(),
+                PicksLimit = map["picks_limit"].AsInteger(),
+                SoundUploadCost = map["sound_upload_cost"].AsInteger(),
+                TextureUploadCost = map["texture_upload_cost"].AsInteger()
+            };
+            if (map["large_texture_upload_cost"] is OSDArray costArray)
+            {
+                pkg.LargeTextureUploadCost = new int[costArray.Count];
+                for (int i = 0; i < costArray.Count; i++)
+                    pkg.LargeTextureUploadCost[i] = costArray[i].AsInteger();
+            }
+            return pkg;
+        }
+
+        private static OSDMap SerializePackage(BenefitPackage pkg)
+        {
+            OSDMap map = new OSDMap(9)
+            {
+                ["animated_object_limit"] = OSD.FromInteger(pkg.AnimatedObjectLimit),
+                ["animation_upload_cost"] = OSD.FromInteger(pkg.AnimationUploadCost),
+                ["attachment_limit"] = OSD.FromInteger(pkg.AttachmentLimit),
+                ["create_group_cost"] = OSD.FromInteger(pkg.CreateGroupCost),
+                ["group_membership_limit"] = OSD.FromInteger(pkg.GroupMembershipLimit),
+                ["picks_limit"] = OSD.FromInteger(pkg.PicksLimit),
+                ["sound_upload_cost"] = OSD.FromInteger(pkg.SoundUploadCost),
+                ["texture_upload_cost"] = OSD.FromInteger(pkg.TextureUploadCost)
+            };
+            if (pkg.LargeTextureUploadCost.Length > 0)
+            {
+                OSDArray costArray = new OSDArray(pkg.LargeTextureUploadCost.Length);
+                foreach (int cost in pkg.LargeTextureUploadCost)
+                    costArray.Add(OSD.FromInteger(cost));
+                map["large_texture_upload_cost"] = costArray;
+            }
+            return map;
+        }
+
+        /// <summary>
+        /// Serialize the object
+        /// </summary>
+        /// <returns>An <see cref="OSDMap"/> containing the objects data</returns>
+        public OSDMap Serialize()
+        {
+            OSDMap packagesMap = new OSDMap(PremiumPackages.Count);
+            foreach (KeyValuePair<string, BenefitPackage> kvp in PremiumPackages)
+            {
+                packagesMap[kvp.Key] = new OSDMap(1) { ["benefits"] = SerializePackage(kvp.Value) };
+            }
+            return new OSDMap(3)
+            {
+                ["account_type"] = OSD.FromString(AccountType),
+                ["account_level_benefits"] = SerializePackage(AccountLevelBenefits),
+                ["premium_packages"] = packagesMap
+            };
+        }
+
+        /// <summary>
+        /// Deserialize the message
+        /// </summary>
+        /// <param name="map">An <see cref="OSDMap"/> containing the data</param>
+        public void Deserialize(OSDMap map)
+        {
+            AccountType = map["account_type"].AsString();
+            if (map["account_level_benefits"] is OSDMap levelMap)
+                AccountLevelBenefits = DeserializePackage(levelMap);
+            PremiumPackages = new Dictionary<string, BenefitPackage>();
+            if (!(map["premium_packages"] is OSDMap packagesMap)) return;
+            foreach (KeyValuePair<string, OSD> kvp in packagesMap)
+            {
+                if (!(kvp.Value is OSDMap packageEntry)) continue;
+                if (!(packageEntry["benefits"] is OSDMap benefitsMap)) continue;
+                PremiumPackages[kvp.Key] = DeserializePackage(benefitsMap);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Message for the AgentPreferences capability.
+    /// POST body sets the agent's hover height adjustment.
+    /// GET response is stored as raw OSD in addition to known fields.
+    /// </summary>
+    public class AgentPreferencesMessage : IMessage
+    {
+        /// <summary>Raw OSD data from the server response</summary>
+        public OSDMap RawData = new OSDMap();
+        /// <summary>
+        /// Vertical offset applied to the agent's avatar position, in meters.
+        /// Valid range is approximately -2.0 to +2.0.
+        /// </summary>
+        public float HoverHeight;
+
+        /// <summary>
+        /// Serialize the object (POST form)
+        /// </summary>
+        /// <returns>An <see cref="OSDMap"/> containing the objects data</returns>
+        public OSDMap Serialize()
+        {
+            return new OSDMap(1) { ["hover_height"] = OSD.FromReal(HoverHeight) };
+        }
+
+        /// <summary>
+        /// Deserialize the message
+        /// </summary>
+        /// <param name="map">An <see cref="OSDMap"/> containing the data</param>
+        public void Deserialize(OSDMap map)
+        {
+            RawData = map;
+            HoverHeight = (float)map["hover_height"].AsReal();
+        }
+    }
+
     #endregion
+
+    #region Experience Messages
+
+    /// <summary>Experience property flags (from llexperienceutils.h XP_PROPERTY_* constants)</summary>
+    [Flags]
+    public enum ExperienceFlags
+    {
+        /// <summary>No special flags</summary>
+        None = 0,
+        /// <summary>Experience is a grid-wide (Linden Lab) experience</summary>
+        Grid = 1,
+        /// <summary>Experience is private and not publicly listed</summary>
+        Private = 2,
+        /// <summary>Experience is disabled</summary>
+        Disabled = 4,
+        /// <summary>Experience has been suspended by the grid operator</summary>
+        Suspended = 8
+    }
+
+    /// <summary>Detailed information about a single Second Life Experience</summary>
+    public class ExperienceInfo
+    {
+        /// <summary>The experience's internal UUID</summary>
+        public UUID ExperienceID;
+        /// <summary>The experience's public-facing UUID</summary>
+        public UUID PublicID;
+        /// <summary>Display name of the experience</summary>
+        public string Name = string.Empty;
+        /// <summary>Human-readable description of the experience</summary>
+        public string Description = string.Empty;
+        /// <summary>Experience property flags</summary>
+        public ExperienceFlags Flags;
+        /// <summary>UUID of the group associated with this experience</summary>
+        public UUID GroupID;
+        /// <summary>UUID of the agent who owns this experience</summary>
+        public UUID AgentID;
+        /// <summary>Script execution quota</summary>
+        public int Quota;
+        /// <summary>Maturity rating (0=PG/General, 1=Mature, 2=Adult)</summary>
+        public int Maturity;
+        /// <summary>UUID of the experience's profile image</summary>
+        public UUID ImageID;
+        /// <summary>Marketplace listing URL for the experience</summary>
+        public string Marketplace = string.Empty;
+        /// <summary>Application-defined extended metadata string</summary>
+        public string ExtendedMetadata = string.Empty;
+        /// <summary>SL URL for the experience's home location</summary>
+        public string SLURL = string.Empty;
+
+        /// <summary>Deserialize an ExperienceInfo from an OSDMap</summary>
+        public static ExperienceInfo FromOSD(OSDMap map)
+        {
+            return new ExperienceInfo
+            {
+                ExperienceID = map["experience_id"].AsUUID(),
+                PublicID = map["public_id"].AsUUID(),
+                Name = map["name"].AsString(),
+                Description = map["description"].AsString(),
+                Flags = (ExperienceFlags)map["properties"].AsInteger(),
+                GroupID = map["group_id"].AsUUID(),
+                AgentID = map["agent_id"].AsUUID(),
+                Quota = map["quota"].AsInteger(),
+                Maturity = map["maturity"].AsInteger(),
+                ImageID = map["image_id"].AsUUID(),
+                Marketplace = map["marketplace"].AsString(),
+                ExtendedMetadata = map["extended_metadata"].AsString(),
+                SLURL = map["slurl"].AsString()
+            };
+        }
+
+        /// <summary>Serialize this ExperienceInfo to an OSDMap</summary>
+        public OSDMap Serialize()
+        {
+            return new OSDMap
+            {
+                ["experience_id"] = OSD.FromUUID(ExperienceID),
+                ["public_id"] = OSD.FromUUID(PublicID),
+                ["name"] = OSD.FromString(Name),
+                ["description"] = OSD.FromString(Description),
+                ["properties"] = OSD.FromInteger((int)Flags),
+                ["group_id"] = OSD.FromUUID(GroupID),
+                ["agent_id"] = OSD.FromUUID(AgentID),
+                ["quota"] = OSD.FromInteger(Quota),
+                ["maturity"] = OSD.FromInteger(Maturity),
+                ["image_id"] = OSD.FromUUID(ImageID),
+                ["marketplace"] = OSD.FromString(Marketplace),
+                ["extended_metadata"] = OSD.FromString(ExtendedMetadata),
+                ["slurl"] = OSD.FromString(SLURL)
+            };
+        }
+    }
+
+    /// <summary>
+    /// Message containing detailed information for one or more experiences.
+    /// Returned by the GetExperienceInfo and FindExperienceByName capabilities. The ExperienceQuery
+    /// capability is unrelated -- it checks whether specific experiences are permitted to run on a
+    /// parcel and returns a UUID-to-bool map, not a list of experience details; see
+    /// AgentManager.QueryExperiencesOnParcelAsync.
+    /// </summary>
+    public class ExperienceInfoMessage : IMessage
+    {
+        /// <summary>The list of experience details returned by the capability</summary>
+        public List<ExperienceInfo> Experiences = new List<ExperienceInfo>();
+
+        public OSDMap Serialize()
+        {
+            OSDArray arr = new OSDArray(Experiences.Count);
+            foreach (var exp in Experiences)
+                arr.Add(exp.Serialize());
+            return new OSDMap { ["experience_keys"] = arr };
+        }
+
+        public void Deserialize(OSDMap map)
+        {
+            Experiences.Clear();
+            if (map["experience_keys"] is OSDArray arr)
+            {
+                foreach (OSD entry in arr)
+                {
+                    if (entry is OSDMap expMap)
+                        Experiences.Add(ExperienceInfo.FromOSD(expMap));
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Message containing a list of experience UUIDs.
+    /// Returned by the AgentExperiences, GetAdminExperiences, GetCreatorExperiences,
+    /// and GroupExperiences capabilities. Verified against the reference viewer's
+    /// LLFloaterExperiences::refreshContents/updateInfo and
+    /// LLExperienceCache::getGroupExperiencesCoro, both of which read the "experience_ids" key --
+    /// not "experience_keys" (that key is instead used by GetExperienceInfo/FindExperienceByName,
+    /// which return full experience detail objects rather than bare UUIDs).
+    /// </summary>
+    public class ExperienceListMessage : IMessage
+    {
+        /// <summary>The list of experience UUIDs returned by the capability</summary>
+        public List<UUID> ExperienceIDs = new List<UUID>();
+
+        public OSDMap Serialize()
+        {
+            OSDArray arr = new OSDArray(ExperienceIDs.Count);
+            foreach (var id in ExperienceIDs)
+                arr.Add(OSD.FromUUID(id));
+            return new OSDMap { ["experience_ids"] = arr };
+        }
+
+        public void Deserialize(OSDMap map)
+        {
+            ExperienceIDs.Clear();
+            if (map["experience_ids"] is OSDArray arr)
+            {
+                foreach (OSD entry in arr)
+                    ExperienceIDs.Add(entry.AsUUID());
+            }
+        }
+    }
+
+    /// <summary>
+    /// Message representing an agent's experience allow/block preferences.
+    /// Used by the GetExperiences and ExperiencePreferences capabilities (GET and POST).
+    /// </summary>
+    public class ExperiencePreferencesMessage : IMessage
+    {
+        /// <summary>UUIDs of experiences the agent has explicitly allowed</summary>
+        public List<UUID> Allowed = new List<UUID>();
+        /// <summary>UUIDs of experiences the agent has blocked</summary>
+        public List<UUID> Blocked = new List<UUID>();
+
+        public OSDMap Serialize()
+        {
+            OSDArray allowed = new OSDArray(Allowed.Count);
+            foreach (var id in Allowed) allowed.Add(OSD.FromUUID(id));
+            OSDArray blocked = new OSDArray(Blocked.Count);
+            foreach (var id in Blocked) blocked.Add(OSD.FromUUID(id));
+            return new OSDMap
+            {
+                ["experiences"] = allowed,
+                ["blocked"] = blocked
+            };
+        }
+
+        public void Deserialize(OSDMap map)
+        {
+            Allowed.Clear();
+            Blocked.Clear();
+            // The allowed list is returned under the "experiences" key (not "allowed") --
+            // verified against the reference viewer's LLFloaterExperiences/LLFloaterExperienceProfile.
+            if (map["experiences"] is OSDArray allowedArr)
+                foreach (OSD entry in allowedArr)
+                    Allowed.Add(entry.AsUUID());
+            if (map["blocked"] is OSDArray blockedArr)
+                foreach (OSD entry in blockedArr)
+                    Blocked.Add(entry.AsUUID());
+        }
+    }
+
+    /// <summary>
+    /// Message containing the experiences trusted, blocked, and contributed in the current region.
+    /// Returned by the RegionExperiences capability.
+    /// </summary>
+    public class RegionExperiencesMessage : IMessage
+    {
+        /// <summary>UUIDs of experiences blocked in this region</summary>
+        public List<UUID> Blocked = new List<UUID>();
+        /// <summary>UUIDs of experiences trusted (keyed) in this region by the estate/region owner</summary>
+        public List<UUID> Trusted = new List<UUID>();
+        /// <summary>UUIDs of experiences explicitly allowed to run in this region</summary>
+        public List<UUID> Allowed = new List<UUID>();
+        /// <summary>The region/parcel's default experience, if any (UUID.Zero if none)</summary>
+        public UUID Default = UUID.Zero;
+
+        public OSDMap Serialize()
+        {
+            OSDArray blocked = new OSDArray(Blocked.Count);
+            foreach (var id in Blocked) blocked.Add(OSD.FromUUID(id));
+            OSDArray trusted = new OSDArray(Trusted.Count);
+            foreach (var id in Trusted) trusted.Add(OSD.FromUUID(id));
+            OSDArray allowed = new OSDArray(Allowed.Count);
+            foreach (var id in Allowed) allowed.Add(OSD.FromUUID(id));
+            var result = new OSDMap
+            {
+                ["blocked"] = blocked,
+                ["trusted"] = trusted,
+                ["allowed"] = allowed
+            };
+            if (Default != UUID.Zero) result["default"] = OSD.FromUUID(Default);
+            return result;
+        }
+
+        public void Deserialize(OSDMap map)
+        {
+            Blocked.Clear();
+            Trusted.Clear();
+            Allowed.Clear();
+            if (map["blocked"] is OSDArray blockedArr)
+                foreach (OSD entry in blockedArr) Blocked.Add(entry.AsUUID());
+            if (map["trusted"] is OSDArray trustedArr)
+                foreach (OSD entry in trustedArr) Trusted.Add(entry.AsUUID());
+            if (map["allowed"] is OSDArray allowedArr)
+                foreach (OSD entry in allowedArr) Allowed.Add(entry.AsUUID());
+            Default = map.ContainsKey("default") ? map["default"].AsUUID() : UUID.Zero;
+        }
+    }
+
+    #endregion Experience Messages
+
+    #region Environment Messages
+
+    /// <summary>Flags for EEP (Extended Environment Protocol) environment settings (from llenvironment.h)</summary>
+    [Flags]
+    public enum EnvironmentFlags : uint
+    {
+        /// <summary>No flags set</summary>
+        None = 0,
+        /// <summary>This environment setting overrides a parent setting (e.g. parcel overrides region)</summary>
+        Override = 0x04
+    }
+
+    /// <summary>
+    /// The environment payload embedded in an <see cref="ExtEnvironmentMessage"/> response or request.
+    /// Contains the EEP sky/water/day-cycle settings and their associated metadata.
+    /// Corresponds to the inner "environment" map in the SL C++ viewer llenvironment.cpp.
+    /// </summary>
+    public class EnvironmentData : IMessage
+    {
+        /// <summary>Duration of one full day/night cycle in seconds (default 14400 = 4 hours)</summary>
+        public int DayLength { get; set; } = 14400;
+
+        /// <summary>Time offset from the start of the day cycle in seconds (default 57600)</summary>
+        public int DayOffset { get; set; } = 57600;
+
+        /// <summary>Environment property flags</summary>
+        public EnvironmentFlags Flags { get; set; } = EnvironmentFlags.None;
+
+        /// <summary>Whether this environment is the region or grid default (populated by server responses; not serialized in requests)</summary>
+        public bool IsDefault { get; set; }
+
+        /// <summary>
+        /// Raw LLSD data for the day cycle, sky, or water settings.
+        /// Null indicates no custom environment (inherits from parent scope).
+        /// The LLSD "type" key discriminates the payload:
+        ///   "daycycle" = full EEP day cycle, "sky" = single sky layer, "water" = water settings.
+        /// </summary>
+        public OSD? DayCycle { get; set; }
+
+        /// <inheritdoc/>
+        public OSDMap Serialize()
+        {
+            var map = new OSDMap(4)
+            {
+                ["day_length"] = OSD.FromInteger(DayLength),
+                ["day_offset"] = OSD.FromInteger(DayOffset),
+                ["flags"] = OSD.FromInteger((int)Flags)
+            };
+            if (DayCycle != null)
+                map["day_cycle"] = DayCycle;
+            return map;
+        }
+
+        /// <inheritdoc/>
+        public void Deserialize(OSDMap map)
+        {
+            DayLength = map.ContainsKey("day_length") ? map["day_length"].AsInteger() : 14400;
+            DayOffset = map.ContainsKey("day_offset") ? map["day_offset"].AsInteger() : 57600;
+            Flags = (EnvironmentFlags)(uint)(map.ContainsKey("flags") ? map["flags"].AsInteger() : 0);
+            IsDefault = map.ContainsKey("is_default") && map["is_default"].AsBoolean();
+            DayCycle = map.ContainsKey("day_cycle") && map["day_cycle"].Type != OSDType.Unknown
+                ? map["day_cycle"]
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// Message for the ExtEnvironment capability.
+    /// Used for GET (reading current EEP environment) and POST (writing a new EEP environment).
+    /// Corresponds to getEnvironmentCapabilityCoros / updateEnvironmentCapabilityCoros in the SL C++ viewer.
+    /// </summary>
+    public class ExtEnvironmentMessage : IMessage
+    {
+        /// <summary>Whether the request succeeded (populated by server in responses)</summary>
+        public bool Success { get; set; }
+
+        /// <summary>
+        /// The EEP environment data.
+        /// Null in a GET response indicates no custom environment is set; the scope inherits from its parent.
+        /// Pass null in a POST request body to reset the scope to the parent default.
+        /// </summary>
+        public EnvironmentData? Environment { get; set; }
+
+        /// <summary>
+        /// Parcel ID this environment applies to.
+        /// -1 indicates region-level environment; use a local parcel integer ID for parcel-level.
+        /// </summary>
+        public int ParcelId { get; set; } = -1;
+
+        /// <summary>Server-assigned version number of the environment settings (populated in responses)</summary>
+        public int Version { get; set; }
+
+        /// <summary>Optional error or status message from the server</summary>
+        public string Message { get; set; } = string.Empty;
+
+        /// <inheritdoc/>
+        public OSDMap Serialize()
+        {
+            var map = new OSDMap(3) { ["parcel_id"] = OSD.FromInteger(ParcelId) };
+            if (Environment != null)
+                map["environment"] = Environment.Serialize();
+            if (Version != 0)
+                map["version"] = OSD.FromInteger(Version);
+            return map;
+        }
+
+        /// <inheritdoc/>
+        public void Deserialize(OSDMap map)
+        {
+            Success = map.ContainsKey("success") && map["success"].AsBoolean();
+            ParcelId = map.ContainsKey("parcel_id") ? map["parcel_id"].AsInteger() : -1;
+            Version = map.ContainsKey("version") ? map["version"].AsInteger() : 0;
+            Message = map.ContainsKey("message") ? map["message"].AsString() : string.Empty;
+            if (map["environment"] is OSDMap envMap)
+            {
+                Environment = new EnvironmentData();
+                Environment.Deserialize(envMap);
+            }
+            else
+            {
+                Environment = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Message for the legacy EnvironmentSettings capability (pre-EEP WindLight settings).
+    /// The settings payload is stored as raw LLSD to accommodate the varying WindLight
+    /// formats used by different simulator versions.
+    /// </summary>
+    public class LegacyEnvironmentMessage : IMessage
+    {
+        /// <summary>
+        /// Raw LLSD settings data. May be a WindLight sky/water map or a day cycle structure
+        /// depending on the simulator version.
+        /// </summary>
+        public OSD? Settings { get; set; }
+
+        /// <inheritdoc/>
+        public OSDMap Serialize()
+        {
+            return Settings is OSDMap settingsMap ? settingsMap : new OSDMap();
+        }
+
+        /// <inheritdoc/>
+        public void Deserialize(OSDMap map)
+        {
+            Settings = map;
+        }
+    }
+
+    #endregion Environment Messages
+
+    #region Interest List Messages
+
+    /// <summary>
+    /// Interest list mode for the InterestList capability (from llviewerregion.h).
+    /// Controls how the simulator culls object updates sent to the viewer.
+    /// </summary>
+    public enum InterestListMode
+    {
+        /// <summary>
+        /// Default frustum-based interest list: the server only sends object updates
+        /// for objects within the viewer's view frustum.
+        /// Corresponds to IL_MODE_DEFAULT ("default") in the SL C++ viewer.
+        /// </summary>
+        Default,
+        /// <summary>
+        /// 360-degree panoramic mode: the server sends object updates for ALL objects
+        /// in the region regardless of view direction.
+        /// Used for panoramic capture. Corresponds to IL_MODE_360 ("360") in the SL C++ viewer.
+        /// </summary>
+        Panoramic360
+    }
+
+    /// <summary>
+    /// LLSD message body for the InterestList capability POST request.
+    /// Corresponds to the body built in LLViewerRegion::setInterestListMode in the SL C++ viewer.
+    /// </summary>
+    public class InterestListMessage : IMessage
+    {
+        internal const string ModeDefault = "default";
+        internal const string ModePanoramic360 = "360";
+
+        /// <summary>The raw mode string to send to the simulator ("default" or "360")</summary>
+        public string Mode { get; set; } = ModeDefault;
+
+        /// <summary>
+        /// Gets or sets the mode as the typed <see cref="InterestListMode"/> enum.
+        /// Unknown mode strings are treated as <see cref="InterestListMode.Default"/>.
+        /// </summary>
+        public InterestListMode InterestListMode
+        {
+            get => Mode == ModePanoramic360 ? InterestListMode.Panoramic360 : InterestListMode.Default;
+            set => Mode = value == InterestListMode.Panoramic360 ? ModePanoramic360 : ModeDefault;
+        }
+
+        /// <inheritdoc/>
+        public OSDMap Serialize()
+        {
+            return new OSDMap(1) { ["mode"] = OSD.FromString(Mode) };
+        }
+
+        /// <inheritdoc/>
+        public void Deserialize(OSDMap map)
+        {
+            Mode = map.ContainsKey("mode") ? map["mode"].AsString() : ModeDefault;
+        }
+    }
+
+    #endregion Interest List Messages
+
+    #region Estate / Sim Console Messages
+
+    /// <summary>
+    /// Request message for the SimConsoleAsync capability.
+    /// HTTP POST sends a console command to the simulator as a bare LLSD string.
+    /// Available only to estate owners/managers and Linden Lab staff (god mode).
+    /// Corresponds to LLFloaterRegionDebugConsole::onInput in the SL C++ viewer
+    /// (llfloaterregiondebugconsole.cpp). The POST response itself carries no output for the
+    /// async capability -- the simulator's text output instead arrives later via the
+    /// SimConsoleResponse event queue message (see <see cref="SimConsoleResponseMessage"/>).
+    /// </summary>
+    public class SimConsoleAsyncMessage
+    {
+        /// <summary>The console command to execute on the simulator</summary>
+        public string Command = string.Empty;
+
+        /// <summary>Serializes the command as a plain LLSD string (the wire format expected by the simulator).</summary>
+        public OSD Serialize()
+        {
+            return OSD.FromString(Command);
+        }
+    }
+
+    /// <summary>
+    /// Message delivered via the Event Queue in response to a command sent through the
+    /// SimConsoleAsync capability. Corresponds to the "/message/SimConsoleResponse" HTTP node
+    /// registered by ConsoleResponseNode in the SL C++ viewer (llfloaterregiondebugconsole.cpp).
+    /// </summary>
+    public class SimConsoleResponseMessage : IMessage
+    {
+        /// <summary>The simulator's text output for the most recently sent console command</summary>
+        public string Body = string.Empty;
+
+        /// <inheritdoc/>
+        public OSDMap Serialize()
+        {
+            return new OSDMap(1) { ["body"] = OSD.FromString(Body) };
+        }
+
+        /// <inheritdoc/>
+        public void Deserialize(OSDMap map)
+        {
+            Body = map.ContainsKey("body") ? map["body"].AsString() : string.Empty;
+        }
+    }
+
+    #endregion Estate / Sim Console Messages
 }
 

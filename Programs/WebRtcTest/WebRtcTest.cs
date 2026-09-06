@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025, Sjofn LLC
  * All rights reserved.
  *
@@ -25,7 +25,7 @@
  */
 
 using LibreMetaverse.Voice.WebRTC;
-using OpenMetaverse;
+using LibreMetaverse;
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
@@ -70,24 +70,19 @@ namespace WebRtcTest
             string lastName = args[1];
             string password = args[2];
 
-            Settings.LOG_LEVEL = Microsoft.Extensions.Logging.LogLevel.Debug;
+            Settings.LogLevel = Microsoft.Extensions.Logging.LogLevel.Debug;
 
-            GridClient client = new GridClient
-            {
-                Settings =
-                {
-                    MULTIPLE_SIMS = false,
-                    LOG_RESENDS = false,
-                    STORE_LAND_PATCHES = true,
-                    ALWAYS_DECODE_OBJECTS = true,
-                    ALWAYS_REQUEST_OBJECTS = true,
-                    SEND_AGENT_UPDATES = true
-                }
-            };
+            GridClient client = new GridClient();
+            client.Settings.Agent.MultipleSims = false;
+            client.Settings.Logging.LogResends = false;
+            client.Settings.World.StoreLandPatches = true;
+            client.Settings.World.AlwaysDecodeObjects = true;
+            client.Settings.World.AlwaysRequestObjects = true;
+            client.Settings.Agent.SendUpdates = true;
             client.Network.EventQueueRunning += client_OnEventQueueRunning;
             client.Network.LoginProgress += client_OnLoginProgress;
 
-            string loginURI = client.Settings.LOGIN_SERVER;
+            string loginURI = client.Settings.Connection.LoginServer;
             if (4 == args.Length)
             {
                 loginURI = args[3];
@@ -108,7 +103,7 @@ namespace WebRtcTest
                     client.Network.DefaultLoginParams(firstName, lastName, password, "WebRtc Test", "1.0.0");
                 loginParams.URI = loginURI;
                 loginParams.LoginLocation = "WebRTC Voice 1/128/128/50";
-                if (!client.Network.Login(loginParams))
+                if (!await client.Network.LoginAsync(loginParams))
                     throw new VoiceTestException("Login to SL failed: " + client.Network.LoginMessage);
                 Console.WriteLine("Logged in: " + client.Network.LoginMessage);
 
@@ -117,7 +112,8 @@ namespace WebRtcTest
                     throw new VoiceTestException("EventQueueRunning event did not occur", true);
                 Console.WriteLine("EventQueue running");
 
-                var cap = client.Network.CurrentSim.Caps?.CapabilityURI("ProvisionVoiceAccountRequest");
+                var currentSim = client.Network?.CurrentSim;
+                var cap = currentSim?.Caps?.CapabilityURI("ProvisionVoiceAccountRequest");
 
                 if (cap == null)
                 {
@@ -125,20 +121,20 @@ namespace WebRtcTest
                 }
 
 
-                Console.WriteLine($"Requesting a provisional account from {client.Network.CurrentSim.Name}...");
-                bool success = await voice.ConnectPrimaryRegion();
+                Console.WriteLine($"Requesting a provisional account from {currentSim?.Name ?? "(unknown)"}...");
+                bool success = await voice.ConnectPrimaryRegionAsync();
                 if (!success)
                 {
-                    Console.WriteLine($"Failed to connect voice to '{client.Network.CurrentSim.Name}'.");
+                    Console.WriteLine($"Failed to connect voice to '{currentSim?.Name ?? "(unknown)"}'.");
                 }
                 else
                 {
-                    Console.WriteLine($"Connected to voice in '{client.Network.CurrentSim.Name}'");
+                    Console.WriteLine($"Connected to voice in '{currentSim?.Name ?? "(unknown)"}'");
                 }
                 
-                Console.WriteLine($"Connected Primary Region to voice {client.Network.CurrentSim.Name}...");
+                Console.WriteLine($"Connected Primary Region to voice {currentSim?.Name ?? "(unknown)"}...");
 
-                string wavPath = null;
+                string? wavPath = null;
 
                 // Example: play the WAV file in the WebRtcTest directory
                 try
@@ -155,7 +151,7 @@ namespace WebRtcTest
                         Console.WriteLine($"Playing WAV file as microphone: {wavPath} (48000 Hz, 16-bit, mono)\nLooping... Press any key to stop playback and disconnect.");
                         // Play at 48000 Hz, mono, loop
                         // Wait until peer connection is ready before starting playback. If already connected, start immediately.
-                        Action onReady = null;
+                        Action? onReady = null;
                         onReady = () =>
                         {
                             try
@@ -167,10 +163,10 @@ namespace WebRtcTest
                             {
                                 Console.WriteLine($"Failed to start example WAV playback on ready: {ex.Message}");
                             }
-                            try { voice.PeerConnectionReady -= onReady; } catch { }
+                            try { if (onReady != null) voice.PeerConnectionReady -= onReady; } catch { }
                         };
 
-                        if (voice.connected)
+                        if (voice.Connected)
                         {
                             onReady();
                         }
@@ -235,7 +231,7 @@ namespace WebRtcTest
                             {
                                 if (!string.IsNullOrEmpty(wavPath))
                                 {
-                                    voice.PlayWavAsMic(wavPath, loop: true);
+                                    voice.PlayWavAsMic(wavPath!, loop: true);
                                     Console.WriteLine("WAV playback started as microphone.");
                                 }
                                 else Console.WriteLine("No example WAV available.");
@@ -273,21 +269,21 @@ namespace WebRtcTest
 
                 voice.Disconnect();
 
-                client.Network.Logout();
+                client.Network?.Logout();
             }
             catch (Exception e)
             {
                 Console.WriteLine(e.Message);
-                if (e is VoiceTestException exception && exception.LoggedIn)
-                {
-                    client.Network.Logout();
-                }
+                    if (e is VoiceTestException exception && exception.LoggedIn)
+                    {
+                        client.Network?.Logout();
+                    }
             }
         }
 
         #region GridClient handlers
 
-        private static void client_OnLoginProgress(object sender, LoginProgressEventArgs args)
+        private static void client_OnLoginProgress(object? sender, LoginProgressEventArgs args)
         {
             if (args.Status == LoginStatus.Success)
             {
@@ -295,7 +291,7 @@ namespace WebRtcTest
             }
         }
 
-        private static void client_OnEventQueueRunning(object sender, EventQueueRunningEventArgs args)
+        private static void client_OnEventQueueRunning(object? sender, EventQueueRunningEventArgs args)
         {
             EventQueueRunningEvent.Set();
         }

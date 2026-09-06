@@ -30,7 +30,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace OpenMetaverse.StructuredData
+namespace LibreMetaverse.StructuredData
 {
     /// <summary>
     /// OSD Map Element
@@ -68,6 +68,7 @@ namespace OpenMetaverse.StructuredData
             return new OSDMap(new Dictionary<string, OSD>(_mMap));
         }
 
+        [Obsolete("Iterate the OSDMap directly as IDictionary<string, OSD>; Hashtable is a non-generic collection.")]
         public Hashtable ToHashtable()
         {
             return new Hashtable(_mMap);
@@ -108,7 +109,7 @@ namespace OpenMetaverse.StructuredData
 
         public bool TryGetValue(string key, out OSD llsd)
         {
-            return _mMap.TryGetValue(key, out llsd);
+            return _mMap.TryGetValue(key, out llsd!);
         }
 
         public void Clear()

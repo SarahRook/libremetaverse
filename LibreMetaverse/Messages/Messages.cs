@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -27,9 +27,9 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse.Messages
+namespace LibreMetaverse.Messages
 {
     public static partial class MessageUtils
     {
@@ -71,7 +71,12 @@ namespace OpenMetaverse.Messages
                 OSDMap map = (OSDMap)osd;
                 Dictionary<Uri, Uri> dict = new Dictionary<Uri, Uri>(map.Count);
                 foreach (KeyValuePair<string, OSD> entry in map)
-                    dict.Add(new Uri(entry.Key), entry.Value.AsUri());
+                {
+                    var keyUri = new Uri(entry.Key);
+                    var valUri = entry.Value.AsUri();
+                    if (valUri != null)
+                        dict.Add(keyUri, valUri);
+                }
                 return dict;
             }
 

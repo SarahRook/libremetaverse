@@ -27,9 +27,10 @@
 
 using System;
 using System.Collections.Generic;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Messages.Linden;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public class AgentAccessEventArgs : EventArgs
     {
@@ -141,8 +142,8 @@ namespace OpenMetaverse
     public class InstantMessageEventArgs : EventArgs
     {
         public InstantMessage IM { get; }
-        public Simulator Simulator { get; }
-        public InstantMessageEventArgs(InstantMessage im, Simulator simulator)
+        public Simulator? Simulator { get; }
+        public InstantMessageEventArgs(InstantMessage im, Simulator? simulator)
         {
             IM = im;
             Simulator = simulator;
@@ -214,8 +215,8 @@ namespace OpenMetaverse
 
     public class AnimationsChangedEventArgs : EventArgs
     {
-        public LockingDictionary<UUID, int> Animations { get; }
-        public AnimationsChangedEventArgs(LockingDictionary<UUID, int> agentAnimations) { Animations = agentAnimations; }
+        public IReadOnlyDictionary<UUID, int> Animations { get; }
+        public AnimationsChangedEventArgs(IReadOnlyDictionary<UUID, int> agentAnimations) { Animations = agentAnimations; }
     }
 
     public class MeanCollisionEventArgs : EventArgs
@@ -234,9 +235,9 @@ namespace OpenMetaverse
 
     public class RegionCrossedEventArgs : EventArgs
     {
-        public Simulator OldSimulator { get; }
-        public Simulator NewSimulator { get; }
-        public RegionCrossedEventArgs(Simulator oldSim, Simulator newSim) { OldSimulator = oldSim; NewSimulator = newSim; }
+        public Simulator? OldSimulator { get; }
+        public Simulator? NewSimulator { get; }
+        public RegionCrossedEventArgs(Simulator? oldSim, Simulator? newSim) { OldSimulator = oldSim; NewSimulator = newSim; }
     }
 
     public class GroupChatJoinedEventArgs : EventArgs
@@ -254,9 +255,9 @@ namespace OpenMetaverse
     public class AlertMessageEventArgs : EventArgs
     {
         public string Message { get; }
-        public string NotificationId { get; }
-        public OSDMap ExtraParams { get; }
-        public AlertMessageEventArgs(string message, string notificationid, OSDMap extraparams)
+        public string? NotificationId { get; }
+        public OSDMap? ExtraParams { get; }
+        public AlertMessageEventArgs(string message, string? notificationid, OSDMap? extraparams)
         {
             Message = message; NotificationId = notificationid; ExtraParams = extraparams;
         }
@@ -371,5 +372,86 @@ namespace OpenMetaverse
             Direction = direction;
             TimeUntilCrossing = timeUntilCrossing;
         }
+    }
+
+    /// <summary>Event args for when the ViewerBenefits capability returns updated agent benefit information</summary>
+    public class ViewerBenefitsEventArgs : EventArgs
+    {
+        /// <summary>The full benefits message returned by the capability</summary>
+        public ViewerBenefitsMessage Benefits { get; }
+        public ViewerBenefitsEventArgs(ViewerBenefitsMessage benefits) { Benefits = benefits; }
+    }
+
+    /// <summary>Event args for when the AgentPreferences capability returns current agent preferences</summary>
+    public class AgentPreferencesEventArgs : EventArgs
+    {
+        /// <summary>The preferences message returned by the capability</summary>
+        public AgentPreferencesMessage Preferences { get; }
+        public AgentPreferencesEventArgs(AgentPreferencesMessage preferences) { Preferences = preferences; }
+    }
+
+    /// <summary>Event args for when the AvatarRenderInfo capability returns render info for nearby avatars</summary>
+    public class AvatarRenderInfoEventArgs : EventArgs
+    {
+        /// <summary>The render info message returned by the capability</summary>
+        public AvatarRenderInfoMessage RenderInfo { get; }
+        public AvatarRenderInfoEventArgs(AvatarRenderInfoMessage renderInfo) { RenderInfo = renderInfo; }
+    }
+
+    /// <summary>Event args for a NavMesh status update received via the EventQueue NavMeshStatusUpdate event</summary>
+    public class NavMeshStatusUpdateEventArgs : EventArgs
+    {
+        /// <summary>The deserialized NavMesh status message</summary>
+        public NavMeshStatusUpdateMessage Message { get; }
+        /// <summary>The simulator that sent the update</summary>
+        public Simulator Simulator { get; }
+        public NavMeshStatusUpdateEventArgs(NavMeshStatusUpdateMessage message, Simulator simulator)
+        {
+            Message = message;
+            Simulator = simulator;
+        }
+    }
+
+    /// <summary>Event args for when the ProductInfoRequest capability returns the grid's product/SKU list</summary>
+    public class ProductInfoEventArgs : EventArgs
+    {
+        /// <summary>The product info message returned by the capability</summary>
+        public ProductInfoRequestMessage ProductInfo { get; }
+        public ProductInfoEventArgs(ProductInfoRequestMessage productInfo) { ProductInfo = productInfo; }
+    }
+
+    /// <summary>Event args for when a list of experience UUIDs is returned by the AgentExperiences,
+    /// GetAdminExperiences, GetCreatorExperiences, or GroupExperiences capability</summary>
+    public class AgentExperiencesEventArgs : EventArgs
+    {
+        /// <summary>The experience list message returned by the capability</summary>
+        public ExperienceListMessage AgentExperiences { get; }
+        public AgentExperiencesEventArgs(ExperienceListMessage agentExperiences) { AgentExperiences = agentExperiences; }
+    }
+
+    /// <summary>Event args for when experience allow/block preferences are returned by the
+    /// GetExperiences or ExperiencePreferences capability</summary>
+    public class ExperiencePreferencesEventArgs : EventArgs
+    {
+        /// <summary>The experience preferences message returned by the capability</summary>
+        public ExperiencePreferencesMessage Preferences { get; }
+        public ExperiencePreferencesEventArgs(ExperiencePreferencesMessage preferences) { Preferences = preferences; }
+    }
+
+    /// <summary>Event args for when the region experience list is returned by the RegionExperiences capability</summary>
+    public class RegionExperiencesEventArgs : EventArgs
+    {
+        /// <summary>The region experiences message returned by the capability</summary>
+        public RegionExperiencesMessage RegionExperiences { get; }
+        public RegionExperiencesEventArgs(RegionExperiencesMessage regionExperiences) { RegionExperiences = regionExperiences; }
+    }
+
+    /// <summary>Event args for when experience details are returned by the GetExperienceInfo
+    /// or FindExperienceByName capability</summary>
+    public class ExperienceInfoEventArgs : EventArgs
+    {
+        /// <summary>The experience info message returned by the capability</summary>
+        public ExperienceInfoMessage ExperienceInfo { get; }
+        public ExperienceInfoEventArgs(ExperienceInfoMessage experienceInfo) { ExperienceInfo = experienceInfo; }
     }
 }

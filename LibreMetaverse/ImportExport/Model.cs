@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -26,18 +26,24 @@
 
 using System;
 using System.Collections.Generic;
-using OpenMetaverse.Rendering;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Rendering;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse.ImportExport
+namespace LibreMetaverse.ImportExport
 {
 
     public class ModelMaterial
     {
-        public string ID;
+        public string ID = string.Empty;
         public Color4 DiffuseColor = Color4.White;
-        public string Texture;
-        public byte[] TextureData;
+        public string Texture = string.Empty;
+        public byte[] TextureData = Array.Empty<byte>();
+
+        /// <summary>Decoded pixel dimensions of <see cref="Texture"/>, captured by the loader before
+        /// J2C encoding. Used to report accurate width/height in a fee-quote request that omits the
+        /// real texture bytes -- see LLMeshUploadThread::wholeModelToLLSD's <c>texture_info</c>.</summary>
+        public int Width;
+        public int Height;
     }
 
     public class ModelFace
@@ -71,15 +77,15 @@ namespace OpenMetaverse.ImportExport
 
     public class ModelPrim
     {
-        public List<Vector3> Positions;
+        public List<Vector3> Positions = new List<Vector3>();
         public Vector3 BoundMin = new Vector3(float.MaxValue, float.MaxValue, float.MaxValue);
         public Vector3 BoundMax = new Vector3(float.MinValue, float.MinValue, float.MinValue);
         public Vector3 Position;
         public Vector3 Scale;
         public Quaternion Rotation = Quaternion.Identity;
         public List<ModelFace> Faces = new List<ModelFace>();
-        public string ID;
-        public byte[] Asset;
+        public string ID = string.Empty;
+        public byte[] Asset = Array.Empty<byte>();
 
         public void CreateAsset(UUID creator)
         {

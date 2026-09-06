@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2019-2025, Sjofn LLC
  * All rights reserved.
@@ -28,65 +28,33 @@
 using System;
 using System.Text.RegularExpressions;
 using System.Threading;
-using System.Collections.Generic;
-using OpenMetaverse.Assets;
-using OpenMetaverse.Packets;
+using System.Threading.Tasks;
+using LibreMetaverse.Assets;
+using LibreMetaverse.Packets;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class AgentManager
     {
-        private readonly Dictionary<UUID, AssetGesture> gestureCache = new Dictionary<UUID, AssetGesture>();
-
         /// <summary>
         /// Plays a gesture
         /// </summary>
         /// <param name="gestureID">Asset <see cref="UUID"/> of the gesture</param>
-        public void PlayGesture(UUID gestureID)
+        /// <param name="cancellationToken">Cancellation token</param>
+        public Task PlayGestureAsync(UUID gestureID, CancellationToken cancellationToken = default)
         {
-            ThreadPool.QueueUserWorkItem(_ =>
+            return Task.Run(async () =>
             {
-                // First fetch the gesture
-                AssetGesture gesture = null;
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(TimeSpan.FromSeconds(30));
 
-                if (gestureCache.TryGetValue(gestureID, out var gestureId))
-                {
-                    gesture = gestureId;
-                }
-                else
-                {
-                    AutoResetEvent gotAsset = new AutoResetEvent(false);
+                var asset = await Client.Assets.RequestAssetAsync(gestureID, AssetType.Gesture, true, cts.Token)
+                    .ConfigureAwait(false);
 
-                    Client.Assets.RequestAsset(gestureID, AssetType.Gesture, true,
-                        delegate(AssetDownload transfer, Asset asset)
-                        {
-                            if (transfer.Success)
-                            {
-                                gesture = (AssetGesture) asset;
-                            }
-
-                            gotAsset.Set();
-                        }
-                    );
-
-                    gotAsset.WaitOne(TimeSpan.FromSeconds(30), false);
-
-                    if (gesture != null && gesture.Decode())
-                    {
-                        lock (gestureCache)
-                        {
-                            if (!gestureCache.ContainsKey(gestureID))
-                            {
-                                gestureCache[gestureID] = gesture;
-                            }
-                        }
-                    }
-                }
-
-                // We got it, now we play it
-                if (gesture == null) return;
+                if (!(asset is AssetGesture gesture) || !gesture.Decode()) return;
                 foreach (GestureStep step in gesture.Sequence)
                 {
+                    cts.Token.ThrowIfCancellationRequested();
                     switch (step.GestureStepType)
                     {
                         case GestureStepType.Chat:
@@ -133,7 +101,7 @@ namespace OpenMetaverse
                             GestureStepWait wait = (GestureStepWait) step;
                             if (wait.WaitForTime)
                             {
-                                Thread.Sleep((int) (1000f * wait.WaitTime));
+                                await Task.Delay((int)(1000f * wait.WaitTime), cts.Token).ConfigureAwait(false);
                             }
                             if (wait.WaitForAnimation)
                             {
@@ -143,7 +111,7 @@ namespace OpenMetaverse
                             break;
                     }
                 }
-            });
+            }, cancellationToken);
         }
 
         /// <summary>
@@ -205,7 +173,7 @@ namespace OpenMetaverse
             p.Data[0] = b;
 
             Client.Network.SendPacket(p);
-            ActiveGestures.Remove(invID);
+            ActiveGestures.TryRemove(invID, out _);
         }
     }
 }

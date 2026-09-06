@@ -29,9 +29,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse;
-using OpenMetaverse.Packets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Packets;
+using LibreMetaverse.StructuredData;
 
 namespace LibreMetaverse
 {
@@ -61,24 +60,25 @@ namespace LibreMetaverse
         /// Fetch a list of Abuse Report categories from the simulator
         /// </summary>
         /// <returns>Returns Dictionary of Abuse Report categories from the server</returns>
-        public Task<Dictionary<string, string>> FetchAbuseReportCategories()
+        public Task<Dictionary<string, string>> FetchAbuseReportCategories(CancellationToken cancellationToken = default)
         {
-            return FetchAbuseReportCategoriesAsync(null);
+            return FetchAbuseReportCategoriesAsync(null, cancellationToken);
         }
 
         /// <summary>
         /// Fetch a list of Abuse Report categories from the simulator
         /// </summary>
         /// <param name="lang">language to return categories in</param>
+        /// <param name="cancellationToken">Cancellation token for the operation</param>
         /// <returns>Returns Dictionary of Abuse Report categories from the server</returns>
-        public async Task<Dictionary<string, string>> FetchAbuseReportCategoriesAsync(string lang)
+        public async Task<Dictionary<string, string>> FetchAbuseReportCategoriesAsync(string? lang, CancellationToken cancellationToken = default)
         {
-            Dictionary<string, string> reportCategories = null;
-            Uri abuseCategoriesCap = Client.Network.CurrentSim.Caps.CapabilityURI("AbuseCategories");
+            var reportCategories = new Dictionary<string, string>();
+            var abuseCategoriesCap = Client.Network?.CurrentSim?.Caps?.CapabilityURI("AbuseCategories");
             if (abuseCategoriesCap == null)
             {
                 Logger.Info("AbuseCategories capability does not exist. Could not fetch categories list.");
-                return null;
+                return reportCategories;
             }
 
             if (lang != null)
@@ -91,26 +91,30 @@ namespace LibreMetaverse
                 abuseCategoriesCap = builder.Uri;
             }
 
-            await Client.HttpCapsClient.GetRequestAsync(abuseCategoriesCap, CancellationToken.None, 
-                (response, data, error) =>
+            try
+            {
+                var (response, data) = await Client.HttpCapsClient.GetAsync(abuseCategoriesCap, cancellationToken);
+                if (data != null)
                 {
-                    if (error != null)
-                    {
-                        Logger.Info($"Could not fetch abuse categories from cap. ({error.Message}");
-                        return;
-                    }
-
                     OSD result = OSDParser.Deserialize(data);
                     if (result is OSDMap respMap && respMap.TryGetValue("categories", out var value))
                     {
                         if (value is OSDArray categories)
                         {
-                            reportCategories = categories.Cast<OSDMap>().ToDictionary(
-                                row => row["description_localized"].AsString(),
-                                row => row["category"].AsString());
+                            foreach (var row in categories.Cast<OSDMap>())
+                            {
+                                var desc = row.ContainsKey("description_localized") ? row["description_localized"].AsString() : string.Empty;
+                                var cat = row.ContainsKey("category") ? row["category"].AsString() : string.Empty;
+                                reportCategories[desc] = cat;
+                            }
                         }
                     }
-                });
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Info($"Could not fetch abuse categories from cap. ({ex.Message})");
+            }
 
             return reportCategories;
         }
@@ -149,22 +153,25 @@ namespace LibreMetaverse
                 ["details"] = details
             };
 
-            Uri userReportCap = (screenshotId != UUID.Zero)
-                ? Client.Network.CurrentSim.Caps.CapabilityURI("SendUserReportWithScreenshot")
-                : Client.Network.CurrentSim.Caps.CapabilityURI("SendUserReport");
+            var userReportCap = (screenshotId != UUID.Zero)
+                ? Client.Network?.CurrentSim?.Caps?.CapabilityURI("SendUserReportWithScreenshot")
+                : Client.Network?.CurrentSim?.Caps?.CapabilityURI("SendUserReport");
+
             if (userReportCap != null)
             {
-                _ = Client.HttpCapsClient.PostRequestAsync(userReportCap, OSDFormat.Xml, report, CancellationToken.None, 
-                    (response, data, error) =>
+                _ = Task.Run(async () =>
+                {
+                    try
                     {
-                        if (error != null)
-                        {
-                            Logger.Warn($"Failed to send abuse report via {userReportCap}. " +
-                                       $"({error.Message}) Falling back to legacy protocol.");
-                            SendUserReportLegacy(reportType, category, screenshotId, objectId, abuserId,
-                                abuseRegionName, abuseRegionId, pos, summary, details);
-                        }
-                    });
+                        var (response, data) = await Client.HttpCapsClient.PostAsync(userReportCap, OSDFormat.Xml, report, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Warn($"Failed to send abuse report via {userReportCap}. ({ex.Message}) Falling back to legacy protocol.");
+                        SendUserReportLegacy(reportType, category, screenshotId, objectId, abuserId,
+                            abuseRegionName, abuseRegionId, pos, summary, details);
+                    }
+                });
             }
             else
             {

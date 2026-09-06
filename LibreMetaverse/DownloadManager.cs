@@ -31,11 +31,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Net.Http;
 using System.Diagnostics;
-using LibreMetaverse;
 
-#pragma warning disable CS0618 // Type or member is obsolete (DownloadCompleteHandler)
-
-namespace OpenMetaverse.Http
+namespace LibreMetaverse.Http
 {
     /// <summary>
     /// Represents individual HTTP Download request
@@ -45,11 +42,9 @@ namespace OpenMetaverse.Http
         /// <summary>URI of the item to fetch</summary>
         public Uri Address;
         /// <summary>Download progress reporter</summary>
-        public IProgress<HttpCapsClient.ProgressReport> DownloadProgressCallback;
-        /// <summary>Download completed callback</summary>
-        public HttpCapsClient.DownloadCompleteHandler CompletedCallback;
+        public IProgress<HttpCapsClient.ProgressReport>? DownloadProgressCallback;
         /// <summary>Accept the following content type</summary>
-        public string ContentType;
+        public string? ContentType;
         /// <summary>How many times will this request be retried</summary>
         public int Retries = 5;
         /// <summary>Current fetch attempt</summary>
@@ -58,16 +53,14 @@ namespace OpenMetaverse.Http
         public CancellationToken CancellationToken = CancellationToken.None;
 
         /// <summary>Optional TaskCompletionSource for task-based completion</summary>
-        public TaskCompletionSource<(HttpResponseMessage, byte[])> CompletionTcs;
+        public TaskCompletionSource<(HttpResponseMessage, byte[])>? CompletionTcs;
 
         /// <summary>Constructor</summary>
-        public DownloadRequest(Uri address, string contentType,
-            IProgress<HttpCapsClient.ProgressReport> downloadProgressCallback,
-            HttpCapsClient.DownloadCompleteHandler completedCallback)
+        public DownloadRequest(Uri address, string? contentType,
+            IProgress<HttpCapsClient.ProgressReport>? downloadProgressCallback)
         {
             Address = address;
             DownloadProgressCallback = downloadProgressCallback;
-            CompletedCallback = completedCallback;
             ContentType = contentType;
         }
     }
@@ -150,25 +143,6 @@ namespace OpenMetaverse.Http
 
                 // Add completion handler as TaskCompletionSource; prefer existing CompletionTcs
                 TaskCompletionSource<(HttpResponseMessage, byte[])> completionTcs = item.CompletionTcs ?? new TaskCompletionSource<(HttpResponseMessage, byte[])>(TaskCreationOptions.RunContinuationsAsynchronously);
-                // If caller provided legacy callback, forward TCS completion to it
-                if (item.CompletedCallback != null)
-                {
-                    completionTcs.Task.ContinueWith(t =>
-                    {
-                        if (t.IsCanceled)
-                        {
-                            try { item.CompletedCallback(null, null, new OperationCanceledException()); } catch { }
-                        }
-                        else if (t.IsFaulted)
-                        {
-                            try { item.CompletedCallback(null, null, t.Exception?.InnerException ?? t.Exception); } catch { }
-                        }
-                        else
-                        {
-                            try { item.CompletedCallback(t.Result.Item1, t.Result.Item2, null); } catch { }
-                        }
-                    }, TaskScheduler.Default);
-                }
                 activeDownload.CompletedHandlers.Add(completionTcs);
 
                 // Add handlers in a thread-safe manner
@@ -221,9 +195,9 @@ namespace OpenMetaverse.Http
             {
                 while (true)
                 {
-                    HttpResponseMessage response = null;
-                    byte[] responseData = null;
-                    Exception finalError = null;
+                        HttpResponseMessage? response = null;
+                        byte[]? responseData = null;
+                        Exception? finalError = null;
 
                     try
                     {
@@ -234,7 +208,7 @@ namespace OpenMetaverse.Http
                             // Send request and get headers
                             response = await Client.HttpCapsClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, activeDownload.CancellationToken.Token).ConfigureAwait(false);
 
-                            Exception statusError = null;
+                            Exception? statusError = null;
                             if (!response.IsSuccessStatusCode)
                             {
                                 statusError = new HttpRequestException(response.StatusCode + ": " + response.ReasonPhrase);
@@ -268,7 +242,7 @@ namespace OpenMetaverse.Http
                                     }
                                     else
                                     {
-                                        ms.Write(buffer, 0, bytesRead);
+                                        ms!.Write(buffer, 0, bytesRead);
                                     }
 
                                     double? progressPercent = null;
@@ -290,9 +264,9 @@ namespace OpenMetaverse.Http
                                 }
                                 else
                                 {
-                                    responseData = ms.ToArray();
-                                    try { ms.Close(); } catch { }
-                                    try { ms.Dispose(); } catch { }
+                                    responseData = ms!.ToArray();
+                                    try { ms!.Close(); } catch { }
+                                    try { ms!.Dispose(); } catch { }
                                 }
                             }
                             catch (Exception ex)
@@ -305,8 +279,16 @@ namespace OpenMetaverse.Http
                             if (finalError == null)
                                 finalError = statusError;
 
-                            // If there was no error or we've exhausted retries or NotFound, finish
-                            if (finalError == null || representative.Attempt >= representative.Retries || response.StatusCode == HttpStatusCode.NotFound)
+                            // If there was no error, we've exhausted retries, or the status is
+                            // deterministic (NotFound/Forbidden/Unauthorized/Gone — the server's
+                            // answer will not change on retry), finish. Retrying permanent
+                            // failures burned the whole retry budget with backoff delays while
+                            // occupying download-queue slots, slowing every queued asset behind it.
+                            if (finalError == null || representative.Attempt >= representative.Retries
+                                || response.StatusCode == HttpStatusCode.NotFound
+                                || response.StatusCode == HttpStatusCode.Forbidden
+                                || response.StatusCode == HttpStatusCode.Unauthorized
+                                || response.StatusCode == HttpStatusCode.Gone)
                             {
                                 sw.Stop();
                                 try {
@@ -322,10 +304,10 @@ namespace OpenMetaverse.Http
                                         {
                                             handler.TrySetException(finalError);
                                         }
-                                        else
-                                        {
-                                            handler.TrySetResult((response, responseData));
-                                        }
+                                            else
+                                            {
+                                                handler.TrySetResult((response!, responseData!));
+                                            }
                                     }
                                     catch { }
                                 }
@@ -426,24 +408,6 @@ namespace OpenMetaverse.Http
             {
                 // Attach completion TCS to existing active download
                 var tcs = req.CompletionTcs ?? new TaskCompletionSource<(HttpResponseMessage, byte[])>(TaskCreationOptions.RunContinuationsAsynchronously);
-                if (req.CompletedCallback != null)
-                {
-                    tcs.Task.ContinueWith(t =>
-                    {
-                        if (t.IsCanceled)
-                        {
-                            try { req.CompletedCallback(null, null, new OperationCanceledException()); } catch { }
-                        }
-                        else if (t.IsFaulted)
-                        {
-                            try { req.CompletedCallback(null, null, t.Exception?.InnerException ?? t.Exception); } catch { }
-                        }
-                        else
-                        {
-                            try { req.CompletedCallback(t.Result.Item1, t.Result.Item2, null); } catch { }
-                        }
-                    }, TaskScheduler.Default);
-                }
                 existing.CompletedHandlers.Add(tcs);
                 if (req.DownloadProgressCallback != null)
                 {
@@ -498,46 +462,24 @@ namespace OpenMetaverse.Http
         /// <param name="cancellationToken">Cancellation token</param>
         /// <param name="retries">Number of retries for transient failures</param>
         /// <returns>Task that completes with (HttpResponseMessage, byte[] data)</returns>
-        public Task<(HttpResponseMessage response, byte[] data)> QueueDownloadAsync(Uri address, string contentType = null,
-            IProgress<HttpCapsClient.ProgressReport> progressCallback = null, CancellationToken cancellationToken = default, int retries = 5)
+        public Task<(HttpResponseMessage response, byte[] data)> QueueDownloadAsync(Uri address, string? contentType = null,
+            IProgress<HttpCapsClient.ProgressReport>? progressCallback = null, CancellationToken cancellationToken = default, int retries = 5)
         {
-            var tcs = new TaskCompletionSource<(HttpResponseMessage, byte[])>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            // Completion handler bridges callback to TCS
-            HttpCapsClient.DownloadCompleteHandler completeHandler = (response, data, error) =>
-            {
-                if (error != null)
-                {
-                    try { tcs.TrySetException(error); } catch { }
-                }
-                else
-                {
-                    try { tcs.TrySetResult((response, data)); } catch { }
-                }
-            };
-
-            // Build a DownloadRequest compatible with existing queue
-            var req = new DownloadRequest(address, contentType, progressCallback, completeHandler)
+            var req = new DownloadRequest(address, contentType, progressCallback)
             {
                 Retries = retries
             };
+            req.CompletionTcs = new TaskCompletionSource<(HttpResponseMessage, byte[])>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             if (cancellationToken.CanBeCanceled)
             {
                 req.CancellationToken = cancellationToken;
-
-                // If caller cancels, propagate to the TCS as well
-                try
-                {
-                    cancellationToken.Register(() => tcs.TrySetCanceled());
-                }
-                catch { }
+                try { cancellationToken.Register(() => req.CompletionTcs.TrySetCanceled()); } catch { }
             }
 
-            // Enqueue using existing API which will deduplicate and attach handlers
             QueueDownload(req, cancellationToken);
 
-            return tcs.Task;
+            return req.CompletionTcs.Task;
         }
 
         /// <summary>
@@ -555,7 +497,8 @@ namespace OpenMetaverse.Http
         public Task<(HttpResponseMessage response, byte[] data)> DownloadAsync(Uri address,
             IProgress<HttpCapsClient.ProgressReport> progress, CancellationToken cancellationToken)
         {
-            return QueueDownloadAsync(address, null, progress, cancellationToken);
+            // Pass empty content type when not specified to avoid null literal assignment
+            return QueueDownloadAsync(address, string.Empty, progress, cancellationToken);
         }
     }
 }

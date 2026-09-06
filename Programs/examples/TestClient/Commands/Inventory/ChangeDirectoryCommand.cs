@@ -1,11 +1,11 @@
-﻿using System.Threading.Tasks;
-using OpenMetaverse;
+using System.Threading.Tasks;
+using LibreMetaverse;
 
 namespace TestClient.Commands.Inventory
 {
     public class ChangeDirectoryCommand : Command
     {
-        private OpenMetaverse.Inventory Inventory;
+        private LibreMetaverse.Inventory Inventory;
 
         public ChangeDirectoryCommand(TestClient client)
         {

@@ -4,8 +4,6 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse;
-using OpenMetaverse.Assets;
 using LibreMetaverse;
 
 namespace TestClient.Commands.Inventory
@@ -42,8 +40,6 @@ namespace TestClient.Commands.Inventory
         // all items here, fed by the inventory walking thread
         private Queue<QueuedDownloadInfo> PendingDownloads = new Queue<QueuedDownloadInfo>();
 
-        // items sent to the server here
-        private List<QueuedDownloadInfo> CurrentDownloads = new List<QueuedDownloadInfo>(MAX_TRANSFERS);
 
         // background tasks
         private CancellationTokenSource cts;
@@ -88,8 +84,7 @@ namespace TestClient.Commands.Inventory
                                             Name, BoolToNot(InventoryWalkerRunning), TextItemsFound);
                     sbResult.AppendFormat("\r\n{0} : Server Transfers ( {1} running ) has transferred {2} items with {3} errors.",
                                             Name, BoolToNot(QueueRunnerRunning), TextItemsTransferred, TextItemErrors);
-                    sbResult.AppendFormat("\r\n{0} : {1} items in Queue, {2} items requested from server.",
-                                            Name, PendingDownloads.Count, CurrentDownloads.Count);
+                    sbResult.AppendFormat("\r\n{0} : {1} items in Queue.", Name, PendingDownloads.Count);
                 }
                 return sbResult.ToString();
             }
@@ -142,93 +137,110 @@ namespace TestClient.Commands.Inventory
 
             // start background operations
             cts = new CancellationTokenSource();
-            lock (CurrentDownloads) CurrentDownloads.Clear();
             lock (PendingDownloads) PendingDownloads.Clear();
 
-            QueueTask = Task.Run(() => QueueRunnerAsync(cts.Token), cts.Token);
-            BackupTask = Task.Run(() => BackupWorkerAsync(args, cts.Token), cts.Token);
+            // Capture the walker task locally so QueueRunnerAsync checks the same
+            // Task instance we started — avoids a race if ExecuteAsync is re-entered.
+            var walkerTask = BackupTask = Task.Run(() => BackupWorkerAsync(args, cts.Token), cts.Token);
+            QueueTask = Task.Run(() => QueueRunnerAsync(cts.Token, walkerTask), cts.Token);
 
             return "Started background operations.";
         }
 
-        private async Task QueueRunnerAsync(CancellationToken token)
+        private async Task QueueRunnerAsync(CancellationToken token, Task walkerTask)
         {
             TextItemErrors = TextItemsTransferred = 0;
+
+            using var semaphore = new SemaphoreSlim(MAX_TRANSFERS);
+            var activeTasks = new List<Task>();
 
             try
             {
                 while (!token.IsCancellationRequested)
                 {
-                    // have any timed out?
-                    lock (CurrentDownloads)
+                    QueuedDownloadInfo? qdi = null;
+                    bool shouldExit;
+                    lock (PendingDownloads)
                     {
-                        if (CurrentDownloads.Count > 0)
-                        {
-                            foreach (QueuedDownloadInfo qdi in CurrentDownloads.ToArray())
-                            {
-                                if ((qdi.WhenRequested + TimeSpan.FromSeconds(60)) < DateTime.Now)
-                                {
-                                    Logger.DebugLog(Name + ": timeout on asset " + qdi.AssetID, Client);
-                                    // submit request again
-                                    var transferID = UUID.Random();
-                                    Client.Assets.RequestInventoryAsset(
-                                        qdi.AssetID, qdi.ItemID, qdi.TaskID, qdi.OwnerID, qdi.Type, true, transferID, Assets_OnAssetReceived);
-                                    qdi.WhenRequested = DateTime.Now;
-                                    qdi.IsRequested = true;
-                                }
-                            }
-                        }
+                        if (PendingDownloads.Count > 0)
+                            qdi = PendingDownloads.Dequeue();
+                        // Check walker-done and queue-empty atomically to avoid the
+                        // TOCTOU race where BackupFolder enqueues a final item and
+                        // BackupTask completes between the two checks.
+                        shouldExit = qdi == null && walkerTask.IsCompleted && PendingDownloads.Count == 0;
                     }
 
-                    if (token.IsCancellationRequested) break;
-
-                    if (PendingDownloads.Count != 0)
+                    if (qdi != null)
                     {
-                        // room in the server queue?
-                        if (CurrentDownloads.Count < MAX_TRANSFERS)
-                        {
-                            QueuedDownloadInfo qdi = null;
-                            lock (PendingDownloads)
-                            {
-                                if (PendingDownloads.Count != 0)
-                                    qdi = PendingDownloads.Dequeue();
-                            }
-
-                            if (qdi != null)
-                            {
-                                qdi.WhenRequested = DateTime.Now;
-                                qdi.IsRequested = true;
-                                var transferID = UUID.Random();
-                                Client.Assets.RequestInventoryAsset(
-                                    qdi.AssetID, qdi.ItemID, qdi.TaskID, qdi.OwnerID, qdi.Type, true, transferID, Assets_OnAssetReceived);
-
-                                lock (CurrentDownloads) CurrentDownloads.Add(qdi);
-                            }
-                        }
+                        await semaphore.WaitAsync(token).ConfigureAwait(false);
+                        activeTasks.Add(ProcessDownloadAsync(qdi, semaphore, token));
                     }
-
-                    if (CurrentDownloads.Count == 0 && PendingDownloads.Count == 0 && (BackupTask == null || BackupTask.IsCompleted))
+                    else if (shouldExit && activeTasks.Count == 0)
                     {
-                        Logger.DebugLog(Name + ": both transfer queues empty AND inventory walking task is done", Client);
+                        Logger.DebugLog(Name + ": all downloads complete", Client);
                         return;
                     }
-
-                    await Task.Delay(100, token).ConfigureAwait(false);
+                    else
+                    {
+                        activeTasks.RemoveAll(t => t.IsCompleted);
+                        await Task.Delay(100, token).ConfigureAwait(false);
+                    }
                 }
             }
             catch (OperationCanceledException) { }
+
+            // Drain remaining tasks; observe exceptions so they are counted as errors.
+            foreach (var t in activeTasks)
+            {
+                try { await t.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+                catch { TextItemErrors++; }
+            }
+        }
+
+        private async Task ProcessDownloadAsync(QueuedDownloadInfo qdi, SemaphoreSlim semaphore, CancellationToken token)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                cts.CancelAfter(TimeSpan.FromSeconds(60));
+                var asset = await Client.Assets.RequestInventoryAssetAsync(
+                    qdi.AssetID, qdi.ItemID, qdi.TaskID, Client.Self.AgentID, qdi.Type, true, UUID.Random(), cts.Token)
+                    .ConfigureAwait(false);
+
+                if (asset != null)
+                {
+                    var dir = Path.GetDirectoryName(qdi.FileName);
+                    if (!string.IsNullOrEmpty(dir))
+                        global::System.IO.Directory.CreateDirectory(dir);
+                    File.WriteAllBytes(qdi.FileName, asset.AssetData);
+                    Logger.DebugLog(Name + " Wrote: " + qdi.FileName, Client);
+                    TextItemsTransferred++;
+                }
+                else
+                {
+                    TextItemErrors++;
+                    Console.WriteLine($"{Name}: Download of asset {qdi.FileName} ({qdi.AssetID}) failed");
+                }
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                semaphore.Release();
+            }
         }
 
         private async Task BackupWorkerAsync(string[] args, CancellationToken token)
         {
             TextItemsFound = 0;
 
-            lock (CurrentDownloads) CurrentDownloads.Clear();
-
             DirectoryInfo di = new DirectoryInfo(args[1]);
 
             // recurse on the root folder into the entire inventory
-            await Task.Run(() => BackupFolder(Client.Inventory.Store.RootNode, di.FullName, token), token).ConfigureAwait(false);
+            var store = Client.Inventory?.Store;
+            if (store == null) return;
+
+            await Task.Run(() => BackupFolder(store.RootNode, di.FullName, token), token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -236,6 +248,7 @@ namespace TestClient.Commands.Inventory
         /// </summary>
         /// <param name="folder">The current leaf in the inventory tree</param>
         /// <param name="sPathSoFar">path so far, in the form @"c:\here" -- this needs to be "clean" for the current filesystem</param>
+        /// <param name="token">Cancellation token for the operation</param>
         private void BackupFolder(InventoryNode folder, string sPathSoFar, CancellationToken token)
         {
             // first scan this folder for text
@@ -274,7 +287,7 @@ namespace TestClient.Commands.Inventory
             foreach (InventoryNode i in folder.Nodes.Values)
             {
                 if (token.IsCancellationRequested) return;
-                else if (i.Data is OpenMetaverse.InventoryFolder)
+                else if (i.Data is LibreMetaverse.InventoryFolder)
                     BackupFolder(i, sPathSoFar + "\\" + MakeValid(i.Data.Name.Trim()), token);
             }
         }
@@ -286,37 +299,6 @@ namespace TestClient.Commands.Inventory
             return FileHelper.SafeFileName(path.Trim());
         }
 
-        private void Assets_OnAssetReceived(AssetDownload asset, Asset blah)
-        {
-            lock (CurrentDownloads)
-            {
-                // see if we have this in our transfer list
-                QueuedDownloadInfo r = CurrentDownloads.Find(q => q.AssetID == asset.AssetID);
-
-                if (r != null && r.AssetID == asset.AssetID)
-                {
-                    if (asset.Success)
-                    {
-                        // create the directory to put this in
-                        global::System.IO.Directory.CreateDirectory(Path.GetDirectoryName(r.FileName));
-
-                        // write out the file
-                        File.WriteAllBytes(r.FileName, asset.AssetData);
-                        Logger.DebugLog(Name + " Wrote: " + r.FileName, Client);
-                        TextItemsTransferred++;
-                    }
-                    else
-                    {
-                        TextItemErrors++;
-                        Console.WriteLine("{0}: Download of asset {1} ({2}) failed with status {3}", Name, r.FileName,
-                            r.AssetID.ToString(), asset.Status.ToString());
-                    }
-
-                    // remove the entry
-                    CurrentDownloads.Remove(r);
-                }
-            }
-        }
 
         /// <summary>
         /// returns blank or "not" if false

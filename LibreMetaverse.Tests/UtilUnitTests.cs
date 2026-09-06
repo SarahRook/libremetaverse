@@ -1,11 +1,7 @@
 using System;
-using System.Collections;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using NUnit.Framework;
-using LibreMetaverse;
-using OpenMetaverse;
 
 namespace LibreMetaverse.Tests
 {
@@ -37,7 +33,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void ObservableDictionary_Events_FireOnAddRemoveAndClear()
         {
-            var dict = new OpenMetaverse.ObservableDictionary<string, int>();
+            var dict = new LibreMetaverse.ObservableDictionary<string, int>();
             int adds = 0, removes = 0, changes = 0;
 
             DictionaryChangeCallback addCb = (action, entry) => { if (action == DictionaryEventAction.Add) adds++; };
@@ -70,35 +66,41 @@ namespace LibreMetaverse.Tests
             Action<EventHandler<EventArgs>> subscribe = h => ev += h;
             Action<EventHandler<EventArgs>> unsubscribe = h => ev -= h;
 
-            // fire event after small delay
-            Task.Run(async () =>
+            // subscribed1 is Set inside the subscribe wrapper, guaranteeing the handler
+            // is registered before the fire task can invoke the event.
+            var subscribed1 = new ManualResetEventSlim(false);
+            var fireTask = Task.Run(() =>
             {
-                await Task.Delay(50).ConfigureAwait(false);
+                subscribed1.Wait(5000);
                 ev?.Invoke(null, EventArgs.Empty);
             });
 
             var result = EventSubscriptionHelper.WaitForEvent<EventArgs, int>(
-                subscribe, unsubscribe,
+                h => { subscribe(h); subscribed1.Set(); },
+                unsubscribe,
                 filter: e => true,
                 resultSelector: e => 123,
-                timeoutMs: 500,
+                timeoutMs: 5000,
                 defaultValue: -1);
 
             Assert.That(result, Is.EqualTo(123));
+            await fireTask;
 
-            // Async version with cancellation
-            var cts = new CancellationTokenSource();
-            Task.Run(async () =>
+            // Async version with the same subscribe-then-signal pattern
+            ev = null;
+            var subscribed2 = new ManualResetEventSlim(false);
+            var fireTask2 = Task.Run(() =>
             {
-                await Task.Delay(50).ConfigureAwait(false);
+                subscribed2.Wait(5000);
                 ev?.Invoke(null, EventArgs.Empty);
             });
 
             var asyncResult = await EventSubscriptionHelper.WaitForEventAsync<EventArgs, Guid>(
-                subscribe, unsubscribe,
+                h => { subscribe(h); subscribed2.Set(); },
+                unsubscribe,
                 filter: e => true,
                 resultSelector: e => Guid.Empty,
-                timeoutMs: 500,
+                timeoutMs: 5000,
                 cancellationToken: default,
                 defaultValue: Guid.NewGuid());
 
@@ -117,51 +119,35 @@ namespace LibreMetaverse.Tests
         public void Repeat_Interval_ExecutesAndCancels()
         {
             int count = 0;
+            var firstExecuted = new ManualResetEventSlim(false);
             var cts = new CancellationTokenSource();
-            var task = Repeat.Interval(TimeSpan.FromMilliseconds(20), () => Interlocked.Increment(ref count), cts.Token, immediately: true);
 
-            // let it run a bit
-            Thread.Sleep(120);
+            var task = Repeat.Interval(TimeSpan.FromMilliseconds(50), () =>
+            {
+                Interlocked.Increment(ref count);
+                firstExecuted.Set();
+            }, cts.Token, immediately: true);
+
+            // Wait for the first execution rather than assuming a fixed wall-clock duration
+            Assert.That(firstExecuted.Wait(TimeSpan.FromSeconds(30)), Is.True,
+                $"Expected at least 1 execution within 30s, but got {count}");
+
             cts.Cancel();
-            task.Wait(1000);
+            task.Wait(2000);
 
-            Assert.That(count, Is.GreaterThanOrEqualTo(1));
+            Assert.That(count, Is.GreaterThanOrEqualTo(1), $"Expected at least 1 execution, but got {count}");
         }
 
         [Test]
         public void NameValue_ParseAndToString()
         {
-            var nv = new OpenMetaverse.NameValue("greeting STRING R S Hello");
+            var nv = new LibreMetaverse.NameValue("greeting STRING R S Hello");
             Assert.That(nv.Name, Is.EqualTo("greeting"));
             Assert.That(nv.Value, Is.EqualTo("Hello"));
 
-            var arr = new[] { new OpenMetaverse.NameValue("n1", OpenMetaverse.NameValue.ValueType.String, OpenMetaverse.NameValue.ClassType.ReadOnly, OpenMetaverse.NameValue.SendtoType.Sim, "v1") };
-            var s = OpenMetaverse.NameValue.NameValuesToString(arr);
+            var arr = new[] { new LibreMetaverse.NameValue("n1", LibreMetaverse.NameValue.ValueType.String, LibreMetaverse.NameValue.ClassType.ReadOnly, LibreMetaverse.NameValue.SendtoType.Sim, "v1") };
+            var s = LibreMetaverse.NameValue.NameValuesToString(arr);
             Assert.That(s, Does.Contain("n1").And.Contains("v1"));
-        }
-
-        [Test]
-        public void LockingDictionary_BasicOperations()
-        {
-            var ld = new OpenMetaverse.LockingDictionary<string, int>();
-            ((IDictionary<string,int>)ld).Add("x", 10);
-            Assert.That(ld.ContainsKey("x"), Is.True);
-
-            Assert.That(ld.TryGetValue("x", out var val), Is.True);
-            Assert.That(val, Is.EqualTo(10));
-
-            var found = ld.Find(v => v == 10);
-            Assert.That(found, Is.EqualTo(10));
-
-            var keys = ld.FindAll(k => k == "x");
-            Assert.That(keys, Is.Not.Empty);
-
-            int seen = 0;
-            ld.ForEach((int v) => { seen += v; });
-            Assert.That(seen, Is.EqualTo(10));
-
-            var copy = ld.Copy();
-            Assert.That(copy.ContainsKey("x"), Is.True);
         }
 
         [Test]
@@ -179,8 +165,8 @@ namespace LibreMetaverse.Tests
         {
             bool disposed = false;
             var throwing = new ThrowOnDispose(() => disposed = true);
-            string logged = null;
-            Action<string, Exception> logger = (m, e) => logged = m;
+            string? logged = null;
+            Action<string, Exception?> logger = (m, e) => logged = m;
 
             DisposalHelper.SafeDispose(throwing, "test", logger);
             Assert.That(disposed, Is.True);

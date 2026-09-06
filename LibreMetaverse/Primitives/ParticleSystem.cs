@@ -25,9 +25,9 @@
  */
 
 using System;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Particle system specific enumerators, flags and methods.
@@ -539,7 +539,7 @@ namespace OpenMetaverse
                        && BlendFuncDest == other.BlendFuncDest;
             }
 
-            public override bool Equals(object obj)
+            public override bool Equals(object? obj)
             {
                 return obj is ParticleSystem other && Equals(other);
             }

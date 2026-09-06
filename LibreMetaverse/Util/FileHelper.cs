@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025, Sjofn LLC.
  * All rights reserved.
  *
@@ -31,8 +31,10 @@ namespace LibreMetaverse
 {
     public static class FileHelper
     {
-        private static readonly char[] InvalidFileNameChars = System.IO.Path.GetInvalidFileNameChars();
-        private static readonly char[] InvalidPathChars = System.IO.Path.GetInvalidPathChars();
+        private static readonly char[] InvalidFileNameChars = System.IO.Path.GetInvalidFileNameChars()
+            .Concat(new[] { ':' }).Distinct().ToArray();
+        private static readonly char[] InvalidPathChars = System.IO.Path.GetInvalidPathChars()
+            .Concat(new[] { '<', '>', ':', '"', '|', '?', '*' }).Distinct().ToArray();
 
         public static string SafeFileName(string original)
         {
@@ -64,7 +66,7 @@ namespace LibreMetaverse
         /// <summary>
         /// Try parse two names from a string (like "First Last")
         /// </summary>
-        public static bool TryParseTwoNames(string input, out string first, out string last)
+        public static bool TryParseTwoNames(string input, out string? first, out string? last)
         {
             first = null;
             last = null;

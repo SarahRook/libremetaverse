@@ -27,17 +27,15 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
-using OpenMetaverse.StructuredData;
-using OpenMetaverse.Packets;
+using LibreMetaverse.StructuredData;
+using LibreMetaverse.Packets;
 using System.Net.Http;
 using System.Threading.Tasks;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
-using LibreMetaverse;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     #region Enums
 
@@ -119,7 +117,7 @@ namespace OpenMetaverse
             return X.GetHashCode() ^ Y.GetHashCode();
         }
 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return (obj is GridRegion region) && Equals(region);
         }
@@ -177,7 +175,7 @@ namespace OpenMetaverse
     public class MapAgentLocation : MapItem
     {       
         public int AvatarCount;
-        public string Identifier;
+        public string Identifier = string.Empty;
     }
 
     /// <summary>
@@ -194,7 +192,7 @@ namespace OpenMetaverse
     {        
         public int Size;
         public int Price;
-        public string Name;
+        public string Name = string.Empty;
         public UUID ID;        
     }
 
@@ -205,7 +203,7 @@ namespace OpenMetaverse
     {     
         public int Size;
         public int Price;
-        public string Name;
+        public string Name = string.Empty;
         public UUID ID;
     }
 
@@ -216,7 +214,7 @@ namespace OpenMetaverse
     {
         public DirectoryManager.EventFlags Flags; // Extra
         public DirectoryManager.EventCategories Category; // Extra2
-        public string Description;
+        public string Description = string.Empty;
     }
 
     /// <summary>
@@ -226,7 +224,7 @@ namespace OpenMetaverse
     {
         public DirectoryManager.EventFlags Flags; // Extra
         public DirectoryManager.EventCategories Category; // Extra2
-        public string Description;
+        public string Description = string.Empty;
     }
 
     /// <summary>
@@ -236,7 +234,7 @@ namespace OpenMetaverse
     {
         public DirectoryManager.EventFlags Flags; // Extra
         public DirectoryManager.EventCategories Category; // Extra2
-        public string Description;
+        public string Description = string.Empty;
     }
     #endregion Grid Item Classes
 
@@ -248,14 +246,14 @@ namespace OpenMetaverse
         #region Delegates
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<CoarseLocationUpdateEventArgs> m_CoarseLocationUpdate;
+        private EventHandler<CoarseLocationUpdateEventArgs>? m_CoarseLocationUpdate;
 
         /// <summary>Raises the CoarseLocationUpdate event</summary>
         /// <param name="e">A CoarseLocationUpdateEventArgs object containing the
         /// data sent by simulator</param>
         protected virtual void OnCoarseLocationUpdate(CoarseLocationUpdateEventArgs e)
         {
-            EventHandler<CoarseLocationUpdateEventArgs> handler = m_CoarseLocationUpdate;
+            EventHandler<CoarseLocationUpdateEventArgs>? handler = m_CoarseLocationUpdate;
             handler?.Invoke(this, e);
         }
 
@@ -271,14 +269,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<GridRegionEventArgs> m_GridRegion;
+        private EventHandler<GridRegionEventArgs>? m_GridRegion;
 
         /// <summary>Raises the GridRegion event</summary>
         /// <param name="e">A GridRegionEventArgs object containing the
         /// data sent by simulator</param>
         protected virtual void OnGridRegion(GridRegionEventArgs e)
         {
-            EventHandler<GridRegionEventArgs> handler = m_GridRegion;
+            EventHandler<GridRegionEventArgs>? handler = m_GridRegion;
             handler?.Invoke(this, e);
         }
 
@@ -294,14 +292,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<GridLayerEventArgs> m_GridLayer;
+        private EventHandler<GridLayerEventArgs>? m_GridLayer;
 
         /// <summary>Raises the GridLayer event</summary>
         /// <param name="e">A GridLayerEventArgs object containing the
         /// data sent by simulator</param>
         protected virtual void OnGridLayer(GridLayerEventArgs e)
         {
-            EventHandler<GridLayerEventArgs> handler = m_GridLayer;
+            EventHandler<GridLayerEventArgs>? handler = m_GridLayer;
             handler?.Invoke(this, e);
         }
 
@@ -317,14 +315,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<GridItemsEventArgs> m_GridItems;
+        private EventHandler<GridItemsEventArgs>? m_GridItems;
 
         /// <summary>Raises the GridItems event</summary>
         /// <param name="e">A GridItemEventArgs object containing the
         /// data sent by simulator</param>
         protected virtual void OnGridItems(GridItemsEventArgs e)
         {
-            EventHandler<GridItemsEventArgs> handler = m_GridItems;
+            EventHandler<GridItemsEventArgs>? handler = m_GridItems;
             handler?.Invoke(this, e);
         }
 
@@ -340,14 +338,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers. null if no subscribers</summary>
-        private EventHandler<RegionHandleReplyEventArgs> m_RegionHandleReply;
+        private EventHandler<RegionHandleReplyEventArgs>? m_RegionHandleReply;
 
         /// <summary>Raises the RegionHandleReply event</summary>
         /// <param name="e">A RegionHandleReplyEventArgs object containing the
         /// data sent by simulator</param>
         protected virtual void OnRegionHandleReply(RegionHandleReplyEventArgs e)
         {
-            EventHandler<RegionHandleReplyEventArgs> handler = m_RegionHandleReply;
+            EventHandler<RegionHandleReplyEventArgs>? handler = m_RegionHandleReply;
             handler?.Invoke(this, e);
         }
 
@@ -398,13 +396,18 @@ namespace OpenMetaverse
 
         private readonly GridClient Client;
 
+        // Per-simulator coarse location snapshot; used to compute new/removed diffs without
+        // holding positions on the Simulator object itself.
+        private readonly ConcurrentDictionary<Simulator, Dictionary<UUID, Vector3>> _coarsePositions =
+            new ConcurrentDictionary<Simulator, Dictionary<UUID, Vector3>>();
+
         /// <summary>
         /// Constructor
         /// </summary>
         /// <param name="client">Instance of GridClient object to associate with this GridManager instance</param>
-		public GridManager(GridClient client)
-		{
-			Client = client;
+        public GridManager(GridClient client)
+        {
+            Client = client ?? throw new ArgumentNullException(nameof(client));
 
             // Initialize read-only wrappers around the concurrent dictionaries so external callers
             // can observe the current contents without being able to replace the collections.
@@ -418,21 +421,31 @@ namespace OpenMetaverse
             Client.Network.RegisterCallback(PacketType.SimulatorViewerTimeMessage, SimulatorViewerTimeMessageHandler);
             Client.Network.RegisterCallback(PacketType.CoarseLocationUpdate, CoarseLocationHandler, false);
             Client.Network.RegisterCallback(PacketType.RegionIDAndHandleReply, RegionHandleReplyHandler);
+            Client.Network.SimDisconnected += OnSimDisconnected;
 		}
 
         /// <summary>
         /// Request a map layer from simulator capability
         /// </summary>
         /// <param name="layer">Requested <see cref="GridLayerType"/></param>
-        public void RequestMapLayer(GridLayerType layer)
+        /// <param name="cancellationToken">Cancellation token for the request</param>
+        public async Task RequestMapLayerAsync(GridLayerType layer, CancellationToken cancellationToken = default)
         {
-            Uri cap = Client.Network.CurrentSim.Caps.CapabilityURI("MapLayer");
-            if (cap == null) 
+            var client = Client;
+            Uri? cap = client?.Network?.CurrentSim?.Caps?.CapabilityURI("MapLayer");
+            if (cap == null)
                 return;
-            
+
             OSDMap payload = new OSDMap {["Flags"] = OSD.FromInteger((int) layer)};
-            Task req = Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, payload, 
-                CancellationToken.None, MapLayerResponseHandler);
+            try
+            {
+                var (response, data) = await Client.HttpCapsClient.PostAsync(cap, OSDFormat.Xml, payload, cancellationToken);
+                MapLayerResponseHandler(response, data, null);
+            }
+            catch (Exception ex)
+            {
+                MapLayerResponseHandler(null, null, ex);
+            }
         }
 
         /// <summary>
@@ -493,38 +506,6 @@ namespace OpenMetaverse
             request.PositionData.MaxY = maxY;
 
             Client.Network.SendPacket(request);
-        }
-
-        /// <summary>
-        /// Returns a list of map items
-        /// </summary>
-        /// <param name="regionHandle"></param>
-        /// <param name="item"></param>
-        /// <param name="layer"></param>
-        /// <param name="timeout"></param>
-        /// <returns>List of Map items</returns>
-        public List<MapItem> MapItems(ulong regionHandle, GridItemType item, GridLayerType layer, TimeSpan timeout)
-        {
-            List<MapItem> itemList = null;
-            AutoResetEvent itemsEvent = new AutoResetEvent(false);
-
-            void Callback(object sender, GridItemsEventArgs e)
-            {
-                if (e.Type != GridItemType.AgentLocations) 
-                    return;
-                
-                itemList = e.Items;
-                itemsEvent.Set();
-            }
-
-            GridItems += Callback;
-
-            RequestMapItems(regionHandle, item, layer);
-            itemsEvent.WaitOne(timeout, false);
-
-            GridItems -= Callback;
-
-            return itemList;
         }
 
         /// <summary>
@@ -593,116 +574,147 @@ namespace OpenMetaverse
             Client.Network.SendPacket(request);
         }
 
-        /// <summary>
-        /// Retrieves <see cref="GridRegion"/> information using the region handle
-        /// </summary>
-        /// <remarks>This function will block until it can find the region or gives up</remarks>
-        /// <param name="handle">Region Handle of requested <see cref="GridRegion"/></param>
-        /// <param name="layer"><see cref="GridLayerType"/> for the
-        /// <see cref="GridRegion"/> being requested</param>
-        /// <param name="region">Output for the fetched <see cref="GridRegion"/>,
-        /// or empty struct if failure</param>
-        /// <returns>True if the <see cref="GridRegion"/> was fetched, otherwise false</returns>
-        public bool GetGridRegion(ulong handle, GridLayerType layer, out GridRegion region)
+
+        /// <summary>Asynchronously retrieves <see cref="GridRegion"/> information using the region name</summary>
+        public async Task<GridRegion?> GetGridRegionAsync(string name, GridLayerType layer, CancellationToken cancellationToken = default)
         {
-            // Check if cached
-            if (RegionsByHandle.TryGetValue(handle, out region))
+            if (string.IsNullOrEmpty(name))
             {
-                return true;
+                Logger.Error("GetGridRegionAsync called with a null or empty region name", Client);
+                return null;
             }
+
+            var key = name.ToLowerInvariant();
+            if (Regions.TryGetValue(key, out var cached))
+                return cached;
+
+            var tcs = new TaskCompletionSource<GridRegion>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            void Callback(object? sender, GridRegionEventArgs e)
+            {
+                if (string.Equals(e.Region.Name, name, StringComparison.InvariantCultureIgnoreCase))
+                    tcs.TrySetResult(e.Region);
+            }
+
+            GridRegion += Callback;
+            try
+            {
+                RequestMapRegion(name, layer);
+
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                linkedCts.CancelAfter(Client.Settings.Timing.MapRequestTimeout);
+
+                var completed = await Task.WhenAny(tcs.Task,
+                    Task.Delay(Timeout.InfiniteTimeSpan, linkedCts.Token)).ConfigureAwait(false);
+
+                if (completed == tcs.Task)
+                    return tcs.Task.Result;
+
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            finally
+            {
+                GridRegion -= Callback;
+            }
+
+            if (Regions.TryGetValue(key, out var found))
+                return found;
+
+            Logger.Warn($"Could not find region named {name}", Client);
+            return null;
+        }
+
+        /// <summary>Asynchronously retrieves <see cref="GridRegion"/> information using the region handle</summary>
+        public async Task<GridRegion?> GetGridRegionAsync(ulong handle, GridLayerType layer, CancellationToken cancellationToken = default)
+        {
+            if (RegionsByHandle.TryGetValue(handle, out var cached))
+                return cached;
 
             Utils.LongToUInts(handle, out var globalX, out var globalY);
             const uint regionWidthUnits = 256;
             ushort gridX = (ushort)(globalX / regionWidthUnits);
             ushort gridY = (ushort)(globalY / regionWidthUnits);
 
-            // Ask the server for the name of the region anchored at the specified grid position.
-            AutoResetEvent regionEvent = new AutoResetEvent(false);
+            var tcs = new TaskCompletionSource<GridRegion>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-            GridRegion foundRegion = default(GridRegion);
-            bool found = false;
-
-            void RegionCallback(object sender, GridRegionEventArgs e)
+            void Callback(object? sender, GridRegionEventArgs e)
             {
-                // See note in HandleCallback, above.
-                if (e.Region.RegionHandle != handle) 
-                    return;
-                
-                found = true;
-                foundRegion = e.Region;
-                regionEvent.Set();
-            }
-
-            GridRegion += RegionCallback;
-            RequestMapBlocks(layer, gridX, gridY, gridX, gridY, true);
-            regionEvent.WaitOne(Client.Settings.MAP_REQUEST_TIMEOUT, false);
-            GridRegion -= RegionCallback;
-            region = foundRegion;
-
-            if (!found)
-            {
-                Logger.Warn($"Could not find region at region handle {handle}", Client);
-            }
-
-            return found;
-        }
-
-        /// <summary>
-        /// Retrieves <see cref="GridRegion"/> information using the region name
-        /// </summary>
-        /// <remarks>This function will block until it can find the region or gives up</remarks>
-        /// <param name="name">Name of requested <see cref="GridRegion"/></param>
-        /// <param name="layer"><see cref="GridLayerType"/> for the
-        /// <see cref="GridRegion"/> being requested</param>
-        /// <param name="region">Output for the fetched <see cref="GridRegion"/>,
-        /// or empty struct if failure</param>
-        /// <returns>True if the <see cref="GridRegion"/> was fetched, otherwise false</returns>
-        public bool GetGridRegion(string name, GridLayerType layer, out GridRegion region)
-        {
-            if (string.IsNullOrEmpty(name))
-            {
-                Logger.Error("GetGridRegion called with a null or empty region name", Client);
-                region = new GridRegion();
-                return false;
-            }
-
-            var key = name.ToLowerInvariant();
-            if (Regions.TryGetValue(key, out region))
-            {
-                return true;
-            }
-
-            AutoResetEvent regionEvent = new AutoResetEvent(false);
-
-            void Callback(object sender, GridRegionEventArgs e)
-            {
-                if (string.Equals(e.Region.Name, name, StringComparison.InvariantCultureIgnoreCase))
-                {
-                    regionEvent.Set();
-                }
+                if (e.Region.RegionHandle == handle)
+                    tcs.TrySetResult(e.Region);
             }
 
             GridRegion += Callback;
+            try
+            {
+                RequestMapBlocks(layer, gridX, gridY, gridX, gridY, true);
 
-            RequestMapRegion(name, layer);
-            regionEvent.WaitOne(Client.Settings.MAP_REQUEST_TIMEOUT, false);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                linkedCts.CancelAfter(Client.Settings.Timing.MapRequestTimeout);
 
-            GridRegion -= Callback;
+                var completed = await Task.WhenAny(tcs.Task,
+                    Task.Delay(Timeout.InfiniteTimeSpan, linkedCts.Token)).ConfigureAwait(false);
 
-            if (Regions.TryGetValue(key, out region))
-                return true;
-            
-            Logger.Warn($"Could not find region named {name}", Client);
-            region = new GridRegion();
-            return false;
-            
+                if (completed == tcs.Task)
+                    return tcs.Task.Result;
+
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            finally
+            {
+                GridRegion -= Callback;
+            }
+
+            Logger.Warn($"Could not find region at region handle {handle}", Client);
+            return null;
         }
-        
-        protected void MapLayerResponseHandler(HttpResponseMessage response, byte[] responseData, Exception error)
+
+        /// <summary>Asynchronously returns a list of map items for a region</summary>
+        public async Task<List<MapItem>> MapItemsAsync(ulong regionHandle, GridItemType item, GridLayerType layer,
+            CancellationToken cancellationToken = default)
+        {
+            var tcs = new TaskCompletionSource<List<MapItem>>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            void Callback(object? sender, GridItemsEventArgs e)
+            {
+                if (e.Type == GridItemType.AgentLocations)
+                    tcs.TrySetResult(e.Items);
+            }
+
+            GridItems += Callback;
+            try
+            {
+                RequestMapItems(regionHandle, item, layer);
+
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                linkedCts.CancelAfter(TimeSpan.FromSeconds(20));
+
+                var completed = await Task.WhenAny(tcs.Task,
+                    Task.Delay(Timeout.InfiniteTimeSpan, linkedCts.Token)).ConfigureAwait(false);
+
+                if (completed == tcs.Task)
+                    return tcs.Task.Result;
+
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            finally
+            {
+                GridItems -= Callback;
+            }
+
+            return new List<MapItem>();
+        }
+
+        protected void MapLayerResponseHandler(HttpResponseMessage? response, byte[]? responseData, Exception? error)
         {
             if (error != null)
             {
                 Logger.Error($"MapLayerResponseHandler error: {error.Message}", error, Client);
+                return;
+            }
+
+            if (responseData == null)
+            {
+                Logger.Warn("MapLayerResponseHandler called with null responseData", Client);
                 return;
             }
 
@@ -737,7 +749,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void MapBlockReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void MapBlockReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             MapBlockReplyPacket map = (MapBlockReplyPacket)e.Packet;
 
@@ -774,7 +786,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void MapItemReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void MapItemReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_GridItems == null) 
                 return;
@@ -800,8 +812,7 @@ namespace OpenMetaverse
                         items.Add(location);
                         break;
                     case GridItemType.Classified:
-                        //FIXME:
-                        Logger.Error("FIXME", Client);
+                        // Deprecated by the viewer; servers no longer populate meaningful fields for this type.
                         break;
                     case GridItemType.LandForSale:
                         MapLandForSale landsale = new MapLandForSale
@@ -836,8 +847,7 @@ namespace OpenMetaverse
                         items.Add(PGEvent);
                         break;
                     case GridItemType.Popular:
-                        //FIXME:
-                        Logger.Error("FIXME", Client);
+                        // Deprecated by the viewer; servers no longer populate meaningful fields for this type.
                         break;
                     case GridItemType.Telehub:
                         MapTelehub teleHubItem = new MapTelehub
@@ -881,7 +891,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void SimulatorViewerTimeMessageHandler(object sender, PacketReceivedEventArgs e)
+        protected void SimulatorViewerTimeMessageHandler(object? sender, PacketReceivedEventArgs e)
         {
             SimulatorViewerTimeMessagePacket time = (SimulatorViewerTimeMessagePacket)e.Packet;
             
@@ -895,58 +905,51 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void CoarseLocationHandler(object sender, PacketReceivedEventArgs e)
+        private void OnSimDisconnected(object? sender, SimDisconnectedEventArgs e)
+        {
+            _coarsePositions.TryRemove(e.Simulator, out _);
+        }
+
+        protected void CoarseLocationHandler(object? sender, PacketReceivedEventArgs e)
         {
             CoarseLocationUpdatePacket coarse = (CoarseLocationUpdatePacket)e.Packet;
 
-            // populate a dictionary from the packet, for local use
-            var coarseEntries = new Dictionary<UUID, Vector3>(coarse.AgentData.Length);
+            // Build current snapshot from packet
+            var current = new Dictionary<UUID, Vector3>(coarse.AgentData.Length);
             for (var i = 0; i < coarse.AgentData.Length; i++)
             {
                 if (i < coarse.Location.Length)
-                    coarseEntries[coarse.AgentData[i].AgentID] = new Vector3(coarse.Location[i].X, coarse.Location[i].Y, coarse.Location[i].Z * 4);
+                    current[coarse.AgentData[i].AgentID] = new Vector3(coarse.Location[i].X, coarse.Location[i].Y, coarse.Location[i].Z * 4);
 
-                // the friend we are tracking on radar
                 if (i == coarse.Index.Prey)
                     e.Simulator.preyID = coarse.AgentData[i].AgentID;
             }
 
-            // find stale entries (people who left the sim)
-            var coarseKeys = new HashSet<UUID>(coarseEntries.Keys);
-            var removedEntries = e.Simulator.avatarPositions.Keys
-                .Where(avatarId => !coarseKeys.Contains(avatarId))
-                .ToList();
-
-            // entry not listed in the previous update
-            var newEntries = new List<UUID>(coarse.AgentData.Length);
-            
-            // remove stale entries
-            foreach (var trackedID in removedEntries)
-            {
-                e.Simulator.avatarPositions.TryRemove(trackedID, out var removed);
-            }
-
-            // add or update tracked info, and record who is new
-            foreach (var entry in coarseEntries)
-            {
-                if (!e.Simulator.avatarPositions.TryGetValue(entry.Key, out _))
-                {
-                    newEntries.Add(entry.Key);
-                }
-                e.Simulator.avatarPositions[entry.Key] = entry.Value;
-            }
+            // Swap snapshot and compute diff for event args
+            var previous = _coarsePositions.GetOrAdd(e.Simulator, _ => new Dictionary<UUID, Vector3>());
+            _coarsePositions[e.Simulator] = current;
 
             if (m_CoarseLocationUpdate != null)
             {
+                var newEntries = new List<UUID>();
+                var removedEntries = new List<UUID>();
+
+                foreach (var id in current.Keys)
+                    if (!previous.ContainsKey(id)) newEntries.Add(id);
+
+                foreach (var id in previous.Keys)
+                    if (!current.ContainsKey(id)) removedEntries.Add(id);
+
+                var snapshot = new ReadOnlyDictionary<UUID, Vector3>(current);
                 ThreadPool.QueueUserWorkItem(o =>
-                { OnCoarseLocationUpdate(new CoarseLocationUpdateEventArgs(e.Simulator, newEntries, removedEntries)); });
+                    OnCoarseLocationUpdate(new CoarseLocationUpdateEventArgs(e.Simulator, snapshot, newEntries, removedEntries)));
             }
         }
 
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void RegionHandleReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void RegionHandleReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             RegionIDAndHandleReplyPacket reply = (RegionIDAndHandleReplyPacket)e.Packet;
 
@@ -977,6 +980,7 @@ namespace OpenMetaverse
                         try { Client.Network.UnregisterCallback(PacketType.SimulatorViewerTimeMessage, SimulatorViewerTimeMessageHandler); } catch { }
                         try { Client.Network.UnregisterCallback(PacketType.CoarseLocationUpdate, CoarseLocationHandler); } catch { }
                         try { Client.Network.UnregisterCallback(PacketType.RegionIDAndHandleReply, RegionHandleReplyHandler); } catch { }
+                        try { Client.Network.SimDisconnected -= OnSimDisconnected; } catch { }
                     }
                 }
                 catch (Exception ex)
@@ -1007,12 +1011,15 @@ namespace OpenMetaverse
     public class CoarseLocationUpdateEventArgs : EventArgs
     {
         public Simulator Simulator { get; }
+        /// <summary>Full snapshot of all avatar positions in the simulator after this update</summary>
+        public IReadOnlyDictionary<UUID, Vector3> Positions { get; }
         public ICollection<UUID> NewEntries { get; }
         public ICollection<UUID> RemovedEntries { get; }
 
-        public CoarseLocationUpdateEventArgs(Simulator simulator, ICollection<UUID> newEntries, ICollection<UUID> removedEntries)
+        public CoarseLocationUpdateEventArgs(Simulator simulator, IReadOnlyDictionary<UUID, Vector3> positions, ICollection<UUID> newEntries, ICollection<UUID> removedEntries)
         {
             Simulator = simulator;
+            Positions = positions;
             NewEntries = newEntries;
             RemovedEntries = removedEntries;
         }

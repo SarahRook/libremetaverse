@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -25,12 +25,13 @@
  */
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Net;
 using System.Text;
 using System.Reflection;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public static partial class Utils
     {
@@ -170,7 +171,13 @@ namespace OpenMetaverse
 	        "animation",  // 19
 	        "gesture",    // 20
             string.Empty, // 21
-            "mesh"        // 22
+            "mesh",       // 22
+            "widget",     // 23
+            "person",     // 24
+            "settings",   // 25
+            "material",   // 26
+            "gltf",       // 27
+            "glbin"       // 28
         };
 
         private static readonly string[] _SaleTypeNames = {
@@ -707,7 +714,7 @@ namespace OpenMetaverse
         /// dump</param>
         /// <returns>A string containing hexadecimal characters on multiple
         /// lines. Each line is prepended with the field name</returns>
-        public static string BytesToHexString(byte[] bytes, int length, string fieldName)
+        public static string BytesToHexString(byte[] bytes, int length, string? fieldName)
         {
             StringBuilder output = new StringBuilder();
 
@@ -972,13 +979,16 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="value">Enum value</param>
         /// <returns>Text representation of the enum</returns>
+        [RequiresUnreferencedCode("Looks up enum field custom attributes via runtime reflection. Not AOT-safe.")]
         public static string EnumToText(Enum value)
         {
             // Get the type
             Type type = value.GetType();
 
             // Get fieldinfo for this type
-            FieldInfo fieldInfo = type.GetField(value.ToString());
+            FieldInfo? fieldInfo = type.GetField(value.ToString());
+            if (fieldInfo == null)
+                return value.ToString();
 
             // Find extended attributes, if any
             EnumInfoAttribute[] attribs = (EnumInfoAttribute[])fieldInfo.GetCustomAttributes(typeof(EnumInfoAttribute), false);
@@ -1115,7 +1125,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="bytes">Byte array to copy</param>
         /// <returns>A copy of the given byte array</returns>
-        public static byte[] CopyBytes(byte[] bytes)
+        public static byte[]? CopyBytes(byte[]? bytes)
         {
             if (bytes == null)
                 return null;
@@ -1227,7 +1237,7 @@ namespace OpenMetaverse
         /// <param name="strType">String value to parse</param>
         /// <param name="result">Enumeration value on success</param>
         /// <returns>True if the parsing succeeded, otherwise false</returns>
-        public static bool EnumTryParse<T>(string strType, out T result)
+        public static bool EnumTryParse<T>(string strType, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out T result)
         {
             Type t = typeof(T);
 
@@ -1245,7 +1255,7 @@ namespace OpenMetaverse
                     return true;
                 }
             }
-            result = default(T);
+            result = default!;
             return false;
         }
 
@@ -1266,11 +1276,10 @@ namespace OpenMetaverse
         /// <param name="hostname">Hostname to convert to an IPAddress</param>
         /// <returns>Converted IP address object, or null if the conversion
         /// failed</returns>
-        public static IPAddress HostnameToIPv4(string hostname)
+        public static IPAddress? HostnameToIPv4(string hostname)
         {
             // Is it already a valid IP?
-            IPAddress ip;
-            if (IPAddress.TryParse(hostname, out ip))
+            if (IPAddress.TryParse(hostname, out IPAddress? ip))
                 return ip;
 
             IPAddress[] hosts = Dns.GetHostEntry(hostname).AddressList;

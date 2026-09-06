@@ -28,8 +28,7 @@
 using System;
 using System.Text;
 using NUnit.Framework;
-using OpenMetaverse;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
 namespace LibreMetaverse.Tests
 {
@@ -47,12 +46,12 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeLLSDSample()
         {
-            OSD theSD = null;
-            OSDMap map = null;
-            OSD tempSD = null;
-            OSDUUID tempUUID = null;
-            OSDString tempStr = null;
-            OSDReal tempReal = null;
+            OSD? theSD = null;
+            OSDMap? map = null;
+            OSD? tempSD = null;
+            OSDUUID? tempUUID = null;
+            OSDString? tempStr = null;
+            OSDReal? tempReal = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -170,7 +169,7 @@ namespace LibreMetaverse.Tests
             </llsd>";
 
             byte[] bytes = Encoding.UTF8.GetBytes(testSD);
-            OSD theSD = OSDParser.DeserializeLLSDXml(bytes);
+            OSD? theSD = OSDParser.DeserializeLLSDXml(bytes);
 
             Assert.That(theSD, Is.InstanceOf<OSDMap>());
             OSDMap map = (OSDMap)theSD;
@@ -255,9 +254,9 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeReals()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDReal tempReal = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDReal? tempReal = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -303,9 +302,9 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeStrings()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDString tempStr = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDString? tempStr = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -352,9 +351,9 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeIntegers()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDInteger tempInt = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDInteger? tempInt = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -400,9 +399,9 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeUUID()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDUUID tempUUID = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDUUID? tempUUID = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -433,9 +432,9 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeDates()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDDate tempDate = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDDate? tempDate = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -473,9 +472,9 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeBoolean()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDBoolean tempBool = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDBoolean? tempBool = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -521,9 +520,9 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeBinary()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDBinary tempBinary = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDBinary? tempBinary = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -566,7 +565,7 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeUndef()
         {
-            OSD theSD = null;
+            OSD? theSD = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -585,9 +584,9 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeURI()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDUri tempURI = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDUri? tempURI = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>
@@ -620,10 +619,10 @@ namespace LibreMetaverse.Tests
         [Test]
         public void DeserializeNestedContainers()
         {
-            OSD theSD = null;
-            OSDArray array = null;
-            OSDMap map = null;
-            OSD tempSD = null;
+            OSD? theSD = null;
+            OSDArray? array = null;
+            OSDMap? map = null;
+            OSD? tempSD = null;
 
             string testSD = @"<?xml version='1.0' encoding='UTF-8'?>
             <llsd>

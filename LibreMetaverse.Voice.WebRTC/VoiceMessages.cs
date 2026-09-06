@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025, Sjofn LLC
  * All rights reserved.
  *
@@ -24,8 +24,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.Interfaces;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Interfaces;
+using LibreMetaverse.StructuredData;
 
 namespace LibreMetaverse.Voice.WebRTC
 {
@@ -47,17 +47,19 @@ namespace LibreMetaverse.Voice.WebRTC
 
         public OSDMap Serialize()
         {
-            var map = new OSDMap(1);
-            var jsep = new OSDMap(5)
+            var map = new OSDMap(4);
+            var jsep = new OSDMap(2)
             {
                 { "type", "offer" },
                 { "sdp", Sdp },
             };
+            map.Add("jsep", jsep);
+            // parcel_local_id is a top-level body field, NOT inside jsep.
+            // SL C++: if (mParcelLocalID != INVALID_PARCEL_ID) body["parcel_local_id"] = mParcelLocalID;
             if (ParcelId > -1)
             {
-                jsep["parcel_location_id"] = ParcelId;
+                map["parcel_local_id"] = ParcelId;
             }
-            map.Add("jsep", jsep);
             map.Add("channel_type", "local");
             map.Add("voice_server_type", "webrtc");
 
@@ -68,15 +70,15 @@ namespace LibreMetaverse.Voice.WebRTC
         {
             var jsep = (OSDMap)map["jsep"];
             Sdp = jsep["sdp"].AsString();
-            ParcelId = jsep["parcel_location_id"].AsInteger();
+            ParcelId = map["parcel_local_id"].AsInteger();
         }
     }
 
     internal class MultiAgentVoiceProvisionRequest : IMessage
     {
         public string Sdp;
-        public string ChannelId;
-        public string ChannelCredentials;
+        public string? ChannelId;
+        public string? ChannelCredentials;
 
         public MultiAgentVoiceProvisionRequest(string sdp)
         {
@@ -92,19 +94,22 @@ namespace LibreMetaverse.Voice.WebRTC
                 { "sdp", Sdp },
             };
             map.Add("jsep", jsep);
-            map.Add("channel", ChannelId);
-            map.Add("credentials", ChannelCredentials);
+            // Only include channel/credentials when actually set — unconditionally sending
+            // empty strings for a fresh multiagent request (no channel joined yet) differs from
+            // LocalVoiceProvisionRequest's already-conditional parcel_local_id, and there's no
+            // reason to believe the provisioning endpoint wants empty-string placeholders here.
+            if (!string.IsNullOrEmpty(ChannelId)) map.Add("channel", ChannelId!);
+            if (!string.IsNullOrEmpty(ChannelCredentials)) map.Add("credentials", ChannelCredentials!);
             map.Add("channel_type", "multiagent");
             map.Add("voice_server_type", "webrtc");
-
 
             return map;
         }
 
         public void Deserialize(OSDMap map)
         {
-            var jesp = (OSDMap)map["jesp"];
-            Sdp = jesp["sdp"].AsString();
+            var jsep = (OSDMap)map["jsep"];
+            Sdp = jsep["sdp"].AsString();
             ChannelId = map["channel"].AsString();
             ChannelCredentials = map["credentials"].AsString();
         }

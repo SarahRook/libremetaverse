@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -26,7 +26,7 @@
 
 using System;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Reads in a byte array of an Animation Asset created by the SecondLife(tm) client.
@@ -328,6 +328,9 @@ namespace OpenMetaverse
 
             */
 
+            if (keycount == 0)
+                return Array.Empty<binBVHJointKey>();
+
             binBVHJointKey[] m_keys = new binBVHJointKey[keycount];
             for (int j = 0; j < keycount; j++)
             {
@@ -352,7 +355,7 @@ namespace OpenMetaverse
             return m_keys;
         }
 
-        public bool Equals(BinBVHAnimationReader other)
+        public bool Equals(BinBVHAnimationReader? other)
         {
             if (ReferenceEquals(null, other)) return false;
             if (ReferenceEquals(this, other)) return true;
@@ -368,7 +371,7 @@ namespace OpenMetaverse
         /// <param name="obj">The <see cref="T:System.Object"/> to compare with the current <see cref="T:System.Object"/>.  
         ///                 </param><exception cref="T:System.NullReferenceException">The <paramref name="obj"/> parameter is null. 
         ///                 </exception><filterpriority>2</filterpriority> 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             if (ReferenceEquals(null, obj)) return false;
             if (ReferenceEquals(this, obj)) return true;
@@ -459,9 +462,9 @@ namespace OpenMetaverse
         /// </returns> 
         /// <param name="obj">Another object to compare to.  
         ///                 </param><filterpriority>2</filterpriority> 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
-            if (ReferenceEquals(null, obj)) return false;
+            if (obj is null) return false;
             return obj.GetType() == typeof(binBVHJoint) && Equals((binBVHJoint)obj);
         }
 

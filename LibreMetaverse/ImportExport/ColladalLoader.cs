@@ -28,37 +28,60 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.RegularExpressions;
 using System.IO;
 using System.Xml;
 using System.Linq;
 using System.Xml.Serialization;
-using CoreJ2K;
 using CoreJ2K.Configuration;
-using OpenMetaverse.ImportExport.Collada14;
-using OpenMetaverse.Rendering;
-using SkiaSharp;
+using CoreJ2K.Util;
+using LibreMetaverse.Imaging;
+using LibreMetaverse.ImportExport.Collada14;
+using LibreMetaverse.Rendering;
 
-namespace OpenMetaverse.ImportExport
+namespace LibreMetaverse.ImportExport
 {
     /// <summary>
     /// Parsing Collada model files into data structures
     /// </summary>
     public class ColladaLoader
     {
-        private COLLADA Model;
-        private static XmlSerializer Serializer = null;
-        private List<Node> Nodes;
-        private List<ModelMaterial> Materials;
-        private Dictionary<string, string> MatSymTarget;
-        private string FileName;
+        static ColladaLoader()
+        {
+            // LoadImage's J2C encode requires ManagedImage to be registered with CoreJ2K's
+            // ImageFactory. AssetTexture registers it too, but nothing guarantees that type has
+            // been touched yet in a process that only uses ColladaLoader (e.g. a standalone
+            // model-upload tool), so register it here as well -- redundant, not conflicting, if
+            // AssetTexture already has.
+            ImageFactory.Register(new ManagedImageCreator());
+        }
+
+        private COLLADA? Model;
+        private static XmlSerializer? Serializer = null;
+        private List<Node> Nodes = new List<Node>();
+        private List<ModelMaterial> Materials = new List<ModelMaterial>();
+        private Dictionary<string, string> MatSymTarget = new Dictionary<string, string>();
+        private string FileName = string.Empty;
+        private readonly ITextureCodec? _textureCodec;
+
+        /// <summary>
+        /// Creates a new Collada loader
+        /// </summary>
+        /// <param name="textureCodec">Decodes arbitrary (non-TGA, non-J2K) image formats referenced
+        /// by the model. Reference LibreMetaverse.Imaging.Skia for a working implementation, or
+        /// provide your own. Not required for models that only reference .tga/.jp2/.j2c textures.</param>
+        public ColladaLoader(ITextureCodec? textureCodec = null)
+        {
+            _textureCodec = textureCodec;
+        }
 
         private class Node
         {
             public Matrix4 Transform = Matrix4.Identity;
-            public string Name;
-            public string ID;
-            public string MeshID;
+            public string Name = string.Empty;
+            public string ID = string.Empty;
+            public string MeshID = string.Empty;
         }
 
         /// <summary>
@@ -67,6 +90,7 @@ namespace OpenMetaverse.ImportExport
         /// <param name="filename">Load .dae model from this file</param>
         /// <param name="loadImages">Load and decode images for uploading with model</param>
         /// <returns>A list of mesh prims that were parsed from the collada file</returns>
+        [RequiresUnreferencedCode("Uses XmlSerializer with runtime-reflected COLLADA types. Not AOT-safe.")]
         public List<ModelPrim> Load(string filename, bool loadImages)
         {
             try
@@ -74,16 +98,27 @@ namespace OpenMetaverse.ImportExport
                 // Create an instance of the XmlSerializer specifying type and namespace.
                 if (Serializer == null)
                 {
+#pragma warning disable IL3050
                     Serializer = new XmlSerializer(typeof(COLLADA));
+#pragma warning restore IL3050
                 }
 
                 this.FileName = filename;
 
                 // A FileStream is needed to read the XML document.
-                FileStream fs = new FileStream(filename, FileMode.Open);
-                XmlReader reader = XmlReader.Create(fs);
-                Model = (COLLADA)Serializer.Deserialize(reader);
-                fs.Close();
+                object? des;
+                using (var fs = new FileStream(filename, FileMode.Open))
+                using (var reader = XmlReader.Create(fs))
+                {
+#pragma warning disable IL3050
+                    des = Serializer.Deserialize(reader);
+#pragma warning restore IL3050
+                }
+                Model = des as COLLADA;
+                if (Model == null)
+                {
+                    throw new InvalidOperationException("Failed to deserialize COLLADA document");
+                }
                 var prims = Parse();
                 if (loadImages)
                 {
@@ -114,32 +149,42 @@ namespace OpenMetaverse.ImportExport
 
         private void LoadImage(ModelMaterial material)
         {
-            var fname = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(FileName), material.Texture);
+            var fname = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(FileName) ?? string.Empty, material.Texture);
 
             try
             {
-                string ext = System.IO.Path.GetExtension(material.Texture).ToLower();
+                string ext = System.IO.Path.GetExtension(material.Texture).ToLowerInvariant();
 
-                SKBitmap bitmap;
+                if (ext == ".jp2" || ext == ".j2c")
+                {
+                    material.TextureData = File.ReadAllBytes(fname);
+                    return;
+                }
 
+                ManagedImage image;
                 switch (ext)
                 {
-                    case ".jp2":
-                    case ".j2c":
-                        material.TextureData = File.ReadAllBytes(fname);
-                        return;
                     case ".tga":
                     case ".targa":
-                        bitmap = Imaging.Targa.Decode(fname);
+                        image = Targa.DecodeToManagedImage(fname);
                         break;
                     default:
-                        var img = SKImage.FromEncodedData(fname);
-                        bitmap = SKBitmap.FromImage(img);
+                        if (_textureCodec == null)
+                        {
+                            throw new InvalidOperationException(
+                                $"No ITextureCodec configured to decode '{fname}'. Reference " +
+                                "LibreMetaverse.Imaging.Skia (or provide your own ITextureCodec " +
+                                "implementation) and pass it to the ColladaLoader constructor.");
+                        }
+                        using (var fs = File.OpenRead(fname))
+                        {
+                            image = _textureCodec.Decode(fs);
+                        }
                         break;
                 }
 
-                int width = bitmap.Width;
-                int height = bitmap.Height;
+                int width = image.Width;
+                int height = image.Height;
 
                 // Handle resizing to prevent excessively large images and irregular dimensions
                 if (!IsPowerOfTwo((uint)width) || !IsPowerOfTwo((uint)height) || width > 1024 || height > 1024)
@@ -155,15 +200,12 @@ namespace OpenMetaverse.ImportExport
 
                     Logger.Info($"Image has irregular dimensions {origWidth}x{origHieght}. Resizing to {width}x{height}");
 
-                    var info = new SKImageInfo(width, height);
-                    var scaledImage = new SKBitmap(info);
-                    bitmap.ScalePixels(scaledImage.PeekPixels(), new SKSamplingOptions(SKFilterMode.Linear));
-                    bitmap.Dispose();
-                    bitmap = scaledImage;
+                    image.ResizeBilinear(width, height);
                 }
 
-                material.TextureData = J2kImage.ToBytes(bitmap, 
-                    new CompleteEncoderConfigurationBuilder().ForStreaming().Build());
+                material.Width = width;
+                material.Height = height;
+                material.TextureData = CompleteConfigurationPresets.Streaming.WithFileFormat(false).Encode(image);
 
                 Logger.Info($"Successfully encoded {fname}");
             }
@@ -196,7 +238,11 @@ namespace OpenMetaverse.ImportExport
             ModelMaterial ret = new ModelMaterial();
             if (diffuse is common_color_or_texture_typeColor color)
             {
-                ret.DiffuseColor = new Color4((float)color.Values[0], (float)color.Values[1], (float)color.Values[2], (float)color.Values[3]);
+                ret.DiffuseColor = new Color4(
+                    Utils.Clamp((float)color.Values[0], 0f, 1f),
+                    Utils.Clamp((float)color.Values[1], 0f, 1f),
+                    Utils.Clamp((float)color.Values[2], 0f, 1f),
+                    Utils.Clamp((float)color.Values[3], 0f, 1f));
             }
             else if (diffuse is common_color_or_texture_typeTexture tex)
             {
@@ -248,9 +294,10 @@ namespace OpenMetaverse.ImportExport
                         foreach (var material in materials.material)
                         {
                             var ID = material.id;
-                            if (!string.IsNullOrEmpty(material.instance_effect?.url))
+                            var effectUrl = material.instance_effect?.url;
+                            if (!string.IsNullOrEmpty(effectUrl))
                             {
-                                matEffect[material.instance_effect.url.Substring(1)] = ID;
+                                matEffect[effectUrl!.Substring(1)] = ID;
                             }
                         }
                     }
@@ -327,13 +374,11 @@ namespace OpenMetaverse.ImportExport
                 {
                     if (i is matrix mtx)
                     {
-                        for (int a = 0; a < 4; a++)
-                        {
-                            for (int b = 0; b < 4; b++)
-                            {
-                                n.Transform[b, a] = (float)mtx.Values[a * 4 + b];
-                            }
-                        }
+                        n.Transform = new Matrix4(
+                            (float)mtx.Values[0],  (float)mtx.Values[4],  (float)mtx.Values[8],  (float)mtx.Values[12],
+                            (float)mtx.Values[1],  (float)mtx.Values[5],  (float)mtx.Values[9],  (float)mtx.Values[13],
+                            (float)mtx.Values[2],  (float)mtx.Values[6],  (float)mtx.Values[10], (float)mtx.Values[14],
+                            (float)mtx.Values[3],  (float)mtx.Values[7],  (float)mtx.Values[11], (float)mtx.Values[15]);
                     }
                 }
             }
@@ -409,9 +454,11 @@ namespace OpenMetaverse.ImportExport
                 if (asset.unit != null)
                 {
                     float meter = (float)asset.unit.meter;
-                    transform[0, 0] = meter;
-                    transform[1, 1] = meter;
-                    transform[2, 2] = meter;
+                    transform = new Matrix4(
+                        meter, transform.M12, transform.M13, transform.M14,
+                        transform.M21, meter, transform.M23, transform.M24,
+                        transform.M31, transform.M32, meter, transform.M34,
+                        transform.M41, transform.M42, transform.M43, transform.M44);
                 }
             }
 
@@ -440,7 +487,7 @@ namespace OpenMetaverse.ImportExport
                             continue;
 
                         var nodes = Nodes.FindAll(n => n.MeshID == geo.id);     // Find all instances of this geometry
-                        ModelPrim firstPrim = null;         // The first prim is actually calculated, the others are just copied from it.
+                        ModelPrim? firstPrim = null;         // The first prim is actually calculated, the others are just copied from it.
 
                         Vector3 asset_scale = new Vector3(1,1,1);
                         Vector3 asset_offset = new Vector3(0, 0, 0);            // Scale and offset between Collada and OS asset (Which is always in a unit cube)
@@ -469,11 +516,11 @@ namespace OpenMetaverse.ImportExport
                             }
                             else {
                                 // Copy the values set by Addpositions and AddFacesFromPolyList as these are the same as long as the mesh is the same
-                                prim.Asset = firstPrim.Asset;
-                                prim.BoundMin = firstPrim.BoundMin;
-                                prim.BoundMax = firstPrim.BoundMax;
-                                prim.Positions = firstPrim.Positions;
-                                prim.Faces = firstPrim.Faces;
+                                prim.Asset = firstPrim!.Asset;
+                                prim.BoundMin = firstPrim!.BoundMin;
+                                prim.BoundMax = firstPrim!.BoundMax;
+                                prim.Positions = firstPrim!.Positions;
+                                prim.Faces = firstPrim!.Faces;
                             }
 
                             // Note: This ignores any shear or similar non-linear effects. This can cause some problems but it
@@ -496,7 +543,7 @@ namespace OpenMetaverse.ImportExport
             return Prims;
         }
 
-        private source FindSource(IEnumerable<source> sources, string id)
+        private source? FindSource(IEnumerable<source> sources, string id)
         {
             id = id.Substring(1);
 
@@ -506,7 +553,8 @@ namespace OpenMetaverse.ImportExport
         private void AddPositions(out Vector3 scale, out Vector3 offset, mesh mesh, ModelPrim prim, Matrix4 transform)
         {
             prim.Positions = new List<Vector3>();
-            source posSrc = FindSource(mesh.source, mesh.vertices.input[0].source);
+            source? posSrc = FindSource(mesh.source, mesh.vertices.input[0].source);
+            if (posSrc == null) throw new InvalidDataException("Missing position source in Collada mesh");
             double[] posVals = ((float_array)posSrc.Item).Values;
 
             for (int i = 0; i < posVals.Length / 3; i++)
@@ -521,13 +569,14 @@ namespace OpenMetaverse.ImportExport
 
             foreach (var pos in prim.Positions)
             {
-                if (pos.X > prim.BoundMax.X) prim.BoundMax.X = pos.X;
-                if (pos.Y > prim.BoundMax.Y) prim.BoundMax.Y = pos.Y;
-                if (pos.Z > prim.BoundMax.Z) prim.BoundMax.Z = pos.Z;
-
-                if (pos.X < prim.BoundMin.X) prim.BoundMin.X = pos.X;
-                if (pos.Y < prim.BoundMin.Y) prim.BoundMin.Y = pos.Y;
-                if (pos.Z < prim.BoundMin.Z) prim.BoundMin.Z = pos.Z;
+                prim.BoundMax = new Vector3(
+                    Math.Max(prim.BoundMax.X, pos.X),
+                    Math.Max(prim.BoundMax.Y, pos.Y),
+                    Math.Max(prim.BoundMax.Z, pos.Z));
+                prim.BoundMin = new Vector3(
+                    Math.Min(prim.BoundMin.X, pos.X),
+                    Math.Min(prim.BoundMin.Y, pos.Y),
+                    Math.Min(prim.BoundMin.Z, pos.Z));
             }
 
             scale = prim.BoundMax - prim.BoundMin;
@@ -561,9 +610,9 @@ namespace OpenMetaverse.ImportExport
 
         private void AddFacesFromPolyList(polylist list, mesh mesh, ModelPrim prim, Matrix4 transform)
         {
-            source posSrc = null;
-            source normalSrc = null;
-            source uvSrc = null;
+            source? posSrc = null;
+            source? normalSrc = null;
+            source? uvSrc = null;
 
             ulong stride = 0;
             int posOffset = -1;
@@ -598,7 +647,7 @@ namespace OpenMetaverse.ImportExport
             var vcount = StrToArray(list.vcount);
             var idx = StrToArray(list.p);
 
-            Vector3[] normals = null;
+            Vector3[]? normals = null;
             if (normalSrc != null)
             {
                 var norVal = ((float_array)normalSrc.Item).Values;
@@ -607,12 +656,11 @@ namespace OpenMetaverse.ImportExport
                 for (int i = 0; i < normals.Length; i++)
                 {
                     normals[i] = new Vector3((float)norVal[i * 3 + 0], (float)norVal[i * 3 + 1], (float)norVal[i * 3 + 2]);
-                    normals[i] = Vector3.TransformNormal(normals[i], transform);
-                    normals[i].Normalize();
+                    normals[i] = Vector3.Normalize(Vector3.TransformNormal(normals[i], transform));
                 }
             }
 
-            Vector2[] uvs = null;
+            Vector2[]? uvs = null;
             if (uvSrc != null)
             {
                 var uvVal = ((float_array)uvSrc.Item).Values;
@@ -630,7 +678,7 @@ namespace OpenMetaverse.ImportExport
             {
                 if (MatSymTarget.TryGetValue(list.material, out var value))
                 {
-                    ModelMaterial mat = Materials.Find(m => m.ID == value);
+                    ModelMaterial? mat = Materials.Find(m => m.ID == value);
                     if (mat != null)
                     {
                         face.Material = mat;

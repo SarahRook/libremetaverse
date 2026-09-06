@@ -27,7 +27,8 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
-using OpenMetaverse;
+using System.Threading.Tasks;
+using LibreMetaverse;
 using LibreMetaverse.Voice.Vivox;
 
 namespace VoiceTest
@@ -58,7 +59,7 @@ namespace VoiceTest
         static int VoiceLocalID = 0;
         static string VoiceChannelURI = string.Empty;
 
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             if (args.Length < 3)
             {
@@ -72,15 +73,15 @@ namespace VoiceTest
             
 
             GridClient client = new GridClient();
-            client.Settings.MULTIPLE_SIMS = false;
-            Settings.LOG_LEVEL = Microsoft.Extensions.Logging.LogLevel.None;
-            client.Settings.LOG_RESENDS = false;
-            client.Settings.STORE_LAND_PATCHES = true;
-            client.Settings.ALWAYS_DECODE_OBJECTS = true;
-            client.Settings.ALWAYS_REQUEST_OBJECTS = true;
-            client.Settings.SEND_AGENT_UPDATES = true;
+            client.Settings.Agent.MultipleSims = false;
+            Settings.LogLevel = Microsoft.Extensions.Logging.LogLevel.None;
+            client.Settings.Logging.LogResends = false;
+            client.Settings.World.StoreLandPatches = true;
+            client.Settings.World.AlwaysDecodeObjects = true;
+            client.Settings.World.AlwaysRequestObjects = true;
+            client.Settings.Agent.SendUpdates = true;
 
-            string loginURI = client.Settings.LOGIN_SERVER;
+            string loginURI = client.Settings.Connection.LoginServer;
             if (4 == args.Length) {
                 loginURI = args[3];
             }
@@ -114,7 +115,7 @@ namespace VoiceTest
                 LoginParams loginParams = 
                     client.Network.DefaultLoginParams(firstName, lastName, password, "Voice Test", "1.0.0");
                 loginParams.URI = loginURI;
-                if (!client.Network.Login(loginParams))
+                if (!await client.Network.LoginAsync(loginParams))
                     throw new VoiceException("Login to SL failed: " + client.Network.LoginMessage);
                 Console.WriteLine("Logged in: " + client.Network.LoginMessage);
 
@@ -173,7 +174,7 @@ namespace VoiceTest
             Console.ReadKey();
         }
 
-        static void client_OnEventQueueRunning(object sender, EventQueueRunningEventArgs e)
+        static void client_OnEventQueueRunning(object? sender, EventQueueRunningEventArgs e)
         {
             EventQueueRunningEvent.Set();
         }
@@ -186,11 +187,11 @@ namespace VoiceTest
             ProvisionEvent.Set();
         }
 
-        static void voice_OnParcelVoiceInfo(string regionName, int localID, string channelURI)
+        static void voice_OnParcelVoiceInfo(string regionName, int localID, string? channelURI)
         {
             VoiceRegionName = regionName;
             VoiceLocalID = localID;
-            VoiceChannelURI = channelURI;
+            VoiceChannelURI = channelURI ?? string.Empty;
 
             ParcelVoiceInfoEvent.Set();
         }

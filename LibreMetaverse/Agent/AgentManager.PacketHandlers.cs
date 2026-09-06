@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2019-2025, Sjofn LLC
  * All rights reserved.
@@ -25,10 +25,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.Interfaces;
-using OpenMetaverse.Messages.Linden;
-using OpenMetaverse.Packets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Interfaces;
+using LibreMetaverse.Messages.Linden;
+using LibreMetaverse.Packets;
+using LibreMetaverse.StructuredData;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -38,7 +38,7 @@ using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Threading;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class AgentManager
     {
@@ -52,11 +52,11 @@ namespace OpenMetaverse
         private Simulator ResolveSimulatorFromMessage(object msg, Simulator fallbackSimulator)
         {
             if (msg == null)
-                return fallbackSimulator ?? Client?.Network?.CurrentSim;
+                return fallbackSimulator ?? Client?.Network?.CurrentSim!;
 
             // Try to extract region handle from common message types
             ulong regionHandle = 0;
-            IPEndPoint endPoint = null;
+            IPEndPoint? endPoint = null;
 
             // Check known message types that contain region information
             switch (msg)
@@ -102,7 +102,7 @@ namespace OpenMetaverse
                 Logger.Debug($"Could not resolve simulator for handle={regionHandle}, endpoint={endPoint}, using fallback", Client);
             }
 
-            return fallbackSimulator ?? Client?.Network?.CurrentSim;
+            return fallbackSimulator ?? Client?.Network?.CurrentSim!;
         }
 
         /// <summary>
@@ -111,12 +111,12 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void InstantMessageHandler(object sender, PacketReceivedEventArgs e)
+        protected void InstantMessageHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             
             // Resolve the simulator for this IM
-            Simulator simulator = ResolveSimulator(e);
+            Simulator? simulator = ResolveSimulator(e);
 
             if (packet.Type != PacketType.ImprovedInstantMessage) return;
 
@@ -141,11 +141,7 @@ namespace OpenMetaverse
 
                 if (IsGroupMessage(message))
                 {
-                    lock (GroupChatSessions.Dictionary)
-                    {
-                        if (!GroupChatSessions.ContainsKey(message.IMSessionID))
-                            GroupChatSessions.Add(message.IMSessionID, new List<ChatSessionMember>());
-                    }
+                    GroupChatSessions.TryAdd(message.IMSessionID, new List<ChatSessionMember>());
                 }
 
                 OnInstantMessage(new InstantMessageEventArgs(message, simulator));
@@ -158,7 +154,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ChatHandler(object sender, PacketReceivedEventArgs e)
+        protected void ChatHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_Chat == null) return;
             Packet packet = e.Packet;
@@ -180,7 +176,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ScriptDialogHandler(object sender, PacketReceivedEventArgs e)
+        protected void ScriptDialogHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_ScriptDialog == null) return;
             Packet packet = e.Packet;
@@ -211,7 +207,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ScriptQuestionHandler(object sender, PacketReceivedEventArgs e)
+        protected void ScriptQuestionHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_ScriptQuestion == null) return;
             Packet packet = e.Packet;
@@ -232,7 +228,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        private void ScriptControlChangeHandler(object sender, PacketReceivedEventArgs e)
+        private void ScriptControlChangeHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_ScriptControl == null) return;
             Packet packet = e.Packet;
@@ -251,7 +247,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void LoadURLHandler(object sender, PacketReceivedEventArgs e)
+        protected void LoadURLHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_LoadURL == null) return;
             Packet packet = e.Packet;
@@ -274,17 +270,17 @@ namespace OpenMetaverse
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
         /// <remarks>This occurs when after an avatar moves into a new sim</remarks>
-        private void MovementCompleteHandler(object sender, PacketReceivedEventArgs e)
+        private void MovementCompleteHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             
             // Use ResolveSimulator to get the correct simulator for this movement
-            Simulator simulator = ResolveSimulator(e);
+            Simulator? simulator = ResolveSimulator(e);
 
             AgentMovementCompletePacket movement = (AgentMovementCompletePacket)packet;
 
             relativePosition = movement.Data.Position;
-            LastPositionUpdate = DateTime.UtcNow;
+            LastPositionUpdate = Client.UtcNow;
             Movement.Camera.LookDirection(movement.Data.LookAt);
             
             if (simulator != null)
@@ -318,7 +314,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void HealthHandler(object sender, PacketReceivedEventArgs e)
+        protected void HealthHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             Health = ((HealthMessagePacket)packet).HealthData.Health;
@@ -327,7 +323,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void AgentDataUpdateHandler(object sender, PacketReceivedEventArgs e)
+        protected void AgentDataUpdateHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             Simulator simulator = e.Simulator;
@@ -358,7 +354,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void MoneyBalanceReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void MoneyBalanceReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
 
@@ -399,7 +395,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void TeleportHandler(object sender, PacketReceivedEventArgs e)
+        protected void TeleportHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             Simulator simulator = e.Simulator;
@@ -456,8 +452,13 @@ namespace OpenMetaverse
                 Logger.DebugLog($"TeleportFinish received, Flags: {flags}", Client);
 
                 // Connect to the new sim
-                Client.Network.CurrentSim.AgentMovementComplete = false; // we're not there anymore
-                Simulator newSimulator = Client.Network.Connect(new IPAddress(finish.Info.SimIP),
+                var currentSim = Client?.Network?.CurrentSim;
+                if (currentSim != null)
+                {
+                    currentSim.AgentMovementComplete = false; // we're not there anymore
+                }
+
+                Simulator? newSimulator = Client?.Network?.Connect(new IPAddress(finish.Info.SimIP),
                     finish.Info.SimPort, finish.Info.RegionHandle, true, seedcaps);
 
                 if (newSimulator != null)
@@ -494,7 +495,7 @@ namespace OpenMetaverse
                 flags = (TeleportFlags)local.Info.TeleportFlags;
                 teleportStatus = TeleportStatus.Finished;
                 relativePosition = local.Info.Position;
-                LastPositionUpdate = DateTime.UtcNow;
+                LastPositionUpdate = Client.UtcNow;
                 Movement.Camera.LookDirection(local.Info.LookAt);
                 // This field is apparently not used for anything
                 //local.Info.LocationID;
@@ -510,24 +511,23 @@ namespace OpenMetaverse
 
             if (finished)
             {
-                teleportEvent.Set();
+                _teleportTcs?.TrySetResult(teleportStatus == TeleportStatus.Finished);
             }
         }
 
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void AvatarAnimationHandler(object sender, PacketReceivedEventArgs e)
+        protected void AvatarAnimationHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             AvatarAnimationPacket animation = (AvatarAnimationPacket)packet;
 
             if (animation.Sender.ID == Client.Self.AgentID)
             {
-                lock (SignaledAnimations.Dictionary)
                 {
                     // Reset the signaled animation list
-                    SignaledAnimations.Dictionary.Clear();
+                    SignaledAnimations.Clear();
 
                     for (int i = 0; i < animation.AnimationList.Length; i++)
                     {
@@ -535,7 +535,7 @@ namespace OpenMetaverse
                         int sequenceID = animation.AnimationList[i].AnimSequenceID;
 
                         // Add this animation to the list of currently signaled animations
-                        SignaledAnimations.Dictionary[animID] = sequenceID;
+                        SignaledAnimations[animID] = sequenceID;
 
                         if (i < animation.AnimationSourceList.Length)
                         {
@@ -550,7 +550,7 @@ namespace OpenMetaverse
                             // FIXME: What is this?
                         }
 
-                        if (!Client.Settings.SEND_AGENT_UPDATES) continue;
+                        if (!Client.Settings.Agent.SendUpdates) continue;
                         // We have to manually tell the server to stop playing some animations
                         if (animID == Animations.STANDUP ||
                             animID == Animations.PRE_JUMP ||
@@ -567,7 +567,7 @@ namespace OpenMetaverse
 
             if (m_AnimationsChanged != null)
             {
-                ThreadPool.QueueUserWorkItem(delegate (object o)
+                ThreadPool.QueueUserWorkItem(delegate (object? o)
                 {
                     OnAnimationsChanged(new AnimationsChangedEventArgs(this.SignaledAnimations));
                 });
@@ -577,7 +577,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void MeanCollisionAlertHandler(object sender, PacketReceivedEventArgs e)
+        protected void MeanCollisionAlertHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_MeanCollision == null) return;
             Packet packet = e.Packet;
@@ -596,7 +596,7 @@ namespace OpenMetaverse
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
         /// <remarks>This packet is now being sent via the EventQueue</remarks>
-        protected void CrossedRegionHandler(object sender, PacketReceivedEventArgs e)
+        protected void CrossedRegionHandler(object? sender, PacketReceivedEventArgs e)
         {
             Packet packet = e.Packet;
             CrossedRegionPacket crossing = (CrossedRegionPacket)packet;
@@ -606,7 +606,7 @@ namespace OpenMetaverse
             Logger.Info($"Crossed in to new region area, attempting to connect to {endPoint}", Client);
 
             // Use ResolveSimulator to get the old simulator context
-            Simulator oldSim = ResolveSimulator(e);
+            Simulator? oldSim = ResolveSimulator(e);
             
             // Use the state machine to handle the crossing
             if (!BeginRegionCrossing(oldSim, crossing.RegionData.RegionHandle, endPoint, seedCap, 
@@ -619,19 +619,19 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void AlertMessageHandler(object sender, PacketReceivedEventArgs e)
+        protected void AlertMessageHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_AlertMessage == null) return;
             Packet packet = e.Packet;
 
             AlertMessagePacket alert = (AlertMessagePacket)packet;
 
-            string message = Utils.BytesToString(alert.AlertData.Message);
+            string message = Utils.BytesToString(alert.AlertData.Message) ?? string.Empty;
 
             if (alert.AlertInfo.Length > 0)
             {
-                string notificationid = Utils.BytesToString(alert.AlertInfo[0].Message);
-                OSDMap extra = (alert.AlertInfo[0].ExtraParams != null && alert.AlertInfo[0].ExtraParams.Length > 0)
+                string notificationid = Utils.BytesToString(alert.AlertInfo[0].Message) ?? string.Empty;
+                OSDMap? extra = (alert.AlertInfo[0].ExtraParams != null && alert.AlertInfo[0].ExtraParams.Length > 0)
                     ? OSDParser.Deserialize(alert.AlertInfo[0].ExtraParams) as OSDMap
                     : null;
                 OnAlertMessage(new AlertMessageEventArgs(message, notificationid, extra));
@@ -642,7 +642,7 @@ namespace OpenMetaverse
             }
         }
 
-        protected void AgentAlertMessageHandler(object sender, PacketReceivedEventArgs e)
+        protected void AgentAlertMessageHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_AlertMessage == null) return;
             Packet packet = e.Packet;
@@ -656,7 +656,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void CameraConstraintHandler(object sender, PacketReceivedEventArgs e)
+        protected void CameraConstraintHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_CameraConstraint == null) return;
             Packet packet = e.Packet;
@@ -668,7 +668,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ScriptSensorReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void ScriptSensorReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_ScriptSensorReply == null) return;
             Packet packet = e.Packet;
@@ -689,7 +689,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void AvatarSitResponseHandler(object sender, PacketReceivedEventArgs e)
+        protected void AvatarSitResponseHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_AvatarSitResponse == null) return;
             Packet packet = e.Packet;
@@ -702,7 +702,7 @@ namespace OpenMetaverse
                 sit.SitTransform.SitRotation));
         }
 
-        protected void MuteListUpdateHandler(object sender, PacketReceivedEventArgs e)
+        protected void MuteListUpdateHandler(object? sender, PacketReceivedEventArgs e)
         {
             MuteListUpdatePacket packet = (MuteListUpdatePacket)e.Packet;
             if (packet.MuteData.AgentID != Client.Self.AgentID)
@@ -717,9 +717,9 @@ namespace OpenMetaverse
                     string fileName = Utils.BytesToString(packet.MuteData.Filename);
                     string muteList = string.Empty;
                     ulong xferID = 0;
-                    byte[] assetData = null;
+                    byte[]? assetData = null;
 
-                    EventHandler<XferReceivedEventArgs> xferCallback = (object xsender, XferReceivedEventArgs xe) =>
+                    EventHandler<XferReceivedEventArgs> xferCallback = (object? xsender, XferReceivedEventArgs xe) =>
                     {
                         if (xe.Xfer.XferID != xferID) return;
                         assetData = xe.Xfer.AssetData;
@@ -732,11 +732,10 @@ namespace OpenMetaverse
 
                     if (gotMuteList.WaitOne(TimeSpan.FromMinutes(1), false))
                     {
-                        muteList = Utils.BytesToString(assetData);
+                        muteList = Utils.BytesToString(assetData ?? Utils.EmptyBytes);
 
-                        lock (MuteList.Dictionary)
                         {
-                            MuteList.Dictionary.Clear();
+                            MuteList.Clear();
                             foreach (var line in muteList.Split('\n'))
                             {
                                 if (line.Trim() == string.Empty) continue;
@@ -787,23 +786,14 @@ namespace OpenMetaverse
         {
             if (message.GroupIM)
                 return true;
-            
-            lock (Client.Groups.GroupName2KeyCache.Dictionary)
-            {
-                if (Client.Groups.GroupName2KeyCache.ContainsKey(message.IMSessionID))
-                    return true;
-            }
 
-            lock (GroupChatSessions.Dictionary)
-            {
-                if (GroupChatSessions.ContainsKey(message.IMSessionID))
-                    return true;
-            }
+            if (GroupChatSessions.ContainsKey(message.IMSessionID))
+                return true;
 
             return false;
         }
 
-        protected void OfflineMessageHandlerCallback(HttpResponseMessage response, byte[] data, Exception error)
+        protected void OfflineMessageHandlerCallback(HttpResponseMessage? response, byte[]? data, Exception? error)
         {
             if (error != null)
             {
@@ -814,14 +804,28 @@ namespace OpenMetaverse
 
             if (m_InstantMessage == null) { return; } // don't bother if we don't have any listeners
 
-            OSD result = OSDParser.Deserialize(data);
+            OSD result = OSDParser.Deserialize(data ?? Utils.EmptyBytes);
             if (result == null)
             {
                 Logger.Warn("Failed to decode offline messages from data, trying legacy method (Null reply)");
                 RetrieveInstantMessagesLegacy();
                 return;
             }
-            if (result.Type != OSDType.Array)
+
+            // The server may respond with either a bare array whose first element is the message
+            // array, or a map with the message array under a "messages" key. Both are currently
+            // valid depending on the grid's rollout state (llimprocessing.cpp requestOfflineMessagesCoro).
+            OSDArray? messages = null;
+            if (result is OSDArray topArray && topArray.Count > 0 && topArray[0] is OSDArray innerArray)
+            {
+                messages = innerArray;
+            }
+            else if (result is OSDMap topMap && topMap.TryGetValue("messages", out var messagesOsd) && messagesOsd is OSDArray namedArray)
+            {
+                messages = namedArray;
+            }
+
+            if (messages == null)
             {
                 Logger.Warn("Failed to decode offline messages from data trying legacy method (Wrong unpack type expected array)");
                 RetrieveInstantMessagesLegacy();
@@ -829,46 +833,37 @@ namespace OpenMetaverse
             }
             try
             {
-                OSDArray respMap = (OSDArray)result;
-                ArrayList listEntrys = respMap.ToArrayList();
-                foreach (OSDArray listEntry in listEntrys)
+                foreach (var osd in messages)
                 {
-                    foreach (var osd in listEntry)
+                    var msg = (OSDMap)osd;
+
+                    InstantMessage message;
+                    message.FromAgentID = msg["from_agent_id"].AsUUID();
+                    message.FromAgentName = msg["from_agent_name"].AsString();
+                    message.ToAgentID = msg["to_agent_id"].AsUUID();
+                    message.RegionID = msg["region_id"].AsUUID();
+                    message.Dialog = (InstantMessageDialog)msg["dialog"].AsInteger();
+                    message.IMSessionID = msg["transaction-id"].AsUUID();
+                    message.Timestamp = new DateTime(msg["timestamp"].AsInteger());
+                    message.Message = msg["message"].AsString();
+                    message.Offline = msg.ContainsKey("offline")
+                        ? (InstantMessageOnline)msg["offline"].AsInteger()
+                        : InstantMessageOnline.Offline;
+                    message.ParentEstateID = msg.ContainsKey("parent_estate_id")
+                        ? msg["parent_estate_id"].AsUInteger() : 1;
+                    message.Position = msg.ContainsKey("position")
+                        ? msg["position"].AsVector3()
+                        : new Vector3(msg["local_x"], msg["local_y"], msg["local_z"]);
+                    message.BinaryBucket = msg.ContainsKey("binary_bucket")
+                        ? msg["binary_bucket"].AsBinary() : new byte[] { 0 };
+                    message.GroupIM = msg.ContainsKey("from_group") && msg["from_group"].AsBoolean();
+
+                    if (message.GroupIM)
                     {
-                        var msg = (OSDMap)osd;
-
-                        InstantMessage message;
-                        message.FromAgentID = msg["from_agent_id"].AsUUID();
-                        message.FromAgentName = msg["from_agent_name"].AsString();
-                        message.ToAgentID = msg["to_agent_id"].AsUUID();
-                        message.RegionID = msg["region_id"].AsUUID();
-                        message.Dialog = (InstantMessageDialog)msg["dialog"].AsInteger();
-                        message.IMSessionID = msg["transaction-id"].AsUUID();
-                        message.Timestamp = new DateTime(msg["timestamp"].AsInteger());
-                        message.Message = msg["message"].AsString();
-                        message.Offline = msg.ContainsKey("offline")
-                            ? (InstantMessageOnline)msg["offline"].AsInteger()
-                            : InstantMessageOnline.Offline;
-                        message.ParentEstateID = msg.ContainsKey("parent_estate_id")
-                            ? msg["parent_estate_id"].AsUInteger() : 1;
-                        message.Position = msg.ContainsKey("position")
-                            ? msg["position"].AsVector3()
-                            : new Vector3(msg["local_x"], msg["local_y"], msg["local_z"]);
-                        message.BinaryBucket = msg.ContainsKey("binary_bucket")
-                            ? msg["binary_bucket"].AsBinary() : new byte[] { 0 };
-                        message.GroupIM = msg.ContainsKey("from_group") && msg["from_group"].AsBoolean();
-
-                        if (message.GroupIM)
-                        {
-                            lock (GroupChatSessions.Dictionary)
-                            {
-                                if (!GroupChatSessions.ContainsKey(message.IMSessionID))
-                                    GroupChatSessions.Add(message.IMSessionID, new List<ChatSessionMember>());
-                            }
-                        }
-                        
-                        OnInstantMessage(new InstantMessageEventArgs(message, null));
+                        GroupChatSessions.TryAdd(message.IMSessionID, new List<ChatSessionMember>());
                     }
+
+                    OnInstantMessage(new InstantMessageEventArgs(message, null));
                 }
             }
             catch
@@ -899,17 +894,26 @@ namespace OpenMetaverse
             }
         }
 
+        protected void NavMeshStatusUpdateEventHandler(string capsKey, IMessage message, Simulator simulator)
+        {
+            if (message is NavMeshStatusUpdateMessage msg)
+            {
+                LastNavMeshStatus = msg;
+                OnNavMeshStatusUpdate(new NavMeshStatusUpdateEventArgs(msg, simulator));
+            }
+        }
+
         protected void EstablishAgentCommunicationEventHandler(string capsKey, IMessage message, Simulator simulator)
         {
             EstablishAgentCommunicationMessage msg = (EstablishAgentCommunicationMessage)message;
 
-            if (!Client.Settings.MULTIPLE_SIMS) { return; }
+            if (!Client.Settings.Agent.MultipleSims) { return; }
 
             // Resolve the correct simulator context using message data
             Simulator contextSim = ResolveSimulatorFromMessage(msg, simulator);
             
             IPEndPoint endPoint = new IPEndPoint(msg.Address, msg.Port);
-            Simulator sim = Client.Network.FindSimulator(endPoint);
+            Simulator? sim = Client.Network.FindSimulator(endPoint);
 
             if (sim == null)
             {
@@ -933,7 +937,7 @@ namespace OpenMetaverse
             else
             {
                 Logger.Info($"Got EstablishAgentCommunication for {sim}, updating seed capability", Client);
-                sim.SetSeedCaps(msg.SeedCapability);
+                sim?.SetSeedCaps(msg.SeedCapability);
             }
         }
 
@@ -963,40 +967,62 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Process TeleportFinish from Event Queue and pass it onto our TeleportHandler
+        /// Process TeleportFinish from Event Queue
         /// </summary>
         /// <param name="capsKey">The message key</param>
         /// <param name="message">IMessage object containing decoded data from OSD</param>
         /// <param name="simulator">The simulator originating the event message</param>
+        /// <remarks>
+        /// Handled directly (rather than funneled through the shared <see cref="TeleportHandler"/> via a
+        /// synthesized <see cref="TeleportFinishPacket"/>) because the legacy packet has no room for
+        /// RegionSizeX/RegionSizeY, and those are needed to connect correctly when teleporting into a varregion.
+        /// </remarks>
         private void TeleportFinishEventHandler(string capsKey, IMessage message, Simulator simulator)
         {
             TeleportFinishMessage msg = (TeleportFinishMessage)message;
-            
-            // Resolve the correct simulator for this teleport finish event
-            Simulator resolvedSim = ResolveSimulatorFromMessage(msg, simulator);
+            TeleportFlags flags = msg.Flags;
 
-            TeleportFinishPacket p = new TeleportFinishPacket
+            Logger.DebugLog($"TeleportFinish received, Flags: {flags}", Client);
+
+            // Connect to the new sim
+            var currentSim = Client?.Network?.CurrentSim;
+            if (currentSim != null)
             {
-                Info =
-                {
-                    AgentID = msg.AgentID,
-                    LocationID = (uint) msg.LocationID,
-                    RegionHandle = msg.RegionHandle,
-                    SeedCapability = Utils.StringToBytes(msg.SeedCapability.ToString()),
-                    SimAccess = (byte) msg.SimAccess,
-                    SimIP = Utils.IPToUInt(msg.IP),
-                    SimPort = (ushort) msg.Port,
-                    TeleportFlags = (uint) msg.Flags
-                }
-            };
+                currentSim.AgentMovementComplete = false; // we're not there anymore
+            }
 
-            // Pass the resolved simulator to the teleport handler
-            TeleportHandler(this, new PacketReceivedEventArgs(p, resolvedSim));
+            Simulator? newSimulator = Client?.Network?.Connect(msg.IP, (ushort)msg.Port, msg.RegionHandle, true,
+                msg.SeedCapability, msg.RegionSizeX, msg.RegionSizeY);
+
+            if (newSimulator != null)
+            {
+                TeleportMessage = "Teleport finished";
+                teleportStatus = TeleportStatus.Finished;
+
+                Logger.Info($"Moved to {newSimulator}", Client);
+            }
+            else
+            {
+                TeleportMessage = "Failed to connect to simulator after teleport";
+                teleportStatus = TeleportStatus.Failed;
+
+                // We're going to get disconnected now
+                Logger.Error(TeleportMessage, Client);
+            }
+
+            if (m_Teleport != null)
+            {
+                OnTeleport(new TeleportEventArgs(TeleportMessage, teleportStatus, flags));
+            }
+
+            _teleportTcs?.TrySetResult(teleportStatus == TeleportStatus.Finished);
         }
 
         private void Network_OnLoginResponse(bool loginSuccess, bool redirect, string message, string reason,
-            LoginResponseData reply)
+            LoginResponseData? reply)
         {
+            if (reply == null) return;
+
             AgentID = reply.AgentID;
             SessionID = reply.SessionID;
             SecureSessionID = reply.SecureSessionID;
@@ -1007,18 +1033,18 @@ namespace OpenMetaverse
             Movement.Camera.LookDirection(reply.LookAt);
             home = reply.Home;
             LookAt = reply.LookAt;
-            Benefits = reply.AccountLevelBenefits;
+            Benefits = reply.AccountLevelBenefits ?? new AccountLevelBenefits(new Hashtable());
 
             if (reply.Gestures != null)
             {
                 foreach (var gesture in reply.Gestures)
                 {
-                    ActiveGestures.Add(gesture.Key, gesture.Value);
+                    ActiveGestures[gesture.Key] = gesture.Value;
                 }
             }
         }
 
-        private void Network_OnDisconnected(object sender, DisconnectedEventArgs e)
+        private void Network_OnDisconnected(object? sender, DisconnectedEventArgs e)
         {
             // Null out the cached fullName since it can change after logging
             // in again (with a different account name or different login
@@ -1046,7 +1072,7 @@ namespace OpenMetaverse
             
             // Use the state machine to handle the crossing
             if (!BeginRegionCrossing(oldSim, crossed.RegionHandle, endPoint, crossed.SeedCapability,
-                crossed.Position, crossed.LookAt))
+                crossed.Position, crossed.LookAt, crossed.RegionSizeX, crossed.RegionSizeY))
             {
                 Logger.Warn($"Failed to begin region crossing to {endPoint}", Client);
             }
@@ -1079,11 +1105,7 @@ namespace OpenMetaverse
 
             if (msg.Success)
             {
-                lock (GroupChatSessions.Dictionary)
-                {
-                    if (!GroupChatSessions.ContainsKey(msg.SessionID))
-                        GroupChatSessions.Add(msg.SessionID, new List<ChatSessionMember>());
-                }
+                GroupChatSessions.TryAdd(msg.SessionID, new List<ChatSessionMember>());
             }
 
             OnGroupChatJoined(new GroupChatJoinedEventArgs(msg.SessionID, msg.SessionName, msg.TempSessionID, msg.Success));
@@ -1099,18 +1121,14 @@ namespace OpenMetaverse
         {
             ChatterBoxSessionAgentListUpdatesMessage msg = (ChatterBoxSessionAgentListUpdatesMessage)message;
 
-            lock (GroupChatSessions.Dictionary)
-            {
-                if (!GroupChatSessions.ContainsKey(msg.SessionID))
-                    GroupChatSessions.Add(msg.SessionID, new List<ChatSessionMember>());
-            }
+            var sessionMembers = GroupChatSessions.GetOrAdd(msg.SessionID, _ => new List<ChatSessionMember>());
 
             foreach (ChatterBoxSessionAgentListUpdatesMessage.AgentUpdatesBlock t in msg.Updates)
             {
                 ChatSessionMember fndMbr;
-                lock (GroupChatSessions.Dictionary)
+                lock (sessionMembers)
                 {
-                    fndMbr = GroupChatSessions[msg.SessionID].Find(member => member.AvatarKey == t.AgentID);
+                    fndMbr = sessionMembers.Find(member => member.AvatarKey == t.AgentID);
                 }
 
                 if (t.Transition != null)
@@ -1121,8 +1139,8 @@ namespace OpenMetaverse
                         {
                             fndMbr = new ChatSessionMember {AvatarKey = t.AgentID};
 
-                            lock (GroupChatSessions.Dictionary)
-                                GroupChatSessions[msg.SessionID].Add(fndMbr);
+                            lock (sessionMembers)
+                                sessionMembers.Add(fndMbr);
 
                             if (m_ChatSessionMemberAdded != null)
                             {
@@ -1134,8 +1152,8 @@ namespace OpenMetaverse
                     {
                         if (fndMbr.AvatarKey != UUID.Zero)
                         {
-                            lock (GroupChatSessions.Dictionary)
-                                GroupChatSessions[msg.SessionID].Remove(fndMbr);
+                            lock (sessionMembers)
+                                sessionMembers.Remove(fndMbr);
                         }
 
                         if (m_ChatSessionMemberLeft != null)
@@ -1146,9 +1164,11 @@ namespace OpenMetaverse
                 }
 
                 // handle updates
-                ChatSessionMember update_member = GroupChatSessions.Dictionary[msg.SessionID].Find(
-                    m => m.AvatarKey == t.AgentID);
-
+                ChatSessionMember update_member;
+                lock (sessionMembers)
+                {
+                    update_member = sessionMembers.Find(m => m.AvatarKey == t.AgentID);
+                }
 
                 update_member.MuteText = t.MuteText;
                 update_member.MuteVoice = t.MuteVoice;
@@ -1157,12 +1177,12 @@ namespace OpenMetaverse
                 update_member.IsModerator = t.IsModerator;
 
                 // replace existing member record
-                lock (GroupChatSessions.Dictionary)
+                lock (sessionMembers)
                 {
-                    int found = GroupChatSessions.Dictionary[msg.SessionID].FindIndex(m => m.AvatarKey == t.AgentID);
+                    int found = sessionMembers.FindIndex(m => m.AvatarKey == t.AgentID);
 
                     if (found >= 0)
-                        GroupChatSessions.Dictionary[msg.SessionID][found] = update_member;
+                        sessionMembers[found] = update_member;
                 }
             }
         }
@@ -1173,7 +1193,7 @@ namespace OpenMetaverse
         /// <param name="capsKey">Caps Key</param>
         /// <param name="message">IMessage object containing decoded data from OSD</param>
         /// <param name="simulator">Originating Simulator</param>
-        private void ChatterBoxInvitationEventHandler(string capsKey, IMessage message, Simulator simulator)
+        private async void ChatterBoxInvitationEventHandler(string capsKey, IMessage message, Simulator simulator)
         {
             if (m_InstantMessage == null) return;
             ChatterBoxInvitationMessage msg = (ChatterBoxInvitationMessage)message;
@@ -1199,17 +1219,11 @@ namespace OpenMetaverse
                 BinaryBucket = msg.BinaryBucket
             };
 
-            lock (GroupChatSessions.Dictionary)
-            {
-                if (!GroupChatSessions.ContainsKey(msg.IMSessionID))
-                {
-                    GroupChatSessions.Add(msg.IMSessionID, new List<ChatSessionMember>());
-                }
-            }
+            GroupChatSessions.TryAdd(msg.IMSessionID, new List<ChatSessionMember>());
 
             try
             {
-                ChatterBoxAcceptInvite(msg.IMSessionID).Wait();
+                await ChatterBoxAcceptInviteAsync(msg.IMSessionID).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -1233,7 +1247,7 @@ namespace OpenMetaverse
             if (Client.Network.CurrentSim == null || Client.Network.CurrentSim.Caps == null)
                 throw new Exception("ChatSessionRequest capability is not currently available");
 
-            Uri cap = Client.Network.CurrentSim.Caps.CapabilityURI("ChatSessionRequest");
+            Uri? cap = Client.Network.CurrentSim.Caps.CapabilityURI("ChatSessionRequest");
 
             if (cap == null)
             {
@@ -1247,7 +1261,7 @@ namespace OpenMetaverse
                 SessionID = sessionID,
                 AgentID = memberID
             };
-            _ = Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, payload.Serialize(), cancellationToken);
+            _ = Client.HttpCapsClient.PostRequestAsync(cap!, OSDFormat.Xml, payload.Serialize(), cancellationToken);
         }
     }
 }

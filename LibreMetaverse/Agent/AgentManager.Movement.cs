@@ -27,9 +27,9 @@
 
 using System;
 using System.Threading;
-using OpenMetaverse.Packets;
+using LibreMetaverse.Packets;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class AgentManager
     {
@@ -202,43 +202,43 @@ namespace OpenMetaverse
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_UP_NEG);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_UP_NEG, value);
             }
-            /// <summary></summary>
+            /// <summary>Pitch agent's view upward (nose up)</summary>
             public bool PitchPos
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_PITCH_POS);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_PITCH_POS, value);
             }
-            /// <summary></summary>
+            /// <summary>Pitch agent's view downward (nose down)</summary>
             public bool PitchNeg
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_PITCH_NEG);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_PITCH_NEG, value);
             }
-            /// <summary></summary>
+            /// <summary>Yaw agent's view left</summary>
             public bool YawPos
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_YAW_POS);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_YAW_POS, value);
             }
-            /// <summary></summary>
+            /// <summary>Yaw agent's view right</summary>
             public bool YawNeg
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_YAW_NEG);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_YAW_NEG, value);
             }
-            /// <summary></summary>
+            /// <summary>Move forward at increased speed (run forward)</summary>
             public bool FastAt
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_FAST_AT);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_FAST_AT, value);
             }
-            /// <summary></summary>
+            /// <summary>Strafe at increased speed (run sideways)</summary>
             public bool FastLeft
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_FAST_LEFT);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_FAST_LEFT, value);
             }
-            /// <summary></summary>
+            /// <summary>Move vertically at increased speed (fast up)</summary>
             public bool FastUp
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_FAST_UP);
@@ -316,13 +316,13 @@ namespace OpenMetaverse
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_NUDGE_UP_NEG);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_NUDGE_UP_NEG, value);
             }
-            /// <summary></summary>
+            /// <summary>Rotate agent body to the left (yaw left while walking)</summary>
             public bool TurnLeft
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_TURN_LEFT);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_TURN_LEFT, value);
             }
-            /// <summary></summary>
+            /// <summary>Rotate agent body to the right (yaw right while walking)</summary>
             public bool TurnRight
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_TURN_RIGHT);
@@ -334,25 +334,25 @@ namespace OpenMetaverse
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_AWAY);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_AWAY, value);
             }
-            /// <summary></summary>
+            /// <summary>Left mouse button held down (used for object interaction while walking)</summary>
             public bool LButtonDown
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_LBUTTON_DOWN);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_LBUTTON_DOWN, value);
             }
-            /// <summary></summary>
+            /// <summary>Left mouse button released</summary>
             public bool LButtonUp
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_LBUTTON_UP);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_LBUTTON_UP, value);
             }
-            /// <summary></summary>
+            /// <summary>Left mouse button held down in mouselook mode</summary>
             public bool MLButtonDown
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_ML_LBUTTON_DOWN);
                 set => SetControlFlag(ControlFlags.AGENT_CONTROL_ML_LBUTTON_DOWN, value);
             }
-            /// <summary></summary>
+            /// <summary>Left mouse button released in mouselook mode</summary>
             public bool MLButtonUp
             {
                 get => GetControlFlag(ControlFlags.AGENT_CONTROL_ML_LBUTTON_UP);
@@ -446,7 +446,7 @@ namespace OpenMetaverse
             private int duplicateCount;
             private AgentState lastState;
             /// <summary>Timer for sending AgentUpdate packets</summary>
-            private Timer updateTimer;
+            private Timer? updateTimer;
             private int updateInterval;
 
             /// <summary>Default constructor</summary>
@@ -456,7 +456,7 @@ namespace OpenMetaverse
                 Camera = new AgentCamera();
                 Client.Network.LoginProgress += Network_OnConnected;                
                 Client.Network.Disconnected += Network_OnDisconnected;
-                updateInterval = client.Settings.DEFAULT_AGENT_UPDATE_INTERVAL;
+                updateInterval = client.Settings.Timing.AgentUpdateInterval;
             }
 
             private void CleanupTimer()
@@ -465,17 +465,17 @@ namespace OpenMetaverse
                 updateTimer = null;
             }
 
-            private void Network_OnDisconnected(object sender, DisconnectedEventArgs e)
+            private void Network_OnDisconnected(object? sender, DisconnectedEventArgs e)
             {
                 CleanupTimer();
             }
 
-            private void Network_OnConnected(object sender, LoginProgressEventArgs e)
+            private void Network_OnConnected(object? sender, LoginProgressEventArgs e)
             {
                 if (e.Status == LoginStatus.Success)
                 {
                     CleanupTimer();
-                    if (Client.Settings.SEND_AGENT_UPDATES_REGULARLY)
+                    if (Client.Settings.Agent.SendUpdatesRegularly)
                     {
                         updateTimer = new Timer(UpdateTimer_Elapsed, null, updateInterval, updateInterval);
                     }
@@ -494,8 +494,8 @@ namespace OpenMetaverse
                 Camera.Position = Client.Self.SimPosition;
                 Camera.LookDirection(heading);
                 
-                BodyRotation.Z = (float)Math.Sin(heading / 2.0d);
-                BodyRotation.W = (float)Math.Cos(heading / 2.0d);
+                BodyRotation = new Quaternion(BodyRotation.X, BodyRotation.Y,
+                    (float)Math.Sin(heading / 2.0d), (float)Math.Cos(heading / 2.0d));
                 HeadRotation = BodyRotation;
 
                 SendUpdate(reliable);
@@ -510,7 +510,7 @@ namespace OpenMetaverse
             /// <returns>Returns if TurnToward operation was successful</returns>
             public bool TurnToward(Vector3 target, bool sendUpdate = true)
             {
-                if (!Client.Settings.SEND_AGENT_UPDATES)
+                if (!Client.Settings.Agent.SendUpdates)
                 {
                     Logger.Warn("Attempted TurnToward but agent updates are disabled", Client);
                     return false;
@@ -518,9 +518,11 @@ namespace OpenMetaverse
 
                 Quaternion parentRot = Quaternion.Identity;
 
-                if (Client.Self.SittingOn > 0)
+                var selfLocal = Client.Self;
+                if (selfLocal.SittingOn > 0)
                 {
-                    if (!Client.Network.CurrentSim.ObjectsPrimitives.TryGetValue(Client.Self.SittingOn, out var parent))
+                    var sim = Client?.Network?.CurrentSim;
+                    if (sim == null || !sim.ObjectsPrimitives.TryGetValue(selfLocal.SittingOn, out var parent))
                     {
                         Logger.Warn("Attempted TurnToward but parent prim is not found", Client);
                         return false;
@@ -529,12 +531,12 @@ namespace OpenMetaverse
                     parentRot = parent.Rotation;
                 }
 
-                Quaternion between = Vector3.RotationBetween(Vector3.UnitX, Vector3.Normalize(target - Client.Self.SimPosition));
+                Quaternion between = Vector3.RotationBetween(Vector3.UnitX, Vector3.Normalize(target - selfLocal.SimPosition));
                 Quaternion rot = between * (Quaternion.Identity / parentRot);
 
                 BodyRotation = rot;
                 HeadRotation = rot;
-                Camera.LookAt(Client.Self.SimPosition, target);
+                Camera.LookAt(selfLocal.SimPosition, target);
 
                 if (sendUpdate) { SendUpdate(); }
 
@@ -549,7 +551,7 @@ namespace OpenMetaverse
             /// of this packet</param>
             public void SendUpdate(bool reliable = false)
             {
-                SendUpdate(reliable, Client.Network.CurrentSim);
+                        SendUpdate(reliable, Client.Network.CurrentSim!);
             }
 
             /// <summary>
@@ -591,7 +593,7 @@ namespace OpenMetaverse
                     duplicateCount = 0;
                 }
 
-                if (Client.Settings.DISABLE_AGENT_UPDATE_DUPLICATE_CHECK || duplicateCount < 10)
+                if (Client.Settings.Agent.DisableUpdateDuplicateCheck || duplicateCount < 10)
                 {
                     // Store the current state to do duplicate checking
                     LastHeadRotation = HeadRotation;
@@ -623,7 +625,7 @@ namespace OpenMetaverse
                     Client.Network.SendPacket(update, simulator);
                     
                     // Check for crossing predictions when agent is moving
-                    if (Client.Settings.MULTIPLE_SIMS && Client.Self.velocity != Vector3.Zero)
+                    if (Client.Settings.Agent.MultipleSims && Client.Self.velocity != Vector3.Zero)
                     {
                         Client.Self.PredictCrossing();
                         
@@ -643,17 +645,17 @@ namespace OpenMetaverse
             /// will not touch the state of Self.Movement or
             /// Self.Movement.Camera in any way
             /// </summary>
-            /// <param name="controlFlags"></param>
-            /// <param name="position"></param>
-            /// <param name="forwardAxis"></param>
-            /// <param name="leftAxis"></param>
-            /// <param name="upAxis"></param>
-            /// <param name="bodyRotation"></param>
-            /// <param name="headRotation"></param>
-            /// <param name="farClip"></param>
-            /// <param name="reliable"></param>
-            /// <param name="flags"></param>
-            /// <param name="state"></param>
+            /// <param name="controlFlags">Bitmask of agent control flags to send</param>
+            /// <param name="position">Camera position in region coordinates</param>
+            /// <param name="forwardAxis">Camera forward (at) axis</param>
+            /// <param name="leftAxis">Camera left axis</param>
+            /// <param name="upAxis">Camera up axis</param>
+            /// <param name="bodyRotation">Agent body rotation quaternion</param>
+            /// <param name="headRotation">Agent head rotation quaternion</param>
+            /// <param name="farClip">Camera far clip distance in meters</param>
+            /// <param name="flags">Agent flags bitfield</param>
+            /// <param name="state">Agent animation state</param>
+            /// <param name="reliable">Whether the packet should be sent reliably</param>
             public void SendManualUpdate(ControlFlags controlFlags, Vector3 position, Vector3 forwardAxis,
                 Vector3 leftAxis, Vector3 upAxis, Quaternion bodyRotation, Quaternion headRotation, float farClip,
                 AgentFlags flags, AgentState state, bool reliable)
@@ -698,6 +700,9 @@ namespace OpenMetaverse
                 else AgentControls &= ~((uint)flag);
             }
 
+            /// <summary>
+            /// Reset all transient movement control flags, preserving persistent state (away, fly, mouselook, crouch)
+            /// </summary>
             public void ResetControlFlags()
             {
                 // Reset all flags except for persistent settings like
@@ -733,12 +738,12 @@ namespace OpenMetaverse
                 Client.Network.SendPacket(msg);
             }
 
-            private void UpdateTimer_Elapsed(object obj)
+            private void UpdateTimer_Elapsed(object? obj)
             {
-                if (Client.Network.Connected && Client.Settings.SEND_AGENT_UPDATES)
+                if (Client.Network.Connected && Client.Settings.Agent.SendUpdates)
                 {
                     //Send an AgentUpdate packet
-                    SendUpdate(false, Client.Network.CurrentSim);
+                    SendUpdate(false, Client.Network.CurrentSim!);
                 }
             }
         }

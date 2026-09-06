@@ -25,9 +25,9 @@
  */
 
 using System;
-using OpenMetaverse.Packets;
+using LibreMetaverse.Packets;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public class TerrainPatch
     {
@@ -91,7 +91,7 @@ namespace OpenMetaverse
         /// <summary>Y position of this patch</summary>
         public int Y;
         /// <summary>A 16x16 array of floats holding decompressed layer data</summary>
-        public float[] Data;
+        public float[] Data = Array.Empty<float>();
     }
 
     public static class TerrainCompressor

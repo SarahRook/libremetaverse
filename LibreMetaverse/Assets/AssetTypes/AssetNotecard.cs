@@ -29,7 +29,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace OpenMetaverse.Assets
+namespace LibreMetaverse.Assets
 {
     /// <summary>
     /// Represents a string of characters encoded with specific formatting properties
@@ -40,10 +40,10 @@ namespace OpenMetaverse.Assets
         public override AssetType AssetType => AssetType.Notecard;
 
         /// <summary>A text string containing main text of the notecard</summary>
-        public string BodyText;
+        public string BodyText = string.Empty;
 
-        /// <summary>List of <see cref="OpenMetaverse.InventoryItem"/>s embedded on the notecard</summary>
-        public List<InventoryItem> EmbeddedItems;
+        /// <summary>List of <see cref="LibreMetaverse.InventoryItem"/>s embedded on the notecard</summary>
+        public List<InventoryItem> EmbeddedItems = new List<InventoryItem>();
 
         /// <summary>Construct an Asset of type Notecard</summary>
         public AssetNotecard() { }

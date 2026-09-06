@@ -1,0 +1,193 @@
+name: Release
+
+on:
+  push:
+    # Run this workflow when a tag is pushed (e.g. `v1.2.3`).
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version to release (e.g. 2.5.0)'
+        required: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  checks: write
+  actions: read
+  id-token: write
+
+jobs:
+  build-and-publish:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          $raw = if ('${{ inputs.version }}') { '${{ inputs.version }}' } else { '${{ github.ref_name }}' }
+          $v = $raw -replace '^v',''
+          Write-Host "Package version: $v"
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore
+
+      - name: Build
+        shell: pwsh
+        run: dotnet build --configuration Release --no-restore /p:Version="${{ steps.version.outputs.version }}"
+
+      - name: Test
+        shell: pwsh
+        run: |
+          # Run tests but skip integration/network tests on GitHub hosted runners
+          dotnet test LibreMetaverse.sln --configuration Release --no-build --logger "trx;LogFileName=TestResults.trx" --filter "Category!=RequiresLiveServer" --verbosity normal
+
+      - name: Publish test results (annotations)
+        if: always()
+        uses: dorny/test-reporter@v3
+        with:
+          name: Tests
+          reporter: dotnet-trx
+          path: '**/*.trx'
+          fail-on-error: false
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: |
+            **/TestResults
+            **/*.trx
+            **/coverage*.xml
+
+      - name: Pack LibreMetaverse libraries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path ./artifacts -Force | Out-Null
+          dotnet pack LibreMetaverse.sln --configuration Release --no-build --output ./artifacts /p:PackageVersion="${{ steps.version.outputs.version }}"
+
+      - name: List artifacts
+        shell: pwsh
+        run: |
+          if (Test-Path ./artifacts) {
+            Get-ChildItem -Path ./artifacts -Force
+          } else {
+            Write-Host "No artifacts found"
+          }
+
+      - name: Create zipped archives
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path ./release_artifacts -Force | Out-Null
+          # nuget nupkg
+          $nupkgs = Get-ChildItem -Path ./artifacts -Filter *.nupkg -File -ErrorAction SilentlyContinue
+          if ($nupkgs) {
+            Compress-Archive -Path ($nupkgs | ForEach-Object { $_.FullName }) -DestinationPath ./release_artifacts/nuget_libraries.zip -Force
+          }
+          # symbol packages (snupkg)
+          $snupkgs = Get-ChildItem -Path ./artifacts -Filter *.snupkg -File -ErrorAction SilentlyContinue
+          if ($snupkgs) {
+            Compress-Archive -Path ($snupkgs | ForEach-Object { $_.FullName }) -DestinationPath ./release_artifacts/nuget_libraries_symbols.zip -Force
+          }
+
+      - name: NuGet login (Trusted Publishing)
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish to NuGet.org
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packages = Get-ChildItem -Path ./artifacts\* -Include *.nupkg,*.snupkg -File -ErrorAction SilentlyContinue
+          if (-not $packages) {
+            Write-Host "::error::No packages found to publish"
+            exit 1
+          }
+
+          $failed = @()
+          foreach ($p in $packages) {
+            $pkg = $p.FullName
+            Write-Host "Publishing $pkg to nuget.org"
+            dotnet nuget push $pkg --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::Failed to push $pkg (exit code $LASTEXITCODE)"
+              $failed += $pkg
+            }
+          }
+
+          if ($failed.Count -gt 0) {
+            Write-Host "::error::$($failed.Count) package(s) failed to publish: $($failed -join ', ')"
+            exit 1
+          }
+
+      - name: Generate release notes
+        id: gen_notes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $CURRENT_TAG = "v${{ steps.version.outputs.version }}"
+
+          # Find previous tag by creation date excluding the current tag
+          $PREV_TAG = git for-each-ref --sort=-creatordate --format '%(refname:short)' refs/tags | Where-Object { $_ -ne $CURRENT_TAG } | Select-Object -First 1
+
+          Write-Host "Generating release notes for $CURRENT_TAG (previous: $PREV_TAG)"
+
+          $NOTES_FILE = 'release_notes.md'
+          "# Release $CURRENT_TAG" | Out-File -FilePath $NOTES_FILE -Encoding utf8
+          "" | Out-File -FilePath $NOTES_FILE -Append
+
+          # Diff against HEAD, not $CURRENT_TAG -- on a workflow_dispatch run the tag doesn't exist
+          # yet (it's created later by the release-creation step), so $CURRENT_TAG wouldn't resolve
+          # as a git ref. HEAD is always valid and, on both trigger paths, points at exactly the
+          # commit this release is being cut from.
+          if ($PREV_TAG) {
+            "## Changes since $PREV_TAG" | Out-File -FilePath $NOTES_FILE -Append
+            "" | Out-File -FilePath $NOTES_FILE -Append
+            git log --no-merges --pretty=format:'- %s (%an)' "$PREV_TAG..HEAD" | Out-File -FilePath $NOTES_FILE -Append
+          } else {
+            "## Changes" | Out-File -FilePath $NOTES_FILE -Append
+            "" | Out-File -FilePath $NOTES_FILE -Append
+            git log --no-merges --pretty=format:'- %s (%an)' "HEAD" | Out-File -FilePath $NOTES_FILE -Append
+          }
+
+          "" | Out-File -FilePath $NOTES_FILE -Append
+          "### Packages" | Out-File -FilePath $NOTES_FILE -Append
+          "" | Out-File -FilePath $NOTES_FILE -Append
+          Get-ChildItem -Path ./artifacts -Filter *.nupkg -File -ErrorAction SilentlyContinue | ForEach-Object { "- $($_.Name)" | Out-File -FilePath $NOTES_FILE -Append }
+
+      - name: Create GitHub release and upload packages
+        uses: ncipollo/release-action@v1
+        id: create_release
+        with:
+          tag: v${{ steps.version.outputs.version }}
+          allowUpdates: true
+          artifacts: |
+            ./artifacts/*.nupkg
+            ./artifacts/*.snupkg
+            ./release_artifacts/*.zip
+          bodyFile: release_notes.md
+          token: ${{ secrets.GITHUB_TOKEN }}

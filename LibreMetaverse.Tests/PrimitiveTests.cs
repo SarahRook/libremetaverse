@@ -1,6 +1,5 @@
 using NUnit.Framework;
-using OpenMetaverse;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
 namespace LibreMetaverse.Tests
 {

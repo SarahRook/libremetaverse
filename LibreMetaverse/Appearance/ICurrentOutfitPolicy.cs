@@ -28,7 +28,6 @@
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse;
 
 namespace LibreMetaverse.Appearance
 {
@@ -43,14 +42,14 @@ namespace LibreMetaverse.Appearance
         /// </summary>
         /// <param name="item">Item to check</param>
         /// <returns>True if the item can be attached, false otherwise</returns>
-        bool CanAttach(InventoryItem item);
+        bool CanAttach(InventoryItem? item);
 
         /// <summary>
         /// Determines if the specified item can be detached/removed
         /// </summary>
         /// <param name="item">Item to check</param>
         /// <returns>True if the item can be detached, false otherwise</returns>
-        bool CanDetach(InventoryItem item);
+        bool CanDetach(InventoryItem? item);
 
         /// <summary>
         /// Reports a change in outfit items (items added or removed)
@@ -59,6 +58,6 @@ namespace LibreMetaverse.Appearance
         /// <param name="removedItems">Items that were removed from the outfit</param>
         /// <param name="cancellationToken">Cancellation token</param>
         /// <returns>Task representing the async operation</returns>
-        Task ReportItemChange(List<InventoryItem> addedItems, List<InventoryItem> removedItems, CancellationToken cancellationToken = default);
+        Task ReportItemChangeAsync(List<InventoryItem>? addedItems, List<InventoryItem>? removedItems, CancellationToken cancellationToken = default);
     }
 }

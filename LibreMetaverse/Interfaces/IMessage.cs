@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * All rights reserved.
  *
@@ -24,10 +24,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
 
-namespace OpenMetaverse.Interfaces
+namespace LibreMetaverse.Interfaces
 {
     /// <summary>
     /// Interface requirements for Messaging system

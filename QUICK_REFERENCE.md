@@ -3,6 +3,7 @@
 Quick examples for common tasks with LibreMetaverse.
 
 ## Table of Contents
+- [Dependency Injection](#dependency-injection)
 - [Connection & Login](#connection--login)
 - [Object Inspection](#object-inspection)
 - [Avatar Control](#avatar-control)
@@ -10,8 +11,77 @@ Quick examples for common tasks with LibreMetaverse.
 - [Chat & Messaging](#chat--messaging)
 - [Textures & Assets](#textures--assets)
 - [OSD Serialization](#osd-serialization)
+- [Voice (WebRTC)](#voice-webrtc)
+
+## Dependency Injection
+
+`GridClient` implements `IGridClient` and can be registered as a singleton in any `IServiceCollection`-based container (ASP.NET Core, .NET Generic Host, etc.).
+
+### Register and inject
+
+```csharp
+// Program.cs / Startup.cs
+builder.Services.AddGridClient(settings =>
+{
+    settings.UserAgent = "MyBot/1.0";
+    settings.Timing.LoginTimeout = 30_000;
+});
+
+// Consumer — inject IGridClient (or GridClient directly, both resolve to the same singleton)
+public class BotService(IGridClient client)
+{
+    public async Task RunAsync()
+    {
+        var loginParams = client.Network.DefaultLoginParams(
+            "FirstName", "LastName", "password", "MyBot", "1.0");
+        await client.Network.LoginAsync(loginParams);
+    }
+}
+```
+
+### Manual construction (no DI container)
+
+```csharp
+// Works exactly as before
+var client = new GridClient();
+```
+
+### Testing with FakeGridClient
+
+`FakeGridClient` extends `GridClient` (which implements `IGridClient`), so it works wherever `IGridClient` is accepted:
+
+```csharp
+IGridClient client = new FakeGridClient();
+client.AddHttpResponse(capsUri, HttpStatusCode.OK, responseBody);
+// pass client to the code under test
+```
+
+---
 
 ## Connection & Login
+
+### Configuring the Client
+```csharp
+var client = new GridClient();
+
+// Timing
+client.Settings.Timing.TeleportTimeout = 60_000;   // ms
+client.Settings.Timing.LoginTimeout    = 30_000;
+
+// Connection
+client.Settings.Connection.LoginServer = Settings.AgniLoginServer; // default
+client.Settings.Connection.MfaEnabled  = false;
+
+// Agent
+client.Settings.Agent.SendUpdates = true;
+
+// Texture pipeline
+client.Settings.TexturePipeline.MaxConcurrentDownloads = 6;
+
+// Process-wide (static)
+Settings.MaxHttpConnections = 64;
+Settings.UserAgent = "MyApp/1.0";
+```
 
 ### Basic Login
 ```csharp
@@ -126,7 +196,7 @@ client.Self.AnimationStop(Animations.DANCE1, true);
 
 ### Teleport
 ```csharp
-var success = client.Self.Teleport("Region Name", new Vector3(128, 128, 25));
+bool success = await client.Self.TeleportAsync("Region Name", new Vector3(128, 128, 25));
 if (success)
     Console.WriteLine("Teleported successfully");
 ```
@@ -225,36 +295,23 @@ client.Self.InstantMessageGroup(groupUUID, "Hello group!");
 
 ### Download Texture
 ```csharp
-client.Assets.RequestImage(textureUUID, (state, asset) =>
-{
-    if (state == TextureRequestState.Finished && asset != null)
-    {
-        var texture = (ImageDownload)asset;
-        File.WriteAllBytes("texture.jp2", texture.AssetData);
-    }
-});
+var texture = await client.Assets.RequestImageAsync(textureUUID);
+if (texture != null)
+    File.WriteAllBytes("texture.jp2", texture.AssetData);
 ```
 
-### Upload Texture
+### Upload Asset
 ```csharp
-var data = File.ReadAllBytes("image.png");
-// Convert to JPEG2000 first...
-var success = await client.Inventory.RequestUploadAsync(
-    data, "MyTexture", "Uploaded texture", 
-    AssetType.Texture, InventoryType.Texture, 
-    folderUUID, permissions);
+var data = File.ReadAllBytes("image.jp2"); // must already be JPEG2000
+var assetID = await client.Assets.RequestUploadAsync(
+    AssetType.Texture, data, storeLocal: false, UUID.Random());
 ```
 
 ### Request Asset
 ```csharp
-client.Assets.RequestAsset(assetUUID, AssetType.Notecard, (transfer, asset) =>
-{
-    if (asset != null)
-    {
-        var text = Utils.BytesToString(asset.AssetData);
-        Console.WriteLine(text);
-    }
-});
+var asset = await client.Assets.RequestAssetAsync(assetUUID, AssetType.Notecard, priority: true);
+if (asset != null)
+    Console.WriteLine(Utils.BytesToString(asset.AssetData));
 ```
 
 ## OSD Serialization
@@ -336,29 +393,78 @@ client.Network.LoginProgress -= MyHandler;
 
 ### Graceful Disconnection
 ```csharp
+if (client.Network.Connected)
+    await client.Network.LogoutAsync();
+```
+
+### Cancellation and Timeouts
+```csharp
+// Cancel after 10 seconds
+using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 try
 {
-    if (client.Network.Connected)
-        client.Network.Logout();
+    bool success = await client.Self.TeleportAsync("Destination", new Vector3(128, 128, 25), cts.Token);
 }
-catch (Exception ex)
+catch (OperationCanceledException)
 {
-    Console.WriteLine($"Logout error: {ex.Message}");
+    Console.WriteLine("Operation timed out or was cancelled");
 }
 ```
 
-### Timeout Patterns
+## Voice (WebRTC)
+
+Requires the `LibreMetaverse.Voice.WebRTC` package (.NET 8+).
+
+### Connect spatial voice
+
 ```csharp
-var completed = false;
-var timeout = DateTime.UtcNow.AddSeconds(10);
+var voiceManager = new VoiceManager(client);
 
-while (!completed && DateTime.UtcNow < timeout)
-{
-    await Task.Delay(100);
-}
+voiceManager.PeerConnectionReady  += () => Console.WriteLine("Voice connected");
+voiceManager.PeerConnectionClosed += () => Console.WriteLine("Voice disconnected");
+voiceManager.PeerJoined  += id => Console.WriteLine($"Peer joined: {id}");
+voiceManager.PeerLeft    += id => Console.WriteLine($"Peer left: {id}");
 
-if (!completed)
-    Console.WriteLine("Operation timed out");
+await voiceManager.ConnectPrimaryRegion();
+```
+
+### Enable audio processing (noise suppression, HPF)
+
+Call after constructing `VoiceManager`. Processing is enabled for the lifetime of the
+audio device and survives reconnects.
+
+```csharp
+// Recommended defaults: noise suppression + high-pass filter
+voiceManager.AudioDevice.EnableAudioProcessing();
+
+// With AGC and echo cancellation
+voiceManager.AudioDevice.EnableAudioProcessing(
+    noiseSuppression: true,
+    highPassFilter:   true,
+    agc:              true,
+    echoCancellation: true);  // requires speaker output as AEC reference (wired automatically)
+
+// Turn off
+voiceManager.AudioDevice.DisableAudioProcessing();
+```
+
+### Mic mute / unmute
+
+```csharp
+voiceManager.AudioDevice.MicMute = true;   // mute
+voiceManager.AudioDevice.MicMute = false;  // unmute
+```
+
+### Speaker and microphone volume
+
+```csharp
+voiceManager.AudioDevice.SpeakerLevel = 0.8f;  // 0.0–1.0
+```
+
+### Disconnect voice
+
+```csharp
+voiceManager.Disconnect();
 ```
 
 ## More Examples

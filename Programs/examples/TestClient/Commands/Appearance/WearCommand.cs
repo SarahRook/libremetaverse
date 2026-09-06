@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse;
+using LibreMetaverse;
 
 namespace TestClient.Commands.Appearance
 {
@@ -42,7 +42,7 @@ namespace TestClient.Commands.Appearance
                 List<InventoryBase> contents;
                 try
                 {
-                    contents = await Client.Inventory.RequestFolderContents(folder, Client.Self.AgentID, true, true, InventorySortOrder.ByName, cts.Token).ConfigureAwait(false);
+                    contents = await Client.Inventory.RequestFolderContentsAsync(folder, Client.Self.AgentID, true, true, InventorySortOrder.ByName, cts.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -65,7 +65,7 @@ namespace TestClient.Commands.Appearance
                         items.Add(inventoryItem);
                 }
 
-                Client.Appearance.ReplaceOutfit(items);
+                await Client.Appearance.ReplaceOutfitAsync(items).ConfigureAwait(false);
 
                 return "Starting to change outfit to " + target;
             }

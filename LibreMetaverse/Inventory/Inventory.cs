@@ -28,11 +28,12 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Responsible for maintaining an avatar's inventory structure.
@@ -43,7 +44,7 @@ namespace OpenMetaverse
     {
         #region EventHandlers
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<InventoryObjectUpdatedEventArgs> m_InventoryObjectUpdated;
+        private EventHandler<InventoryObjectUpdatedEventArgs>? m_InventoryObjectUpdated;
 
         ///<summary>Raises the InventoryObjectUpdated Event</summary>
         /// <param name="e">A InventoryObjectUpdatedEventArgs object containing
@@ -66,7 +67,7 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<InventoryObjectRemovedEventArgs> m_InventoryObjectRemoved;
+        private EventHandler<InventoryObjectRemovedEventArgs>? m_InventoryObjectRemoved;
 
         ///<summary>Raises the InventoryObjectRemoved Event</summary>
         /// <param name="e">A InventoryObjectRemovedEventArgs object containing
@@ -89,7 +90,7 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<InventoryObjectAddedEventArgs> m_InventoryObjectAdded;
+        private EventHandler<InventoryObjectAddedEventArgs>? m_InventoryObjectAdded;
 
         ///<summary>Raises the InventoryObjectAdded Event</summary>
         /// <param name="e">A InventoryObjectAddedEventArgs object containing
@@ -118,7 +119,7 @@ namespace OpenMetaverse
         /// The root folder of this avatar's inventory.
         /// Setting this will create or update the underlying node.
         /// </summary>
-        public InventoryFolder RootFolder
+        public InventoryFolder? RootFolder
         {
             get => RootNode?.Data as InventoryFolder;
             set
@@ -135,7 +136,7 @@ namespace OpenMetaverse
         /// The default shared library folder.
         /// Setting this will create or update the underlying node.
         /// </summary>
-        public InventoryFolder LibraryFolder
+        public InventoryFolder? LibraryFolder
         {
             get => LibraryRootNode?.Data as InventoryFolder;
             set
@@ -191,6 +192,9 @@ namespace OpenMetaverse
             Items = new ConcurrentDictionary<UUID, InventoryNode>();
             ChildrenIndex = new ConcurrentDictionary<UUID, ConcurrentDictionary<UUID, InventoryNode>>();
             LinksByAssetId = new ConcurrentDictionary<UUID, ConcurrentDictionary<UUID, InventoryNode>>();
+            // Initialize root nodes to empty nodes to satisfy nullable analysis
+            RootNode = new InventoryNode();
+            LibraryRootNode = new InventoryNode();
         }
 
         /// <summary>
@@ -214,7 +218,7 @@ namespace OpenMetaverse
         {
             if (node.Data is InventoryItem item && item.AssetType == AssetType.Link)
             {
-                return item.ActualUUID == assetId;
+                return item.ResolvedItemID == assetId;
             }
 
             return false;
@@ -246,7 +250,7 @@ namespace OpenMetaverse
                 var contents = new List<InventoryBase>(folderNode.Nodes.Count);
                 foreach (var node in folderNode.Nodes.Values)
                 {
-                    contents.Add(node.Data);
+                    contents.Add(node.Data!);
                 }
                 return contents;
             }
@@ -261,11 +265,11 @@ namespace OpenMetaverse
         {
             if (item == null) throw new ArgumentNullException(nameof(item));
 
-            InventoryObjectUpdatedEventArgs itemUpdatedEventArgs = null;
-            InventoryObjectAddedEventArgs itemAddedEventArgs = null;
+            InventoryObjectUpdatedEventArgs? itemUpdatedEventArgs = null;
+            InventoryObjectAddedEventArgs? itemAddedEventArgs = null;
 
             // Resolve or create parent node
-            InventoryNode itemParent = null;
+            InventoryNode? itemParent = null;
             if (item.ParentUUID != UUID.Zero)
             {
                 if (!Items.TryGetValue(item.ParentUUID, out itemParent))
@@ -291,14 +295,10 @@ namespace OpenMetaverse
 
             if (Items.TryGetValue(item.UUID, out var itemNode)) // We're updating.
             {
-                // Update link index: remove old mapping if necessary, add new mapping after update
+                // Update link index: remove old mapping, add new mapping after data is updated below
                 try { RemoveNodeFromAllLinks(item.UUID); } catch { }
 
                 var newItem = item as InventoryItem;
-                if (newItem != null && newItem.AssetType == AssetType.Link)
-                {
-                    try { AddToLinksIndex(newItem.ActualUUID, itemNode); } catch { }
-                }
 
                 var oldParent = itemNode.Parent;
 
@@ -307,7 +307,7 @@ namespace OpenMetaverse
                 int delta = newCount - oldCount;
 
                 // Handle parent change
-                if (oldParent == null || itemParent == null || itemParent.Data.UUID != oldParent.Data.UUID)
+                if (oldParent == null || itemParent == null || itemParent.Data?.UUID != oldParent.Data?.UUID)
                 {
                     if (oldParent != null)
                     {
@@ -319,7 +319,7 @@ namespace OpenMetaverse
                         // Remove from children index of old parent
                         try
                         {
-                            RemoveFromChildrenIndex(oldParent.Data.UUID, item.UUID);
+                            RemoveFromChildrenIndex(oldParent.Data!.UUID, item.UUID);
                         }
                         catch { }
 
@@ -336,7 +336,7 @@ namespace OpenMetaverse
                         // Add to children index of new parent
                         try
                         {
-                            AddToChildrenIndex(itemParent.Data.UUID, itemNode);
+                            AddToChildrenIndex(itemParent.Data!.UUID, itemNode);
                         }
                         catch { }
 
@@ -354,9 +354,9 @@ namespace OpenMetaverse
                 itemNode.Parent = itemParent;
 
                 // Update data and prepare event
-                if (m_InventoryObjectUpdated != null)
+                if (m_InventoryObjectUpdated != null && itemNode.Data != null)
                 {
-                    itemUpdatedEventArgs = new InventoryObjectUpdatedEventArgs(itemNode.Data, item);
+                    itemUpdatedEventArgs = new InventoryObjectUpdatedEventArgs(itemNode.Data!, item);
                 }
 
                 itemNode.Data = item;
@@ -364,12 +364,12 @@ namespace OpenMetaverse
                 // Add to link index for new item if it's a link
                 if (newItem != null && newItem.AssetType == AssetType.Link)
                 {
-                    try { AddToLinksIndex(newItem.ActualUUID, itemNode); } catch { }
+                    try { AddToLinksIndex(newItem.ResolvedItemID, itemNode); } catch { }
                 }
             }
             else // We're adding.
-            {
-                itemNode = new InventoryNode(item, itemParent);
+                {
+                itemNode = itemParent != null ? new InventoryNode(item, itemParent) : new InventoryNode(item);
                 bool added = Items.TryAdd(item.UUID, itemNode);
                 if (added)
                 {
@@ -385,11 +385,11 @@ namespace OpenMetaverse
                         {
                             foreach (var kvp in directChildren)
                             {
-                                var n = kvp.Value;
-                                if (n != null && n.Data.UUID != item.UUID)
-                                {
-                                    existingChildrenCount += GetItemCountInSubtree(n);
-                                }
+                        var n = kvp.Value;
+                        if (n != null && n.Data != null && n.Data.UUID != item.UUID)
+                        {
+                            existingChildrenCount += GetItemCountInSubtree(n);
+                        }
                             }
                         }
                         addedFolder.DescendentCount = existingChildrenCount;
@@ -410,7 +410,7 @@ namespace OpenMetaverse
                     // Maintain children index for the new node
                     try
                     {
-                        if (itemParent != null)
+                        if (itemParent != null && itemParent.Data != null)
                         {
                             AddToChildrenIndex(itemParent.Data.UUID, itemNode);
                         }
@@ -420,7 +420,7 @@ namespace OpenMetaverse
                     // Maintain links index for the new node if it's a link
                     if (item is InventoryItem newIt && newIt.AssetType == AssetType.Link)
                     {
-                        try { AddToLinksIndex(newIt.ActualUUID, itemNode); } catch { }
+                        try { AddToLinksIndex(newIt.ResolvedItemID, itemNode); } catch { }
                     }
 
                     if (m_InventoryObjectAdded != null)
@@ -455,13 +455,13 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="uuid">Node UUID</param>
         /// <returns>InventoryNode or null</returns>
-        public InventoryNode GetNodeOrDefault(UUID uuid)
+        public InventoryNode? GetNodeOrDefault(UUID uuid)
         {
             Items.TryGetValue(uuid, out var node);
             return node;
         }
 
-        public bool TryGetNodeFor(UUID uuid, out InventoryNode node)
+        public bool TryGetNodeFor(UUID uuid, [NotNullWhen(true)] out InventoryNode? node)
         {
             return Items.TryGetValue(uuid, out node);
         }
@@ -475,7 +475,7 @@ namespace OpenMetaverse
         {
             if (item == null) throw new ArgumentNullException(nameof(item));
 
-            InventoryObjectRemovedEventArgs itemRemovedEventArgs = null;
+            InventoryObjectRemovedEventArgs? itemRemovedEventArgs = null;
 
             if (!Items.TryGetValue(item.UUID, out var node))
             {
@@ -492,10 +492,10 @@ namespace OpenMetaverse
                 {
                     lock (n.Parent.Nodes.SyncRoot)
                     {
-                        n.Parent.Nodes.Remove(n.Data.UUID);
+                        n.Parent.Nodes.Remove(n.Data!.UUID);
                     }
                 }
-                Items.TryRemove(n.Data.UUID, out _);
+                Items.TryRemove(n.Data!.UUID, out _);
             }
 
             if (m_InventoryObjectRemoved != null)
@@ -510,7 +510,7 @@ namespace OpenMetaverse
                 {
                     newParent.Nodes.Remove(item.UUID);
                 }
-                try { RemoveFromChildrenIndex(newParent.Data.UUID, item.UUID); } catch { }
+                try { RemoveFromChildrenIndex(newParent.Data!.UUID, item.UUID); } catch { }
             }
 
             PropagateDescendentCountAdjustmentToAncestors(node.Parent, -removedItemCount);
@@ -534,33 +534,32 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="uuid">The unique identifier of the item to retrieve.</param>
         /// <param name="item">When this method returns <c>true</c>, contains the <see cref="InventoryBase"/> item if found; otherwise, <c>null</c>.</param>
-        /// <returns><c>true</c> if an item with the specified UUID was found; otherwise, <c>false</c>.</returns>
-        public bool TryGetValue(UUID uuid, out InventoryBase item)
+        /// <returns><c>true</c> if a node with the specified UUID exists; otherwise, <c>false</c>.</returns>
+        public bool TryGetValue(UUID uuid, [NotNullWhen(true)] out InventoryBase? item)
         {
-            item = null;
-
-            if(TryGetNodeFor(uuid, out var node))
+            if (TryGetNodeFor(uuid, out var node))
             {
-                item = node.Data;
+                item = node!.Data!;
+                return true;
             }
-
-            return item != null;
+            item = null;
+            return false;
         }
 
         /// <summary>
         /// Non-throwing convenience getter that returns the <see cref="InventoryBase"/> for the UUID or null if not found.
         /// </summary>
-        public InventoryBase GetValueOrDefault(UUID uuid)
+        public InventoryBase? GetValueOrDefault(UUID uuid)
         {
-            return TryGetNodeFor(uuid, out var node) ? node.Data : null;
+            return TryGetNodeFor(uuid, out var node) ? node!.Data : null;
         }
 
         /// <summary>
         /// Attempts to retrieve an item of type <typeparamref name="T"/> associated with the specified UUID.
         /// </summary>
-        public bool TryGetValue<T>(UUID uuid, out T item)
+        public bool TryGetValue<T>(UUID uuid, [NotNullWhen(true)] out T? item) where T : class
         {
-            if (TryGetNodeFor(uuid, out var node) && node.Data is T requestedItem)
+            if (TryGetNodeFor(uuid, out var node) && node!.Data is T requestedItem)
             {
                 item = requestedItem;
                 return true;
@@ -571,13 +570,11 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Non-throwing convenience getter that returns the item of type <typeparamref name="T"/> or default if not found or not compatible.
+        /// Non-throwing convenience getter that returns the item of type <typeparamref name="T"/> or null if not found or not compatible.
         /// </summary>
-        public T GetValueOrDefault<T>(UUID uuid)
+        public T? GetValueOrDefault<T>(UUID uuid) where T : class
         {
-            if (TryGetNodeFor(uuid, out var node) && node.Data is T requestedItem)
-                return requestedItem;
-            return default;
+            return TryGetNodeFor(uuid, out var node) && node!.Data is T requestedItem ? requestedItem : null;
         }
 
         /// <summary>
@@ -596,6 +593,8 @@ namespace OpenMetaverse
         public void Clear()
         {
             Items.Clear();
+            ChildrenIndex.Clear();
+            LinksByAssetId.Clear();
         }
 
 
@@ -648,9 +647,9 @@ namespace OpenMetaverse
         /// <returns>The InventoryObject corresponding to <see cref="UUID"/>.</returns>
         public InventoryBase this[UUID uuid]
         {
-            get => !Items.TryGetValue(uuid, out var node) 
-                ? throw new InventoryException($"Unknown inventory item: {uuid}") 
-                : node.Data;
+            get => !Items.TryGetValue(uuid, out var node)
+                ? throw new InventoryException($"Unknown inventory item: {uuid}")
+                : node.Data!;
             set
             {
                 if (value != null)
@@ -666,7 +665,8 @@ namespace OpenMetaverse
                 {
                     if (Items.TryGetValue(uuid, out var node))
                     {
-                        RemoveNodeFor(node.Data);
+                        if (node.Data != null)
+                            RemoveNodeFor(node.Data);
                     }
                 }
             }
@@ -682,28 +682,28 @@ namespace OpenMetaverse
             int count = 0;
             var stack = new Stack<InventoryNode>();
             var visited = new HashSet<UUID>();
-            int depth = 0;
-            const int maxDepth = 512;
-            
+            int iterations = 0;
+            const int maxIterations = 100000;
+
             stack.Push(node);
-            
+
             while (stack.Count > 0)
             {
-                depth++;
-                
-                // Defensive depth limit
-                if (depth > maxDepth)
+                iterations++;
+
+                // Defensive iteration limit
+                if (iterations > maxIterations)
                 {
-                    Logger.Warn($"Inventory item count exceeded maximum iterations ({maxDepth}). Possible circular reference in inventory hierarchy.", Client);
+                    Logger.Warn($"Inventory item count exceeded maximum iterations ({maxIterations}). Possible circular reference in inventory hierarchy.", Client);
                     break;
                 }
                 
                 var n = stack.Pop();
                 
                 // Defensive loop detection
-                if (!visited.Add(n.Data.UUID))
+                if (!visited.Add(n.Data!.UUID))
                 {
-                    Logger.Warn($"Inventory loop detected during item count: Node {n.Data.UUID} ('{n.Data.Name}') has already been visited. Circular parent reference detected.", Client);
+                    Logger.Warn($"Inventory loop detected during item count: Node {n.Data!.UUID} ('{n.Data?.Name ?? "<null>"}') has already been visited. Circular parent reference detected.", Client);
                     continue;
                 }
                 
@@ -744,21 +744,21 @@ namespace OpenMetaverse
                 var n = stack.Pop();
                 
                 // Defensive loop detection
-                if (!visited.Add(n.Data.UUID))
+                if (!visited.Add(n.Data!.UUID))
                 {
-                    Logger.Warn($"Inventory loop detected during subtree collection: Node {n.Data.UUID} ('{n.Data.Name}') has already been visited. Circular parent reference detected.", Client);
+                    Logger.Warn($"Inventory loop detected during subtree collection: Node {n.Data!.UUID} ('{n.Data?.Name ?? "<null>"}') has already been visited. Circular parent reference detected.", Client);
                     continue;
                 }
                 
                 list.Add(n);
                 // Remove from children index as we're collecting for deletion
-                try { RemoveFromChildrenIndex(n.Parent?.Data.UUID ?? UUID.Zero, n.Data.UUID); } catch { }
+                try { RemoveFromChildrenIndex(n.Parent?.Data?.UUID ?? UUID.Zero, n.Data!.UUID); } catch { }
                 // Remove from links index if this node is a link
                 try
                 {
                     if (n.Data is InventoryItem li && li.AssetType == AssetType.Link)
                     {
-                        RemoveFromLinksIndex(li.ActualUUID, n.Data.UUID);
+                        RemoveFromLinksIndex(li.ResolvedItemID, n.Data!.UUID);
                     }
                 }
                 catch { }
@@ -780,7 +780,7 @@ namespace OpenMetaverse
         {
             if (parentUuid == UUID.Zero || child == null) return;
             var dict = ChildrenIndex.GetOrAdd(parentUuid, _ => new ConcurrentDictionary<UUID, InventoryNode>());
-            dict[child.Data.UUID] = child;
+            dict[child.Data!.UUID] = child;
         }
 
         // Remove a child mapping from the children index
@@ -802,7 +802,7 @@ namespace OpenMetaverse
         {
             if (assetId == UUID.Zero || node == null) return;
             var dict = LinksByAssetId.GetOrAdd(assetId, _ => new ConcurrentDictionary<UUID, InventoryNode>());
-            dict[node.Data.UUID] = node;
+            dict[node.Data!.UUID] = node;
         }
 
         // Remove a mapping from the links index
@@ -853,7 +853,7 @@ namespace OpenMetaverse
         }
 
         // Adjusts the DescendentCount of an node's entire hierarchy by delta
-        private void PropagateDescendentCountAdjustmentToAncestors(InventoryNode node, int delta)
+        private void PropagateDescendentCountAdjustmentToAncestors(InventoryNode? node, int delta)
         {
             const int maxDepth = 512;
 
@@ -878,24 +878,9 @@ namespace OpenMetaverse
                     break;
                 }
 
-                AtomicallyAdjustDescendentCount(folder, delta);
+                folder.AdjustDescendentCount(delta);
                 node = node.Parent;
             }
-        }
-
-        // Atomically adjust a folder's DescendentCount by delta and clamp to >= 0
-        private static void AtomicallyAdjustDescendentCount(InventoryFolder folder, int delta)
-        {
-            if (folder == null || delta == 0) return;
-
-            int initial, newVal;
-            do
-            {
-                initial = folder.DescendentCount;
-                newVal = initial + delta;
-                if (newVal < 0) newVal = 0;
-            }
-            while (Interlocked.CompareExchange(ref folder.DescendentCount, newVal, initial) != initial);
         }
     }
     #region EventArgs classes

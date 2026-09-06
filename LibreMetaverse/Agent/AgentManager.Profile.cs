@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2019-2026, Sjofn LLC
  * All rights reserved.
@@ -28,10 +28,10 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
-using OpenMetaverse.Packets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Packets;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// AgentManager partial class - Profile
@@ -49,12 +49,12 @@ namespace OpenMetaverse
         /// The behavior between LLUDP and Http Capability differs. See each method's remarks
         /// </remarks>
         /// <seealso cref="UpdateProfileUdp"/>
-        /// <seealso cref="UpdateProfileHttp"/>
+        /// <seealso cref="UpdateProfileAsync"/>
         public void UpdateProfile(Avatar.AvatarProperties profile)
         {
             if (Client?.Network?.CurrentSim?.Caps?.CapabilityURI(AGENT_PROFILE_CAP) != null)
             {
-                _ = UpdateProfileHttp(profile);
+                _ = UpdateProfileAsync(profile);
             }
             else
             {
@@ -101,7 +101,7 @@ namespace OpenMetaverse
         /// Only updates about text fields, profile url, and allow_publish.
         /// Does not update image UUID, etc. like the legacy LLUDP request.
         /// </remarks>
-        public async Task UpdateProfileHttp(Avatar.AvatarProperties profile, CancellationToken cancellationToken = default)
+        public async Task UpdateProfileAsync(Avatar.AvatarProperties profile, CancellationToken cancellationToken = default)
         {
             var payload = new OSDMap
             {
@@ -132,29 +132,13 @@ namespace OpenMetaverse
 
                 var uri = new Uri($"{capability}/{AgentID}");
 
-                await Client.HttpCapsClient.PutRequestAsync(uri, OSDFormat.Xml, payload, cancellationToken,
-                    (response, data, error) =>
-                    {
-                        if (error != null)
-                        {
-                            Logger.Warn($"AgentProfile update failed: {error.Message}", Client);
-                            return;
-                        }
-
-                        if (response == null)
-                        {
-                            Logger.Warn("AgentProfile update failed: no response from server.", Client);
-                            return;
-                        }
-
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            Logger.Warn($"AgentProfile update returned non-success status: {response.StatusCode}", Client);
-                            return;
-                        }
-
-                        Logger.Debug("AgentProfile update succeeded.", Client);
-                    }).ConfigureAwait(false);
+                var (response, data) = await Client.HttpCapsClient.PutAsync(uri, OSDFormat.Xml, payload, cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Warn($"AgentProfile update returned non-success status: {response.StatusCode}", Client);
+                    return;
+                }
+                Logger.Debug("AgentProfile update succeeded.", Client);
             }
             catch (Exception ex) when (!(ex is OperationCanceledException))
             {
@@ -168,13 +152,13 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="target">target avatar for notes</param>
         /// <param name="notes">notes to store</param>
-        /// <seealso cref="UpdateProfileHttp"/>
+        /// <seealso cref="UpdateProfileAsync"/>
         /// <seealso cref="UpdateProfileUdp"/>
         public void UpdateProfileNotes(UUID target, string notes)
         {
             if (Client?.Network?.CurrentSim?.Caps?.CapabilityURI(AGENT_PROFILE_CAP) != null)
             {
-                _ = UpdateProfileNotesHttp(target, notes);
+                _ = UpdateProfileNotesAsync(target, notes);
             }
             else
             {
@@ -206,7 +190,7 @@ namespace OpenMetaverse
         /// <param name="target">target avatar for notes</param>
         /// <param name="notes">notes to store</param>
         /// <param name="cancellationToken"></param>
-        public async Task UpdateProfileNotesHttp(UUID target, string notes, CancellationToken cancellationToken = default)
+        public async Task UpdateProfileNotesAsync(UUID target, string notes, CancellationToken cancellationToken = default)
         {
             var payload = new OSDMap { ["notes"] = notes };
 
@@ -229,29 +213,13 @@ namespace OpenMetaverse
 
                 var uri = new Uri($"{capability}/{target}");
 
-                await Client.HttpCapsClient.PutRequestAsync(uri, OSDFormat.Xml, payload, cancellationToken,
-                    (response, data, error) =>
-                    {
-                        if (error != null)
-                        {
-                            Logger.Warn($"AgentProfile notes update failed: {error.Message}", Client);
-                            return;
-                        }
-
-                        if (response == null)
-                        {
-                            Logger.Warn("AgentProfile notes update failed: no response from server.", Client);
-                            return;
-                        }
-
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            Logger.Warn($"AgentProfile notes update returned non-success status: {response.StatusCode}", Client);
-                            return;
-                        }
-
-                        Logger.Debug("AgentProfile notes update succeeded.", Client);
-                    }).ConfigureAwait(false);
+                var (response, data) = await Client.HttpCapsClient.PutAsync(uri, OSDFormat.Xml, payload, cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                {
+                    Logger.Warn($"AgentProfile notes update returned non-success status: {response.StatusCode}", Client);
+                    return;
+                }
+                Logger.Debug("AgentProfile notes update succeeded.", Client);
             }
             catch (Exception ex) when (!(ex is OperationCanceledException))
             {

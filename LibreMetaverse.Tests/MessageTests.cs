@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2021-2025, Sjofn LLC
  * All rights reserved.
@@ -30,9 +30,8 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Xml.Serialization;
-using OpenMetaverse;
-using OpenMetaverse.StructuredData;
-using OpenMetaverse.Messages.Linden;
+using LibreMetaverse.StructuredData;
+using LibreMetaverse.Messages.Linden;
 using NUnit.Framework;
 
 namespace LibreMetaverse.Tests
@@ -995,7 +994,6 @@ namespace LibreMetaverse.Tests
         {
             SendPostcardMessage s = new SendPostcardMessage
             {
-                FromEmail = "contact@openmetaverse.co",
                 FromName = "Jim Radford",
                 GlobalPosition = Vector3.One,
                 Message = "Hello, How are you today?",
@@ -1008,7 +1006,7 @@ namespace LibreMetaverse.Tests
             SendPostcardMessage t = new SendPostcardMessage();
             t.Deserialize(map);
 
-            Assert.That(t.FromEmail, Is.EqualTo(s.FromEmail));
+            Assert.That(map.ContainsKey("from"), Is.False);
             Assert.That(t.FromName, Is.EqualTo(s.FromName));
             Assert.That(t.GlobalPosition, Is.EqualTo(s.GlobalPosition));
             Assert.That(t.Message, Is.EqualTo(s.Message));

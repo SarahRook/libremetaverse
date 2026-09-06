@@ -28,7 +28,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     [Serializable]
     [StructLayout(LayoutKind.Sequential)]
@@ -400,7 +400,7 @@ namespace OpenMetaverse
 
         #region Overrides
 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return (obj is Vector4 vector4) && this == vector4;
         }

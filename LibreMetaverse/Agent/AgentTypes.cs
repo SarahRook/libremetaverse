@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2025, Sjofn LLC.
  * All rights reserved.
@@ -26,8 +26,9 @@
  */
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     [Flags]
     public enum ScriptPermission : int
@@ -142,22 +143,6 @@ namespace OpenMetaverse
         Edit,
         LookAt,
         PointAt
-    }
-
-    public enum LookAtType : byte
-    {
-        None,
-        Idle,
-        AutoListen,
-        FreeLook,
-        Respond,
-        Hover,
-        [Obsolete]
-        Conversation,
-        Select,
-        Focus,
-        Mouselook,
-        Clear
     }
 
     public enum PointAtType : byte
@@ -362,6 +347,7 @@ namespace OpenMetaverse
         public InstantMessageOnline Offline;
         public byte[] BinaryBucket;
 
+        [UnconditionalSuppressMessage("ReflectionAnalysis", "IL2026", Justification = "StructToString is a debug helper; reflection loss is acceptable here.")]
         public override string ToString()
         {
             return Helpers.StructToString(this);
@@ -372,7 +358,7 @@ namespace OpenMetaverse
     {
         public MuteType Type;
         public UUID ID;
-        public string Name;
+        public string Name = string.Empty;
         public MuteFlags Flags;
     }
 
@@ -384,6 +370,6 @@ namespace OpenMetaverse
         public UUID DestID;
         public bool IsDestGroup;
         public int Amount;
-        public string ItemDescription;
+        public string ItemDescription = string.Empty;
     }
 }

@@ -28,7 +28,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 
-namespace OpenMetaverse.Rendering
+namespace LibreMetaverse.Rendering
 {
     /// <summary>
     /// Load and handle Linden Lab binary meshes.
@@ -42,7 +42,7 @@ namespace OpenMetaverse.Rendering
     {
         const string MeshHeader = "Linden Binary Mesh 1.0";
         const string MorphFooter = "End Morphs";
-        public LindenSkeleton Skeleton { get; }    //!< The skeleton used to animate this mesh
+        public LindenSkeleton? Skeleton { get; set; }    //!< The skeleton used to animate this mesh
 
         #region Mesh Structs
 
@@ -167,7 +167,7 @@ namespace OpenMetaverse.Rendering
         {
             public float MinPixelWidth;                 //!< Pixel width on screen before switching to coarser lod
 
-            public string Header;                       //!< Header - marking the file as a Linden Lab Mesh (llm)
+            public string Header = string.Empty;                       //!< Header - marking the file as a Linden Lab Mesh (llm)
             public bool HasWeights;                     //!< Do the vertices carry any defintions about skin weights
             public bool HasDetailTexCoords;             //!< Do the vertices carry any defintions about detailed UV mappings
             public Vector3 Position;                    //!< Origin of this mesh
@@ -175,7 +175,7 @@ namespace OpenMetaverse.Rendering
             public byte RotationOrder;                  //!< Not used
             public Vector3 Scale;                       //!< Scaling information
             public ushort NumFaces;                     //!< # of polygons in the mesh
-            public Face[] Faces;                        //!< Polygons making up the mesh, the indices are into the full mesh
+            public Face[] Faces = Array.Empty<Face>();                        //!< Polygons making up the mesh, the indices are into the full mesh
 
 
             /// <summary>
@@ -198,6 +198,9 @@ namespace OpenMetaverse.Rendering
                     RotationAngles = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
                     RotationOrder = reader.ReadByte();
                     Scale = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+
+                    // Reference meshes contain only face indices (no vertex data).
+                    // Vertex data lives in the parent full mesh (LOD 0).
                     NumFaces = reader.ReadUInt16();
 
                     Faces = new Face[NumFaces];
@@ -208,74 +211,32 @@ namespace OpenMetaverse.Rendering
             }
         }
 
-        /// <summary>
-        /// Level of Detail mesh
-        /// </summary>
-        [Obsolete("Renamed to: ReferenceMesh")]
-        public class LODMesh
-        {
-            public float MinPixelWidth;
-
-            protected string _header;
-            protected bool _hasWeights;
-            protected bool _hasDetailTexCoords;
-            protected Vector3 _position;
-            protected Vector3 _rotationAngles;
-            protected byte _rotationOrder;
-            protected Vector3 _scale;
-            protected ushort _numFaces;
-            protected Face[] _faces;
-
-            public virtual void LoadMesh(string filename)
-            {
-                byte[] buffer = File.ReadAllBytes(filename);
-                BitPack input = new BitPack(buffer, 0);
-
-                _header = TrimAt0(input.UnpackString(24));
-                if (!string.Equals(_header, MeshHeader))
-                    return;
-
-                // Populate base mesh variables
-                _hasWeights = (input.UnpackByte() != 0);
-                _hasDetailTexCoords = (input.UnpackByte() != 0);
-                _position = new Vector3(input.UnpackFloat(), input.UnpackFloat(), input.UnpackFloat());
-                _rotationAngles = new Vector3(input.UnpackFloat(), input.UnpackFloat(), input.UnpackFloat());
-                _rotationOrder = input.UnpackByte();
-                _scale = new Vector3(input.UnpackFloat(), input.UnpackFloat(), input.UnpackFloat());
-                _numFaces = input.UnpackUShort();
-
-                _faces = new Face[_numFaces];
-
-                for (int i = 0; i < _numFaces; i++)
-                    _faces[i].Indices = new short[] { input.UnpackShort(), input.UnpackShort(), input.UnpackShort() };
-            }
-        }
         #endregion lod mesh
 
-        public float MinPixelWidth;                                             //!< Width of redered avatar, before moving to a coarser LOD
+        public float MinPixelWidth;                                             //!< Width of rendered avatar, before moving to a coarser LOD
 
-        public string Name { get; protected set; }                              //!< The name of this mesh
-        public string Header { get; protected set; }                            //!< The header marker contained in the .llm file
+        public string Name { get; protected set; } = string.Empty;                              //!< The name of this mesh
+        public string Header { get; protected set; } = string.Empty;                            //!< The header marker contained in the .llm file
         public bool HasWeights { get; protected set; }                          //!< Does the file contain skin weights?
-        public bool HasDetailTexCoords { get; protected set; }                  //!< Does the file contain detailed UV mapings
-        public Vector3 Position { get; protected set; }                         //!< Origin of this mesh
-        public Vector3 RotationAngles { get; protected set; }                   //!< Rotation - This is a compressed quaternion
+        public bool HasDetailTexCoords { get; protected set; }                  //!< Does the file contain detailed UV mappings
+        public Vector3 Position { get; protected set; } = default;                         //!< Origin of this mesh
+        public Vector3 RotationAngles { get; protected set; } = default;                   //!< Rotation - This is a compressed quaternion
         //public byte RotationOrder
-        public Vector3 Scale { get; protected set; }                            //!< Scale of this mesh
+        public Vector3 Scale { get; protected set; } = default;                            //!< Scale of this mesh
         public ushort NumVertices { get; protected set; }                       //!< # of vertices in the file
-        public Vertex[] Vertices { get; protected set; }                        //!< The actual vertices defining the 3d shape
+        public Vertex[] Vertices { get; protected set; } = Array.Empty<Vertex>();                        //!< The actual vertices defining the 3d shape
         public ushort NumFaces { get; protected set; }                          //!< # of polygons in the file
-        public Face[] Faces { get; protected set; }                             //!< The polgon defintion
+        public Face[] Faces { get; protected set; } = Array.Empty<Face>();                             //!< The polygon definition
         public ushort NumSkinJoints { get; protected set; }                     //!< # of joints influencing the mesh
-        public string[] SkinJoints { get; protected set; }                      //!< Named list of joints
+        public string[] SkinJoints { get; protected set; } = Array.Empty<string>();                      //!< Named list of joints
         public int NumRemaps { get; protected set; }                            //!< # of vertex remaps
-        public VertexRemap[] VertexRemaps { get; protected set; }               //!< The actual vertex remapping list
+        public VertexRemap[] VertexRemaps { get; protected set; } = Array.Empty<VertexRemap>();               //!< The actual vertex remapping list
 
         // lods can either be Reference meshes or full LindenMeshes
         // so we cannot use a collection of specialized classes
-        public SortedList<int, object> LodMeshes { get; protected set; }        //!< The LOD meshes, available for this mesh
+        public SortedList<int, object> LodMeshes { get; protected set; } = new SortedList<int, object>();        //!< The LOD meshes, available for this mesh
 
-        public Morph[] Morphs;                                                  //!< The morphs this file contains
+        public Morph[] Morphs = Array.Empty<Morph>();                                                  //!< The morphs this file contains
 
         /// <summary>
         /// Construct a linden mesh with the given name
@@ -289,7 +250,7 @@ namespace OpenMetaverse.Rendering
         /// </summary>
         /// <param name="name">the name of the mesh</param>
         /// <param name="skeleton">The skeleton governing mesh deformation</param>
-        public LindenMesh(string name, LindenSkeleton skeleton)
+        public LindenMesh(string name, LindenSkeleton? skeleton)
         {
             Name = name;
             Skeleton = skeleton;
@@ -462,48 +423,44 @@ namespace OpenMetaverse.Rendering
         /// <summary>
         /// Decompress the skinweights
         /// </summary>
-        /// <param name="expandedJointList">the expanded joint list, used to index which bones should influece the vertex</param>
+        /// <remarks>
+        /// The binary mesh stores joint indices as 1-based integers (raw index 1 = first
+        /// entry in the expanded joint list). SL C++ compensates by building its expanded
+        /// list with a dummy entry at position 0 so that mat[rawIndex] gives the right bone.
+        /// We convert to 0-based here: boneIndex = rawIndex - 1.
+        ///   rawIndex  = floor(weight);      // 1-based index from the binary
+        ///   boneIndex = rawIndex - 1;       // convert to 0-based list index
+        ///   w         = weight - rawIndex;  // fractional part = blend weight toward bone2
+        ///   lerp(list[boneIndex], list[boneIndex+1], w);
+        /// </remarks>
+        /// <param name="expandedJointList">the expanded joint list, used to index which bones should influence the vertex</param>
         void ExpandCompressedSkinWeights(List<string> expandedJointList)
         {
             for (int i = 0; i < NumVertices; i++)
             {
-                int boneIndex = (int)Math.Floor(Vertices[i].Weight); // Whole number part is the index
-                float boneWeight = (Vertices[i].Weight - boneIndex); // fractional part it the weight
+                int rawIndex  = (int)Math.Floor(Vertices[i].Weight); // 1-based index from the binary
+                int boneIndex = rawIndex - 1;                         // convert to 0-based
+                float boneWeight = Vertices[i].Weight - rawIndex;     // fractional part is the weight
 
-                if (boneIndex == 0)         // Special case for dealing with eye meshes, which doesn't have any weights
+                if (boneIndex >= 0 && boneIndex + 1 < expandedJointList.Count)
                 {
-                    SkinWeights.Add(new SkinWeightElement { Bone1 = expandedJointList[0], Weight1 = 1, Bone2 = expandedJointList[1], Weight2 = 0 });
-                }
-                else if (boneIndex < expandedJointList.Count)
-                {
-                    string bone1 = expandedJointList[boneIndex - 1];
-                    string bone2 = expandedJointList[boneIndex];
+                    string bone1 = expandedJointList[boneIndex];
+                    string bone2 = expandedJointList[boneIndex + 1];
                     SkinWeights.Add(new SkinWeightElement { Bone1 = bone1, Weight1 = 1 - boneWeight, Bone2 = bone2, Weight2 = boneWeight });
                 }
                 else
-                {   // this should add a weight where the "invalid" Joint has a weight of zero
+                {   // boneIndex out of range — assign 100% to the nearest valid joint
                     SkinWeights.Add(new SkinWeightElement
                     {
-                        Bone1 = expandedJointList[boneIndex - 1],
-                        Weight1 = 1 - boneWeight,
+                        Bone1 = expandedJointList[Math.Max(0, Math.Min(boneIndex, expandedJointList.Count - 1))],
+                        Weight1 = 1,
                         Bone2 = "mPelvis",
-                        Weight2 = boneWeight
+                        Weight2 = 0
                     });
                 }
             }
         }
         #endregion Skin weight
-
-        [Obsolete("Use LoadLodMesh")]
-        public virtual void LoadLODMesh(int level, string filename)
-        {
-            if (filename == "avatar_eye_1.llm")
-                throw new ArgumentException("Eyeballs are not LOD Meshes", nameof(filename));
-
-            LODMesh lod = new LODMesh();
-            lod.LoadMesh(filename);
-            LodMeshes[level] = lod;
-        }
 
         public virtual object LoadLodMesh(int level, string filename)
         {
@@ -534,7 +491,7 @@ namespace OpenMetaverse.Rendering
 
             ReferenceMesh reference = new ReferenceMesh();
             reference.LoadMesh(filename);
-            LodMeshes[lodLevel] = lodLevel;
+            LodMeshes[lodLevel] = reference;
             return reference;
         }
 

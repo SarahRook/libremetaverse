@@ -27,10 +27,9 @@
 
 using System;
 using System.Collections.Generic;
-using System.Threading;
-using OpenMetaverse.Packets;
+using LibreMetaverse.Packets;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class InventoryManager
     {
@@ -39,12 +38,14 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="objectLocalID">The target object</param>
         /// <param name="item">The item to copy or move from inventory</param>
+        /// <param name="simulator">Simulator containing the target object, or null for the current simulator</param>
+        /// <param name="only_mod_meta">If flase, the transaction ID will set be set to a random UUID, and the simulator will re-create the item, potentially breaking things like scripts.</param>
         /// <returns>Returns transaction id</returns>
         /// <remarks>For items with copy permissions a copy of the item is placed in the tasks inventory,
         /// for no-copy items the object is moved to the tasks inventory</remarks>
-        public UUID UpdateTaskInventory(uint objectLocalID, InventoryItem item)
+        public UUID UpdateTaskInventory(uint objectLocalID, InventoryItem item, Simulator? simulator = null, bool only_mod_meta = true)
         {
-            var transactionID = UUID.Random();
+            var transactionID = only_mod_meta ? UUID.Zero : UUID.Random();
 
             var update = new UpdateTaskInventoryPacket
             {
@@ -85,90 +86,13 @@ namespace OpenMetaverse
             };
 
 
-            Client.Network.SendPacket(update);
+            Client.Network.SendPacket(update, simulator ?? Client.Network.CurrentSim);
 
             return transactionID;
         }
 
         /// <summary>
-        /// Update an existing notecard in a task (primitive) inventory (synchronous wrapper)
-        /// </summary>
-        /// <param name="data">Notecard asset bytes</param>
-        /// <param name="notecardID">UUID of the notecard item</param>
-        /// <param name="taskID">UUID of the task (primitive)</param>
-        /// <param name="callback">Callback invoked when upload completes</param>
-        [Obsolete("Use RequestUpdateNotecardTaskAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public void RequestUpdateNotecardTask(byte[] data, UUID notecardID, UUID taskID, InventoryUploadedAssetCallback callback)
-        {
-            try
-            {
-                RequestUpdateNotecardTaskAsync(data, notecardID, taskID, callback, CancellationToken.None).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"RequestUpdateNotecardTask failed: {ex.Message}", ex, Client);
-            }
-        }
-
-        /// <summary>
-        /// Update an existing script in a task Inventory (synchronous wrapper)
-        /// </summary>
-        /// <param name="data">A byte[] array containing the encoded scripts contents</param>
-        /// <param name="itemID">the itemID of the script</param>
-        /// <param name="taskID">UUID of the prim containing the script</param>
-        /// <param name="mono">if true, sets the script content to run on the mono interpreter</param>
-        /// <param name="running">if true, sets the script to running</param>
-        /// <param name="callback"></param>
-        /// <param name="cancellationToken"></param>
-        [Obsolete("Use RequestUpdateScriptTaskAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public void RequestUpdateScriptTask(byte[] data, UUID itemID, UUID taskID, bool mono, bool running, ScriptUpdatedCallback callback, CancellationToken cancellationToken = default)
-        {
-            try
-            {
-                RequestUpdateScriptTaskAsync(data, itemID, taskID, mono, running, callback, cancellationToken).GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                Logger.Warn($"RequestUpdateScriptTask failed: {ex.Message}", ex, Client);
-            }
-        }
-
-        /// <summary>
-        /// Retrieve a listing of the items contained in a task (Primitive)
-        /// </summary>
-        /// <param name="objectID">The tasks <see cref="UUID"/></param>
-        /// <param name="objectLocalID">The tasks simulator local ID</param>
-        /// <param name="timeout">time to wait for reply from simulator</param>
-        /// <returns>A list containing the inventory items inside the task or null
-        /// if a timeout occurs</returns>
-        /// <remarks>This request blocks until the response from the simulator arrives 
-        /// before timeout is exceeded</remarks>
-        [Obsolete("Use GetTaskInventoryAsync instead (async-first). This synchronous wrapper will block the calling thread.")]
-        public List<InventoryBase> GetTaskInventory(UUID objectID, uint objectLocalID, TimeSpan timeout)
-        {
-            try
-            {
-                using (var cts = new CancellationTokenSource())
-                {
-                    if (timeout != TimeSpan.Zero)
-                        cts.CancelAfter(timeout);
-
-                    var task = GetTaskInventoryAsync(objectID, objectLocalID, cts.Token);
-                    return task.GetAwaiter().GetResult();
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                return new List<InventoryBase>();
-            }
-            catch (Exception)
-            {
-                return new List<InventoryBase>();
-            }
-        }
-
-        /// <summary>
-        /// Request the contents of a tasks (primitives) inventory from the 
+        /// Request the contents of a tasks (primitives) inventory from the
         /// current simulator
         /// </summary>
         /// <param name="objectLocalID">The LocalID of the object</param>
@@ -184,7 +108,7 @@ namespace OpenMetaverse
         /// <param name="objectLocalID">The simulator Local ID of the object</param>
         /// <param name="simulator">A reference to the simulator object that contains the object</param>
         /// <see cref="TaskInventoryReply"/>
-        public void RequestTaskInventory(uint objectLocalID, Simulator simulator)
+        public void RequestTaskInventory(uint objectLocalID, Simulator? simulator)
         {
             var request = new RequestTaskInventoryPacket
             {
@@ -261,6 +185,7 @@ namespace OpenMetaverse
         /// <param name="objectLocalID">An unsigned integer representing a primitive being simulated</param>
         /// <param name="item">An <see cref="InventoryItem"/> which represents a script object from the agents inventory</param>
         /// <param name="enableScript">true to set the scripts running state to enabled</param>
+        /// <param name="simulator">Simulator containing the target object, or null for the current simulator</param>
         /// <returns>A Unique Transaction ID</returns>
         /// <example>
         /// The following example shows the basic steps necessary to copy a script from the agents inventory into a tasks inventory
@@ -275,7 +200,7 @@ namespace OpenMetaverse
         ///    Client.Inventory.RezScript(primID, (InventoryItem)Client.Inventory.Store[scriptID]);
         /// </code>
         /// </example>
-        public UUID CopyScriptToTask(uint objectLocalID, InventoryItem item, bool enableScript)
+        public UUID CopyScriptToTask(uint objectLocalID, InventoryItem item, bool enableScript, Simulator? simulator = null)
         {
             var transactionID = UUID.Random();
 
@@ -317,7 +242,7 @@ namespace OpenMetaverse
                 }
             };
 
-            Client.Network.SendPacket(ScriptPacket);
+            Client.Network.SendPacket(ScriptPacket, simulator ?? Client.Network.CurrentSim);
 
             return transactionID;
         }
@@ -416,16 +341,16 @@ namespace OpenMetaverse
                                     switch (key)
                                     {
                                         case "obj_id":
-                                            UUID.TryParse(value, out itemID);
+                                            UUID.TryParse(value ?? string.Empty, out itemID);
                                             break;
                                         case "parent_id":
-                                            UUID.TryParse(value, out parentID);
+                                            UUID.TryParse(value ?? string.Empty, out parentID);
                                             break;
                                         case "type":
-                                            assetType = Utils.StringToAssetType(value);
+                                            assetType = Utils.StringToAssetType(value ?? string.Empty);
                                             break;
                                         case "name":
-                                            name = value.Substring(0, value.IndexOf('|'));
+                                            name = value != null && value.Contains("|") ? value.Substring(0, value.IndexOf('|')) : (value ?? string.Empty);
                                             break;
                                     }
                                 }
@@ -495,10 +420,10 @@ namespace OpenMetaverse
                                 switch (key)
                                 {
                                     case "item_id":
-                                        UUID.TryParse(value, out itemID);
+                                        UUID.TryParse(value ?? string.Empty, out itemID);
                                         break;
                                     case "parent_id":
-                                        UUID.TryParse(value, out parentID);
+                                        UUID.TryParse(value ?? string.Empty, out parentID);
                                         break;
                                     case "permissions":
                                         {
@@ -523,51 +448,51 @@ namespace OpenMetaverse
                                                         case "creator_mask":
                                                             {
                                                                 // Deprecated
-                                                                if (Utils.TryParseHex(value, out var val))
+                                                                if (Utils.TryParseHex(value ?? string.Empty, out var val))
                                                                     perms.BaseMask = (PermissionMask)val;
                                                                 break;
                                                             }
                                                         case "base_mask":
                                                             {
-                                                                if (Utils.TryParseHex(value, out var val))
+                                                                if (Utils.TryParseHex(value ?? string.Empty, out var val))
                                                                     perms.BaseMask = (PermissionMask)val;
                                                                 break;
                                                             }
                                                         case "owner_mask":
                                                             {
-                                                                if (Utils.TryParseHex(value, out var val))
+                                                                if (Utils.TryParseHex(value ?? string.Empty, out var val))
                                                                     perms.OwnerMask = (PermissionMask)val;
                                                                 break;
                                                             }
                                                         case "group_mask":
                                                             {
-                                                                if (Utils.TryParseHex(value, out var val))
+                                                                if (Utils.TryParseHex(value ?? string.Empty, out var val))
                                                                     perms.GroupMask = (PermissionMask)val;
                                                                 break;
                                                             }
                                                         case "everyone_mask":
                                                             {
-                                                                if (Utils.TryParseHex(value, out var val))
+                                                                if (Utils.TryParseHex(value ?? string.Empty, out var val))
                                                                     perms.EveryoneMask = (PermissionMask)val;
                                                                 break;
                                                             }
                                                         case "next_owner_mask":
                                                             {
-                                                                if (Utils.TryParseHex(value, out var val))
+                                                                if (Utils.TryParseHex(value ?? string.Empty, out var val))
                                                                     perms.NextOwnerMask = (PermissionMask)val;
                                                                 break;
                                                             }
                                                         case "creator_id":
-                                                            UUID.TryParse(value, out creatorID);
+                                                            UUID.TryParse(value ?? string.Empty, out creatorID);
                                                             break;
                                                         case "owner_id":
-                                                            UUID.TryParse(value, out ownerID);
+                                                            UUID.TryParse(value ?? string.Empty, out ownerID);
                                                             break;
                                                         case "last_owner_id":
-                                                            UUID.TryParse(value, out lastOwnerID);
+                                                            UUID.TryParse(value ?? string.Empty, out lastOwnerID);
                                                             break;
                                                         case "group_id":
-                                                            UUID.TryParse(value, out groupID);
+                                                            UUID.TryParse(value ?? string.Empty, out groupID);
                                                             break;
                                                         case "group_owned":
                                                             {
@@ -604,7 +529,7 @@ namespace OpenMetaverse
                                                     switch (key)
                                                     {
                                                         case "sale_type":
-                                                            saleType = Utils.StringToSaleType(value);
+                                                            saleType = Utils.StringToSaleType(value ?? string.Empty);
                                                             break;
                                                         case "sale_price":
                                                             int.TryParse(value, out salePrice);
@@ -619,27 +544,27 @@ namespace OpenMetaverse
                                         }
                                     case "shadow_id":
                                         {
-                                            if (UUID.TryParse(value, out var shadowID))
+                                        if (UUID.TryParse(value ?? string.Empty, out var shadowID))
                                                 assetID = DecryptShadowID(shadowID);
                                             break;
                                         }
                                     case "asset_id":
-                                        UUID.TryParse(value, out assetID);
+                                        UUID.TryParse(value ?? string.Empty, out assetID);
                                         break;
                                     case "type":
-                                        assetType = Utils.StringToAssetType(value);
+                                        assetType = Utils.StringToAssetType(value ?? string.Empty);
                                         break;
                                     case "inv_type":
-                                        inventoryType = Utils.StringToInventoryType(value);
+                                        inventoryType = Utils.StringToInventoryType(value ?? string.Empty);
                                         break;
                                     case "flags":
                                         uint.TryParse(value, out flags);
                                         break;
                                     case "name":
-                                        name = value.Substring(0, value.IndexOf('|'));
+                                        name = value != null && value.Contains("|") ? value.Substring(0, value.IndexOf('|')) : (value ?? string.Empty);
                                         break;
                                     case "desc":
-                                        desc = value.Substring(0, value.IndexOf('|'));
+                                        desc = value != null && value.Contains("|") ? value.Substring(0, value.IndexOf('|')) : (value ?? string.Empty);
                                         break;
                                     case "creation_date":
                                         {

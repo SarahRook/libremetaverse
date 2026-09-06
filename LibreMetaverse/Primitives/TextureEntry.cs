@@ -28,9 +28,10 @@
 using System;
 using System.IO;
 using System.Linq;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Assets;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     #region Enumerations
 
@@ -138,6 +139,8 @@ namespace OpenMetaverse
         Glow = 1 << 9,
         /// <summary></summary>
         MaterialID = 1 << 10,
+        /// <summary>PBR / GLTF render material ID</summary>
+        RenderMaterialID = 1 << 11,
         /// <summary></summary>
         All = 0xFFFFFFFF
     }
@@ -208,7 +211,8 @@ namespace OpenMetaverse
             private TextureAttributes hasAttribute;
             private UUID textureID;
             private UUID materialID;
-            private TextureEntryFace DefaultTexture;
+            private UUID renderMaterialID;
+            private TextureEntryFace? DefaultTexture;
 
 
             #region Properties
@@ -218,7 +222,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             internal byte material
             {
-                get => (hasAttribute & TextureAttributes.Material) != 0 ? materialb : DefaultTexture.material;
+                get => (hasAttribute & TextureAttributes.Material) != 0 ? materialb : DefaultTexture!.material;
                 set
                 {
                     materialb = value;
@@ -229,7 +233,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             internal byte media
             {
-                get => (hasAttribute & TextureAttributes.Media) != 0 ? mediab : DefaultTexture.media;
+                get => (hasAttribute & TextureAttributes.Media) != 0 ? mediab : DefaultTexture!.media;
                 set
                 {
                     mediab = value;
@@ -240,7 +244,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public Color4 RGBA
             {
-                get => (hasAttribute & TextureAttributes.RGBA) != 0 ? rgba : DefaultTexture.rgba;
+                get => (hasAttribute & TextureAttributes.RGBA) != 0 ? rgba : DefaultTexture!.rgba;
                 set
                 {
                     rgba = value;
@@ -251,7 +255,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public float RepeatU
             {
-                get => (hasAttribute & TextureAttributes.RepeatU) != 0 ? repeatU : DefaultTexture.repeatU;
+                get => (hasAttribute & TextureAttributes.RepeatU) != 0 ? repeatU : DefaultTexture!.repeatU;
                 set
                 {
                     repeatU = value;
@@ -262,7 +266,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public float RepeatV
             {
-                get => (hasAttribute & TextureAttributes.RepeatV) != 0 ? repeatV : DefaultTexture.repeatV;
+                get => (hasAttribute & TextureAttributes.RepeatV) != 0 ? repeatV : DefaultTexture!.repeatV;
                 set
                 {
                     repeatV = value;
@@ -273,7 +277,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public float OffsetU
             {
-                get => (hasAttribute & TextureAttributes.OffsetU) != 0 ? offsetU : DefaultTexture.offsetU;
+                get => (hasAttribute & TextureAttributes.OffsetU) != 0 ? offsetU : DefaultTexture!.offsetU;
                 set
                 {
                     offsetU = value;
@@ -284,7 +288,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public float OffsetV
             {
-                get => (hasAttribute & TextureAttributes.OffsetV) != 0 ? offsetV : DefaultTexture.offsetV;
+                get => (hasAttribute & TextureAttributes.OffsetV) != 0 ? offsetV : DefaultTexture!.offsetV;
                 set
                 {
                     offsetV = value;
@@ -295,7 +299,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public float Rotation
             {
-                get => (hasAttribute & TextureAttributes.Rotation) != 0 ? rotation : DefaultTexture.rotation;
+                get => (hasAttribute & TextureAttributes.Rotation) != 0 ? rotation : DefaultTexture!.rotation;
                 set
                 {
                     rotation = value;
@@ -306,7 +310,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public float Glow
             {
-                get => (hasAttribute & TextureAttributes.Glow) != 0 ? glow : DefaultTexture.glow;
+                get => (hasAttribute & TextureAttributes.Glow) != 0 ? glow : DefaultTexture!.glow;
                 set
                 {
                     glow = value;
@@ -321,8 +325,8 @@ namespace OpenMetaverse
                 {
                     if ((hasAttribute & TextureAttributes.Material) != 0)
                         return (Bumpiness)(material & BUMP_MASK);
-                    else
-                        return DefaultTexture.Bump;
+                        else
+                            return DefaultTexture!.Bump;
                 }
                 set
                 {
@@ -340,8 +344,8 @@ namespace OpenMetaverse
                 {
                     if ((hasAttribute & TextureAttributes.Material) != 0)
                         return (Shininess)(material & SHINY_MASK);
-                    else
-                        return DefaultTexture.Shiny;
+                        else
+                            return DefaultTexture!.Shiny;
                 }
                 set
                 {
@@ -359,8 +363,8 @@ namespace OpenMetaverse
                 {
                     if ((hasAttribute & TextureAttributes.Material) != 0)
                         return (material & FULLBRIGHT_MASK) != 0;
-                    else
-                        return DefaultTexture.Fullbright;
+                        else
+                            return DefaultTexture!.Fullbright;
                 }
                 set
                 {
@@ -382,8 +386,8 @@ namespace OpenMetaverse
                 {
                     if ((hasAttribute & TextureAttributes.Media) != 0)
                         return (media & MEDIA_MASK) != 0;
-                    else
-                        return DefaultTexture.MediaFlags;
+                        else
+                            return DefaultTexture!.MediaFlags;
                 }
                 set
                 {
@@ -403,8 +407,8 @@ namespace OpenMetaverse
                 {
                     if ((hasAttribute & TextureAttributes.Media) != 0)
                         return (MappingType)(media & TEX_MAP_MASK);
-                    else
-                        return DefaultTexture.TexMapType;
+                        else
+                            return DefaultTexture!.TexMapType;
                 }
                 set
                 {
@@ -419,7 +423,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public UUID TextureID
             {
-                get => (hasAttribute & TextureAttributes.TextureID) != 0 ? textureID : DefaultTexture.textureID;
+                get => (hasAttribute & TextureAttributes.TextureID) != 0 ? textureID : (DefaultTexture?.textureID ?? UUID.Zero);
                 set
                 {
                     textureID = value;
@@ -430,7 +434,7 @@ namespace OpenMetaverse
             /// <summary></summary>
             public UUID MaterialID
             {
-                get => (hasAttribute & TextureAttributes.MaterialID) != 0 ? materialID : DefaultTexture.materialID;
+                get => (hasAttribute & TextureAttributes.MaterialID) != 0 ? materialID : (DefaultTexture?.materialID ?? UUID.Zero);
                 set
                 {
                     materialID = value;
@@ -438,13 +442,34 @@ namespace OpenMetaverse
                 }
             }
 
+            /// <summary>PBR / GLTF render material asset UUID for this face.</summary>
+            public UUID RenderMaterialID
+            {
+                get => (hasAttribute & TextureAttributes.RenderMaterialID) != 0 ? renderMaterialID : (DefaultTexture?.renderMaterialID ?? UUID.Zero);
+                set
+                {
+                    renderMaterialID = value;
+                    hasAttribute |= TextureAttributes.RenderMaterialID;
+                }
+            }
+
+            /// <summary>
+            /// Runtime-only GLTF material override for this face, delivered out-of-band via a
+            /// <see cref="GenericStreamingMethod.GltfMaterialOverride"/> message rather than as part
+            /// of the TextureEntry wire block itself -- mirrors LLTextureEntry::mGLTFMaterialOverride
+            /// in the reference viewer. Not populated by <see cref="FromBytes"/>/<see cref="FromOSD"/>
+            /// and not written by <see cref="GetBytes"/>/<see cref="GetOSD()"/>. Null when this face
+            /// has no active override.
+            /// </summary>
+            public AssetMaterial? MaterialOverride { get; set; }
+
             #endregion Properties
 
             /// <summary>
             /// Contains the definition for individual faces
             /// </summary>
             /// <param name="defaultTexture"></param>
-            public TextureEntryFace(TextureEntryFace defaultTexture)
+            public TextureEntryFace(TextureEntryFace? defaultTexture)
             {
                 rgba = Color4.White;
                 repeatU = 1.0f;
@@ -477,11 +502,12 @@ namespace OpenMetaverse
                     tex["imageid"] = OSD.FromUUID(UUID.Zero);
 
                 tex["materialid"] = OSD.FromUUID(materialID);
+                tex["rendermaterialid"] = OSD.FromUUID(renderMaterialID);
 
                 return tex;
             }
 
-            public static TextureEntryFace FromOSD(OSD osd, TextureEntryFace defaultFace, out int faceNumber)
+            public static TextureEntryFace FromOSD(OSD osd, TextureEntryFace? defaultFace, out int faceNumber)
             {
                 OSDMap map = (OSDMap)osd;
 
@@ -502,12 +528,15 @@ namespace OpenMetaverse
                 face.Glow = (float)map["glow"].AsReal();
                 face.TextureID = map["imageid"].AsUUID();
                 face.MaterialID = map["materialid"].AsUUID();
+                if (map.ContainsKey("rendermaterialid"))
+                    face.RenderMaterialID = map["rendermaterialid"].AsUUID();
                 return face;
             }
 
             public object Clone()
             {
-                TextureEntryFace ret = new TextureEntryFace((TextureEntryFace) DefaultTexture?.Clone())
+                TextureEntryFace? clonedDefault = DefaultTexture == null ? null : (TextureEntryFace)DefaultTexture.Clone();
+                TextureEntryFace ret = new TextureEntryFace(clonedDefault)
                 {
                     rgba = rgba,
                     repeatU = repeatU,
@@ -520,7 +549,9 @@ namespace OpenMetaverse
                     mediab = mediab,
                     hasAttribute = hasAttribute,
                     textureID = textureID,
-                    materialID = materialID
+                    materialID = materialID,
+                    renderMaterialID = renderMaterialID,
+                    MaterialOverride = MaterialOverride
                 };
                 return ret;
             }
@@ -541,7 +572,8 @@ namespace OpenMetaverse
                     MediaFlags.GetHashCode() ^
                     TexMapType.GetHashCode() ^
                     TextureID.GetHashCode() ^
-                    MaterialID.GetHashCode();
+                    MaterialID.GetHashCode() ^
+                    RenderMaterialID.GetHashCode();
             }
 
             /// <summary>
@@ -550,10 +582,8 @@ namespace OpenMetaverse
             /// <returns></returns>
             public override string ToString()
             {
-                return string.Format("Color: {0} RepeatU: {1} RepeatV: {2} OffsetU: {3} OffsetV: {4} " +
-                    "Rotation: {5} Bump: {6} Shiny: {7} Fullbright: {8} Mapping: {9} Media: {10} Glow: {11} ID: {12} MaterialID: {13}",
-                    RGBA, RepeatU, RepeatV, OffsetU, OffsetV, Rotation, Bump, Shiny, Fullbright, TexMapType,
-                    MediaFlags, Glow, TextureID, MaterialID);
+                return $"Color: {RGBA} RepeatU: {RepeatU} RepeatV: {RepeatV} OffsetU: {OffsetU} OffsetV: {OffsetV} " +
+                    $"Rotation: {Rotation} Bump: {Bump} Shiny: {Shiny} Fullbright: {Fullbright} Mapping: {TexMapType} Media: {MediaFlags} Glow: {Glow} ID: {TextureID} MaterialID: {MaterialID} RenderMaterialID: {RenderMaterialID}";
             }
         }
 
@@ -572,7 +602,7 @@ namespace OpenMetaverse
             public static readonly UUID WHITE_TEXTURE = new UUID("5748decc-f629-461c-9a36-a35a221fe21f");
 
             /// <summary></summary>
-            public TextureEntryFace DefaultTexture;
+            public TextureEntryFace? DefaultTexture;
             /// <summary></summary>
             public TextureEntryFace[] FaceTextures = new TextureEntryFace[MAX_FACES];
 
@@ -607,8 +637,26 @@ namespace OpenMetaverse
                     Shiny = defaultFace.Shiny,
                     TexMapType = defaultFace.TexMapType,
                     TextureID = defaultFace.TextureID,
-                    MaterialID = defaultFace.MaterialID
+                    MaterialID = defaultFace.MaterialID,
+                    RenderMaterialID = defaultFace.RenderMaterialID
                 };
+            }
+
+            /// <summary>
+            /// Copy constructor — performs a deep clone of an existing TextureEntry
+            /// </summary>
+            /// <param name="source">TextureEntry to copy</param>
+            public TextureEntry(TextureEntry source)
+            {
+                DefaultTexture = source.DefaultTexture != null
+                    ? (TextureEntryFace)source.DefaultTexture.Clone()
+                    : null;
+
+                for (int i = 0; i < MAX_FACES; i++)
+                {
+                    if (source.FaceTextures[i] != null)
+                        FaceTextures[i] = (TextureEntryFace)source.FaceTextures[i].Clone();
+                }
             }
 
             /// <summary>
@@ -648,7 +696,7 @@ namespace OpenMetaverse
             {
                 if (index >= MAX_FACES) throw new Exception(index + " is outside the range of MAX_FACES");
 
-                return FaceTextures[index] ?? DefaultTexture;
+                return FaceTextures[index] ?? DefaultTexture!;
             }
 
             /// <summary>
@@ -724,9 +772,9 @@ namespace OpenMetaverse
                     UUID tmpUUID = new UUID(data, i);
                     i += 16;
                     
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).TextureID = tmpUUID;
                     }
                 }
@@ -741,9 +789,9 @@ namespace OpenMetaverse
                     Color4 tmpColor = new Color4(data, i, true);
                     i += 4;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).RGBA = tmpColor;
                     }
                 }
@@ -758,9 +806,9 @@ namespace OpenMetaverse
                     float tmpFloat = Utils.BytesToFloat(data, i);
                     i += 4;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).RepeatU = tmpFloat;
                     }
                 }
@@ -775,9 +823,9 @@ namespace OpenMetaverse
                     float tmpFloat = Utils.BytesToFloat(data, i);
                     i += 4;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).RepeatV = tmpFloat;
                     }
                 }
@@ -792,9 +840,9 @@ namespace OpenMetaverse
                     float tmpFloat = Helpers.TEOffsetFloat(data, i);
                     i += 2;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).OffsetU = tmpFloat;
                     }
                 }
@@ -809,9 +857,9 @@ namespace OpenMetaverse
                     float tmpFloat = Helpers.TEOffsetFloat(data, i);
                     i += 2;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).OffsetV = tmpFloat;
                     }
                 }
@@ -826,9 +874,9 @@ namespace OpenMetaverse
                     float tmpFloat = Helpers.TERotationFloat(data, i);
                     i += 2;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).Rotation = tmpFloat;
                     }
                 }
@@ -843,9 +891,9 @@ namespace OpenMetaverse
                     byte tmpByte = data[i];
                     i++;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).material = tmpByte;
                     }
                 }
@@ -860,9 +908,9 @@ namespace OpenMetaverse
                     byte tmpByte = data[i];
                     i++;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).media = tmpByte;
                     }
                 }
@@ -877,9 +925,9 @@ namespace OpenMetaverse
                     float tmpFloat = Helpers.TEGlowFloat(data, i);
                     i++;
 
-                    for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                    for (uint face = 0; face < bitfieldSize; face++)
                     {
-                        if ((faceBits & bit) != 0)
+                        if ((faceBits & (1UL << (int)face)) != 0)
                             CreateFace(face).Glow = tmpFloat;
                     }
                 }
@@ -896,14 +944,34 @@ namespace OpenMetaverse
                         UUID tmpUUID = new UUID(data, i);
                         i += 16;
 
-                        for (uint face = 0, bit = 1; face < bitfieldSize; face++, bit <<= 1)
+                        for (uint face = 0; face < bitfieldSize; face++)
                         {
-                            if ((faceBits & bit) != 0)
+                            if ((faceBits & (1UL << (int)face)) != 0)
                                 CreateFace(face).MaterialID = tmpUUID;
                         }
                     }
                 }
                 #endregion MaterialID
+
+                #region RenderMaterialID
+                if (i - pos + 16 <= length)
+                {
+                    DefaultTexture.RenderMaterialID = new UUID(data, i);
+                    i += 16;
+
+                    while (i - pos + 16 <= length && ReadFaceBitfield(data, ref i, ref faceBits, ref bitfieldSize))
+                    {
+                        UUID tmpUUID = new UUID(data, i);
+                        i += 16;
+
+                        for (uint face = 0; face < bitfieldSize; face++)
+                        {
+                            if ((faceBits & (1UL << (int)face)) != 0)
+                                CreateFace(face).RenderMaterialID = tmpUUID;
+                        }
+                    }
+                }
+                #endregion RenderMaterialID
             }
 
             /// <summary>
@@ -920,28 +988,30 @@ namespace OpenMetaverse
                     {
                         #region Bitfield Setup
 
-                        uint[] textures = new uint[FaceTextures.Length];
+                        ulong[] textures = new ulong[FaceTextures.Length];
                         InitializeArray(ref textures);
-                        uint[] rgbas = new uint[FaceTextures.Length];
+                        ulong[] rgbas = new ulong[FaceTextures.Length];
                         InitializeArray(ref rgbas);
-                        uint[] repeatus = new uint[FaceTextures.Length];
+                        ulong[] repeatus = new ulong[FaceTextures.Length];
                         InitializeArray(ref repeatus);
-                        uint[] repeatvs = new uint[FaceTextures.Length];
+                        ulong[] repeatvs = new ulong[FaceTextures.Length];
                         InitializeArray(ref repeatvs);
-                        uint[] offsetus = new uint[FaceTextures.Length];
+                        ulong[] offsetus = new ulong[FaceTextures.Length];
                         InitializeArray(ref offsetus);
-                        uint[] offsetvs = new uint[FaceTextures.Length];
+                        ulong[] offsetvs = new ulong[FaceTextures.Length];
                         InitializeArray(ref offsetvs);
-                        uint[] rotations = new uint[FaceTextures.Length];
+                        ulong[] rotations = new ulong[FaceTextures.Length];
                         InitializeArray(ref rotations);
-                        uint[] materials = new uint[FaceTextures.Length];
+                        ulong[] materials = new ulong[FaceTextures.Length];
                         InitializeArray(ref materials);
-                        uint[] medias = new uint[FaceTextures.Length];
+                        ulong[] medias = new ulong[FaceTextures.Length];
                         InitializeArray(ref medias);
-                        uint[] glows = new uint[FaceTextures.Length];
+                        ulong[] glows = new ulong[FaceTextures.Length];
                         InitializeArray(ref glows);
-                        uint[] materialIDs = new uint[FaceTextures.Length];
+                        ulong[] materialIDs = new ulong[FaceTextures.Length];
                         InitializeArray(ref materialIDs);
+                        ulong[] renderMaterialIDs = new ulong[FaceTextures.Length];
+                        InitializeArray(ref renderMaterialIDs);
 
                         for (int i = 0; i < FaceTextures.Length; i++)
                         {
@@ -949,58 +1019,63 @@ namespace OpenMetaverse
 
                             if (FaceTextures[i].TextureID != DefaultTexture.TextureID)
                             {
-                                if (textures[i] == uint.MaxValue) textures[i] = 0;
-                                textures[i] |= (uint)(1 << i);
+                                if (textures[i] == ulong.MaxValue) textures[i] = 0;
+                                textures[i] |= (1UL << i);
                             }
                             if (FaceTextures[i].RGBA != DefaultTexture.RGBA)
                             {
-                                if (rgbas[i] == uint.MaxValue) rgbas[i] = 0;
-                                rgbas[i] |= (uint)(1 << i);
+                                if (rgbas[i] == ulong.MaxValue) rgbas[i] = 0;
+                                rgbas[i] |= (1UL << i);
                             }
                             if (FaceTextures[i].RepeatU != DefaultTexture.RepeatU)
                             {
-                                if (repeatus[i] == uint.MaxValue) repeatus[i] = 0;
-                                repeatus[i] |= (uint)(1 << i);
+                                if (repeatus[i] == ulong.MaxValue) repeatus[i] = 0;
+                                repeatus[i] |= (1UL << i);
                             }
                             if (FaceTextures[i].RepeatV != DefaultTexture.RepeatV)
                             {
-                                if (repeatvs[i] == uint.MaxValue) repeatvs[i] = 0;
-                                repeatvs[i] |= (uint)(1 << i);
+                                if (repeatvs[i] == ulong.MaxValue) repeatvs[i] = 0;
+                                repeatvs[i] |= (1UL << i);
                             }
                             if (Helpers.TEOffsetShort(FaceTextures[i].OffsetU) != Helpers.TEOffsetShort(DefaultTexture.OffsetU))
                             {
-                                if (offsetus[i] == uint.MaxValue) offsetus[i] = 0;
-                                offsetus[i] |= (uint)(1 << i);
+                                if (offsetus[i] == ulong.MaxValue) offsetus[i] = 0;
+                                offsetus[i] |= (1UL << i);
                             }
                             if (Helpers.TEOffsetShort(FaceTextures[i].OffsetV) != Helpers.TEOffsetShort(DefaultTexture.OffsetV))
                             {
-                                if (offsetvs[i] == uint.MaxValue) offsetvs[i] = 0;
-                                offsetvs[i] |= (uint)(1 << i);
+                                if (offsetvs[i] == ulong.MaxValue) offsetvs[i] = 0;
+                                offsetvs[i] |= (1UL << i);
                             }
                             if (Helpers.TERotationShort(FaceTextures[i].Rotation) != Helpers.TERotationShort(DefaultTexture.Rotation))
                             {
-                                if (rotations[i] == uint.MaxValue) rotations[i] = 0;
-                                rotations[i] |= (uint)(1 << i);
+                                if (rotations[i] == ulong.MaxValue) rotations[i] = 0;
+                                rotations[i] |= (1UL << i);
                             }
                             if (FaceTextures[i].material != DefaultTexture.material)
                             {
-                                if (materials[i] == uint.MaxValue) materials[i] = 0;
-                                materials[i] |= (uint)(1 << i);
+                                if (materials[i] == ulong.MaxValue) materials[i] = 0;
+                                materials[i] |= (1UL << i);
                             }
                             if (FaceTextures[i].media != DefaultTexture.media)
                             {
-                                if (medias[i] == uint.MaxValue) medias[i] = 0;
-                                medias[i] |= (uint)(1 << i);
+                                if (medias[i] == ulong.MaxValue) medias[i] = 0;
+                                medias[i] |= (1UL << i);
                             }
                             if (Helpers.TEGlowByte(FaceTextures[i].Glow) != Helpers.TEGlowByte(DefaultTexture.Glow))
                             {
-                                if (glows[i] == uint.MaxValue) glows[i] = 0;
-                                glows[i] |= (uint)(1 << i);
+                                if (glows[i] == ulong.MaxValue) glows[i] = 0;
+                                glows[i] |= (1UL << i);
                             }
                             if (FaceTextures[i].MaterialID != DefaultTexture.MaterialID)
                             {
-                                if (materialIDs[i] == uint.MaxValue) materialIDs[i] = 0;
-                                materialIDs[i] |= (uint)(1 << i);
+                                if (materialIDs[i] == ulong.MaxValue) materialIDs[i] = 0;
+                                materialIDs[i] |= (1UL << i);
+                            }
+                            if (FaceTextures[i].RenderMaterialID != DefaultTexture.RenderMaterialID)
+                            {
+                                if (renderMaterialIDs[i] == ulong.MaxValue) renderMaterialIDs[i] = 0;
+                                renderMaterialIDs[i] |= (1UL << i);
                             }
                         }
 
@@ -1010,7 +1085,7 @@ namespace OpenMetaverse
                         binWriter.Write(DefaultTexture.TextureID.GetBytes());
                         for (int i = 0; i < textures.Length; i++)
                         {
-                            if (textures[i] != uint.MaxValue)
+                            if (textures[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(textures[i]));
                                 binWriter.Write(FaceTextures[i].TextureID.GetBytes());
@@ -1024,7 +1099,7 @@ namespace OpenMetaverse
                         binWriter.Write(DefaultTexture.RGBA.GetBytes(true));
                         for (int i = 0; i < rgbas.Length; i++)
                         {
-                            if (rgbas[i] != uint.MaxValue)
+                            if (rgbas[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(rgbas[i]));
                                 // Serialize the color bytes inverted to optimize for zerocoding
@@ -1038,7 +1113,7 @@ namespace OpenMetaverse
                         binWriter.Write(DefaultTexture.RepeatU);
                         for (int i = 0; i < repeatus.Length; i++)
                         {
-                            if (repeatus[i] != uint.MaxValue)
+                            if (repeatus[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(repeatus[i]));
                                 binWriter.Write(FaceTextures[i].RepeatU);
@@ -1051,7 +1126,7 @@ namespace OpenMetaverse
                         binWriter.Write(DefaultTexture.RepeatV);
                         for (int i = 0; i < repeatvs.Length; i++)
                         {
-                            if (repeatvs[i] != uint.MaxValue)
+                            if (repeatvs[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(repeatvs[i]));
                                 binWriter.Write(FaceTextures[i].RepeatV);
@@ -1064,7 +1139,7 @@ namespace OpenMetaverse
                         binWriter.Write(Helpers.TEOffsetShort(DefaultTexture.OffsetU));
                         for (int i = 0; i < offsetus.Length; i++)
                         {
-                            if (offsetus[i] != uint.MaxValue)
+                            if (offsetus[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(offsetus[i]));
                                 binWriter.Write(Helpers.TEOffsetShort(FaceTextures[i].OffsetU));
@@ -1077,7 +1152,7 @@ namespace OpenMetaverse
                         binWriter.Write(Helpers.TEOffsetShort(DefaultTexture.OffsetV));
                         for (int i = 0; i < offsetvs.Length; i++)
                         {
-                            if (offsetvs[i] != uint.MaxValue)
+                            if (offsetvs[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(offsetvs[i]));
                                 binWriter.Write(Helpers.TEOffsetShort(FaceTextures[i].OffsetV));
@@ -1090,7 +1165,7 @@ namespace OpenMetaverse
                         binWriter.Write(Helpers.TERotationShort(DefaultTexture.Rotation));
                         for (int i = 0; i < rotations.Length; i++)
                         {
-                            if (rotations[i] != uint.MaxValue)
+                            if (rotations[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(rotations[i]));
                                 binWriter.Write(Helpers.TERotationShort(FaceTextures[i].Rotation));
@@ -1103,7 +1178,7 @@ namespace OpenMetaverse
                         binWriter.Write(DefaultTexture.material);
                         for (int i = 0; i < materials.Length; i++)
                         {
-                            if (materials[i] != uint.MaxValue)
+                            if (materials[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(materials[i]));
                                 binWriter.Write(FaceTextures[i].material);
@@ -1116,7 +1191,7 @@ namespace OpenMetaverse
                         binWriter.Write(DefaultTexture.media);
                         for (int i = 0; i < medias.Length; i++)
                         {
-                            if (medias[i] != uint.MaxValue)
+                            if (medias[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(medias[i]));
                                 binWriter.Write(FaceTextures[i].media);
@@ -1129,7 +1204,7 @@ namespace OpenMetaverse
                         binWriter.Write(Helpers.TEGlowByte(DefaultTexture.Glow));
                         for (int i = 0; i < glows.Length; i++)
                         {
-                            if (glows[i] != uint.MaxValue)
+                            if (glows[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(glows[i]));
                                 binWriter.Write(Helpers.TEGlowByte(FaceTextures[i].Glow));
@@ -1142,13 +1217,26 @@ namespace OpenMetaverse
                         binWriter.Write(DefaultTexture.MaterialID.GetBytes());
                         for (int i = 0; i < materialIDs.Length; i++)
                         {
-                            if (materialIDs[i] != uint.MaxValue)
+                            if (materialIDs[i] != ulong.MaxValue)
                             {
                                 binWriter.Write(GetFaceBitfieldBytes(materialIDs[i]));
                                 binWriter.Write(FaceTextures[i].MaterialID.GetBytes());
                             }
                         }
+                        binWriter.Write((byte)0);
                         #endregion MaterialID
+
+                        #region RenderMaterialID
+                        binWriter.Write(DefaultTexture.RenderMaterialID.GetBytes());
+                        for (int i = 0; i < renderMaterialIDs.Length; i++)
+                        {
+                            if (renderMaterialIDs[i] != ulong.MaxValue)
+                            {
+                                binWriter.Write(GetFaceBitfieldBytes(renderMaterialIDs[i]));
+                                binWriter.Write(FaceTextures[i].RenderMaterialID.GetBytes());
+                            }
+                        }
+                        #endregion RenderMaterialID
 
                         return memStream.ToArray();
                     }
@@ -1183,10 +1271,10 @@ namespace OpenMetaverse
 
             #region Helpers
 
-            private void InitializeArray(ref uint[] array)
+            private void InitializeArray(ref ulong[] array)
             {
                 for (int i = 0; i < array.Length; i++)
-                    array[i] = uint.MaxValue;
+                    array[i] = ulong.MaxValue;
             }
 
             private bool ReadFaceBitfield(byte[] data, ref int pos, ref UInt64 faceBits, ref uint bitfieldSize)
@@ -1210,10 +1298,10 @@ namespace OpenMetaverse
                 return (faceBits != 0);
             }
 
-            private byte[] GetFaceBitfieldBytes(uint bitfield)
+            private byte[] GetFaceBitfieldBytes(ulong bitfield)
             {
                 int byteLength = 0;
-                uint tmpBitfield = bitfield;
+                ulong tmpBitfield = bitfield;
                 while (tmpBitfield != 0)
                 {
                     tmpBitfield >>= 7;
@@ -1352,7 +1440,7 @@ namespace OpenMetaverse
                        && Rate.Equals(other.Rate);
             }
 
-            public override bool Equals(object obj)
+            public override bool Equals(object? obj)
             {
                 return obj is TextureAnimation other && Equals(other);
             }
@@ -1378,7 +1466,7 @@ namespace OpenMetaverse
         #region Public Members
 
         /// <summary></summary>
-        public TextureEntry Textures;
+        public TextureEntry? Textures;
         /// <summary></summary>
         public TextureAnimation TextureAnim;
 

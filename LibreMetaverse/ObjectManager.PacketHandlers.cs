@@ -25,45 +25,50 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.Interfaces;
-using OpenMetaverse.Messages.Linden;
-using OpenMetaverse.Packets;
+using LibreMetaverse.Interfaces;
+using LibreMetaverse.Messages.Linden;
+using LibreMetaverse.Packets;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class ObjectManager
     {
-        private void ObjectAnimationHandler(object sender, PacketReceivedEventArgs e)
+        private void ObjectAnimationHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (!(e.Packet is ObjectAnimationPacket data)) { return; }
 
+            var objectID = data.Sender.ID;
             var signaledAnimations = new List<Animation>(data.AnimationList.Length);
 
             for (var i = 0; i < data.AnimationList.Length; i++)
             {
-                var animation = new Animation
+                signaledAnimations.Add(new Animation
                 {
                     AnimationID = data.AnimationList[i].AnimID,
-                    AnimationSequence = data.AnimationList[i].AnimSequenceID
-                };
-                if (i < data.AnimationList.Length)
-                {
-                    animation.AnimationSourceObjectID = data.Sender.ID;
-                }
-
-                signaledAnimations.Add(animation);
+                    AnimationSequence = data.AnimationList[i].AnimSequenceID,
+                    AnimationSourceObjectID = objectID
+                });
             }
 
-            OnObjectAnimation(new ObjectAnimationEventArgs(data.Sender.ID, signaledAnimations));
+            // Update the primitive's signaled animation state if object tracking is enabled.
+            // Corresponds to LLObjectSignaledAnimationMap::instance().getMap()[uuid] in the SL C++ viewer.
+            if (Client.Settings.World.TrackObjects
+                && e.Simulator.GlobalToLocalID.TryGetValue(objectID, out uint localID)
+                && e.Simulator.ObjectsPrimitives.TryGetValue(localID, out Primitive? prim))
+            {
+                prim.SignaledAnimations = signaledAnimations;
+            }
+
+            OnObjectAnimation(new ObjectAnimationEventArgs(e.Simulator, objectID, signaledAnimations));
         }
 
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ObjectUpdateHandler(object sender, PacketReceivedEventArgs e)
+        protected void ObjectUpdateHandler(object? sender, PacketReceivedEventArgs e)
         {
             var packet = e.Packet;
             var simulator = e.Simulator;
@@ -87,7 +92,7 @@ namespace OpenMetaverse
                 #region Relevance check
 
                 // Check if we are interested in this object
-                if (!Client.Settings.ALWAYS_DECODE_OBJECTS)
+                if (!Client.Settings.World.AlwaysDecodeObjects)
                 {
                     switch (pcode)
                     {
@@ -338,6 +343,7 @@ namespace OpenMetaverse
 
                         // Textures, texture animations, particle system, and extra params
                         prim.Textures = objectupdate.Textures;
+                        ApplyCachedGLTFMaterialOverride(simulator, prim);
 
                         prim.TextureAnim = new Primitive.TextureAnimation(block.TextureAnim, 0);
                         prim.ParticleSys = new Primitive.ParticleSystem(block.PSBlock, 0);
@@ -375,7 +381,7 @@ namespace OpenMetaverse
                         if (handler != null)
                         {
                             // Ensure event handlers get the computed world position when necessary
-                            ThreadPool.QueueUserWorkItem(delegate (object o)
+                            ThreadPool.QueueUserWorkItem(delegate (object? o)
                             { handler(this, new PrimEventArgs(simulator, prim, update.RegionData.TimeDilation, isNewObject, attachment)); });
                         }
                         //OnParticleUpdate handler replacing decode particles, PCode.Particle system appears to be deprecated this is a fix
@@ -470,43 +476,57 @@ namespace OpenMetaverse
 
         protected void DecodeParticleUpdate(ObjectUpdatePacket.ObjectDataBlock block)
         {
-            // TODO: Handle ParticleSystem ObjectUpdate blocks
-            // float bounce_b
-            // Vector4 scale_range
-            // Vector4 alpha_range
-            // Vector3 vel_offset
-            // float dist_begin_fadeout
-            // float dist_end_fadeout
-            // UUID image_uuid
-            // long flags
-            // byte createme
-            // Vector3 diff_eq_alpha
-            // Vector3 diff_eq_scale
-            // byte max_particles
-            // byte initial_particles
-            // float kill_plane_z
-            // Vector3 kill_plane_normal
-            // float bounce_plane_z
-            // Vector3 bounce_plane_normal
-            // float spawn_range
-            // float spawn_frequency
-            // float spawn_frequency_range
-            // Vector3 spawn_direction
-            // float spawn_direction_range
-            // float spawn_velocity
-            // float spawn_velocity_range
-            // float speed_limit
-            // float wind_weight
-            // Vector3 current_gravity
-            // float gravity_weight
-            // float global_lifetime
-            // float individual_lifetime
-            // float individual_lifetime_range
-            // float alpha_decay
-            // float scale_decay
-            // float distance_death
-            // float damp_motion_factor
-            // Vector3 wind_diffusion_factor
+            // PCode.ParticleSystem is a legacy format superseded by PSBlock in regular prim updates.
+            // SL no longer emits these on the live grid; decode and log for diagnostics only.
+            const int LEGACY_PART_SIZE = 235;
+            if (block.Data.Length < LEGACY_PART_SIZE)
+            {
+                Logger.Debug($"PCode.ParticleSystem LocalID={block.ID} has unexpected data length {block.Data.Length}", Client);
+                return;
+            }
+
+            int i = 0;
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // bounce_b
+            _ = new Vector4(block.Data, i); i += 16;          // scale_range
+            _ = new Vector4(block.Data, i); i += 16;          // alpha_range
+            _ = new Vector3(block.Data, i); i += 12;          // vel_offset
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // dist_begin_fadeout
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // dist_end_fadeout
+            var imageUuid = new UUID(block.Data, i); i += 16;
+            _ = Utils.BytesToUInt(block.Data, i); i += 4;    // flags (U32 in original protocol)
+            byte createMe = block.Data[i++];
+            _ = new Vector3(block.Data, i); i += 12;          // diff_eq_alpha
+            _ = new Vector3(block.Data, i); i += 12;          // diff_eq_scale
+            byte maxParticles = block.Data[i++];
+            _ = block.Data[i++];                              // initial_particles
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // kill_plane_z
+            _ = new Vector3(block.Data, i); i += 12;          // kill_plane_normal
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // bounce_plane_z
+            _ = new Vector3(block.Data, i); i += 12;          // bounce_plane_normal
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // spawn_range
+            float spawnFrequency = Utils.BytesToFloat(block.Data, i); i += 4;
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // spawn_frequency_range
+            _ = new Vector3(block.Data, i); i += 12;          // spawn_direction
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // spawn_direction_range
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // spawn_velocity
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // spawn_velocity_range
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // speed_limit
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // wind_weight
+            _ = new Vector3(block.Data, i); i += 12;          // current_gravity
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // gravity_weight
+            float globalLifetime = Utils.BytesToFloat(block.Data, i); i += 4;
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // individual_lifetime
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // individual_lifetime_range
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // alpha_decay
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // scale_decay
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // distance_death
+            _ = Utils.BytesToFloat(block.Data, i); i += 4;   // damp_motion_factor
+            _ = new Vector3(block.Data, i);                   // wind_diffusion_factor
+
+            Logger.Debug(
+                $"Legacy PCode.ParticleSystem LocalID={block.ID} image={imageUuid} " +
+                $"maxParticles={maxParticles} createMe={createMe} lifetime={globalLifetime} spawnFreq={spawnFrequency}",
+                Client);
         }
 
         /// <summary>
@@ -516,7 +536,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ImprovedTerseObjectUpdateHandler(object sender, PacketReceivedEventArgs e)
+        protected void ImprovedTerseObjectUpdateHandler(object? sender, PacketReceivedEventArgs e)
         {
             var packet = e.Packet;
             var simulator = e.Simulator;
@@ -532,7 +552,7 @@ namespace OpenMetaverse
                     var localid = Utils.BytesToUInt(block.Data, 0);
 
                     // Check if we are interested in this update
-                    if (!Client.Settings.ALWAYS_DECODE_OBJECTS
+                    if (!Client.Settings.World.AlwaysDecodeObjects
                         && localid != Client.Self.localID
                         && m_TerseObjectUpdate == null)
                     {
@@ -587,13 +607,17 @@ namespace OpenMetaverse
                     pos += 6;
 
                     // Textures
-                    // FIXME: Why are we ignoring the first four bytes here?
+                    // Unlike ObjectUpdate's TextureEntry block (parsed from offset 0), a terse
+                    // update's TextureEntry field carries 4 leading bytes before the actual
+                    // TextureEntry data. This offset is original to the wire parsing and has been
+                    // unchanged since it was first written; texture updates via terse packets have
+                    // worked correctly with it in practice.
                     if (block.TextureEntry.Length != 0)
                         update.Textures = new Primitive.TextureEntry(block.TextureEntry, 4, block.TextureEntry.Length - 4);
 
                     #endregion Decode update data
 
-                    var obj = !Client.Settings.OBJECT_TRACKING ? null : (update.Avatar) ?
+                    Primitive? obj = !Client.Settings.World.TrackObjects ? (Primitive?)null : (update.Avatar) ?
                         GetAvatar(simulator, update.LocalID, UUID.Zero) :
                         GetPrimitive(simulator, update.LocalID, UUID.Zero);
 
@@ -601,8 +625,8 @@ namespace OpenMetaverse
                     var handler = m_TerseObjectUpdate;
                     if (handler != null)
                     {
-                        ThreadPool.QueueUserWorkItem(delegate (object o)
-                        { handler(this, new TerseObjectUpdateEventArgs(simulator, obj, update, terse.RegionData.TimeDilation)); });
+                        ThreadPool.QueueUserWorkItem(delegate (object? o)
+                        { handler(this, new TerseObjectUpdateEventArgs(simulator, obj!, update, terse.RegionData.TimeDilation)); });
                     }
 
                     #region Update Client.Self
@@ -616,7 +640,7 @@ namespace OpenMetaverse
                         Client.Self.angularVelocity = update.AngularVelocity;
                     }
                     #endregion Update Client.Self
-                    if (Client.Settings.OBJECT_TRACKING && obj != null)
+                    if (Client.Settings.World.TrackObjects && obj is not null)
                     {
                         obj.Position = update.Position;
                         obj.Rotation = update.Rotation;
@@ -625,8 +649,11 @@ namespace OpenMetaverse
                         obj.Acceleration = update.Acceleration;
                         obj.AngularVelocity = update.AngularVelocity;
                         obj.PrimData.State = update.State;
-                        if (update.Textures != null)
+                        if (update.Textures is not null)
+                        {
                             obj.Textures = update.Textures;
+                            ApplyCachedGLTFMaterialOverride(simulator, obj);
+                        }
                     }
 
                 }
@@ -640,7 +667,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ObjectUpdateCompressedHandler(object sender, PacketReceivedEventArgs e)
+        protected void ObjectUpdateCompressedHandler(object? sender, PacketReceivedEventArgs e)
         {
             var packet = e.Packet;
             var simulator = e.Simulator;
@@ -664,7 +691,7 @@ namespace OpenMetaverse
 
                     #region Relevance check
 
-                    if (!Client.Settings.ALWAYS_DECODE_OBJECTS)
+                    if (!Client.Settings.World.AlwaysDecodeObjects)
                     {
                         switch (pcode)
                         {
@@ -867,6 +894,7 @@ namespace OpenMetaverse
                     var textureEntryLength = (int)Utils.BytesToUInt(block.Data, i);
                     i += 4;
                     prim.Textures = new Primitive.TextureEntry(block.Data, i, textureEntryLength);
+                    ApplyCachedGLTFMaterialOverride(simulator, prim);
                     i += textureEntryLength;
 
                     // Texture animation
@@ -899,18 +927,18 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ObjectUpdateCachedHandler(object sender, PacketReceivedEventArgs e)
+        protected void ObjectUpdateCachedHandler(object? sender, PacketReceivedEventArgs e)
         {
-            if (Client.Settings.ALWAYS_REQUEST_OBJECTS)
+            if (Client.Settings.World.AlwaysRequestObjects)
             {
-                var cachedPrimitives = Client.Settings.CACHE_PRIMITIVES;
+                var cachedPrimitives = Client.Settings.World.CachePrimitives;
                 var packet = e.Packet;
                 var simulator = e.Simulator;
 
                 var update = (ObjectUpdateCachedPacket)packet;
                 var ids = new List<uint>(update.ObjectData.Length);
 
-                // Object caching is implemented when Client.Settings.PRIMITIVES_FACTORY is True, otherwise request updates for all of these objects
+                // Object caching is implemented when Client.Settings.World.CachePrimitives is true, otherwise request updates for all of these objects
                 foreach (var odb in update.ObjectData)
                 {
                     var localID = odb.ID;
@@ -918,7 +946,8 @@ namespace OpenMetaverse
 
                     if (cachedPrimitives)
                     {
-                        if (!simulator.DataPool.NeedsRequest(localID, crc))
+                        // DataPool may be null in some configurations; treat missing DataPool as needing request
+                        if (!(simulator.DataPool?.NeedsRequest(localID, crc) ?? true))
                         {
                             continue;
                         }
@@ -932,7 +961,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void KillObjectHandler(object sender, PacketReceivedEventArgs e)
+        protected void KillObjectHandler(object? sender, PacketReceivedEventArgs e)
         {
             var packet = e.Packet;
             var simulator = e.Simulator;
@@ -1016,20 +1045,32 @@ namespace OpenMetaverse
                 _ = simulator.ObjectsAvatars.TryRemove(localID, out _);
             }
 
-            if (Client.Settings.CACHE_PRIMITIVES)
+            if (Client.Settings.World.CachePrimitives)
             {
-                simulator.DataPool.ReleasePrims(removePrims);
+                simulator.DataPool?.ReleasePrims(removePrims);
             }
             foreach (var removeID in removePrims)
             {
                 simulator.ObjectsPrimitives.TryRemove(removeID, out _);
+            }
+
+            // Local IDs are reused by the simulator, so a stale override must not be handed to
+            // whatever object gets this local ID next. Evict by the killed local IDs directly
+            // (not removePrims, which only covers IDs that were already tracked) since an override
+            // can be cached for an object that was never tracked -- e.g. the override arrived and
+            // the object was killed before any ObjectUpdate for it ever landed. Mirrors the
+            // reference viewer erasing its own GLTF override cache entry on object removal
+            // (LLViewerRegion, llviewerregion.cpp).
+            foreach (var killedID in localIdsToKill)
+            {
+                simulator.GLTFMaterialOverrides.TryRemove(killedID, out _);
             }
         }
 
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ObjectPropertiesHandler(object sender, PacketReceivedEventArgs e)
+        protected void ObjectPropertiesHandler(object? sender, PacketReceivedEventArgs e)
         {
             var packet = e.Packet;
             var simulator = e.Simulator;
@@ -1071,13 +1112,13 @@ namespace OpenMetaverse
                 for (var j = 0; j < numTextures; ++j)
                     props.TextureIDs[j] = new UUID(objectData.TextureID, j * 16);
 
-                if (Client.Settings.OBJECT_TRACKING)
+                if (Client.Settings.World.TrackObjects)
                 {
                     if (simulator.GlobalToLocalID.TryGetValue(props.ObjectID, out var localID))
                     {
                         if (simulator.ObjectsPrimitives.TryGetValue(localID, out var findPrim))
                         {
-                            if (findPrim != null)
+                        if (findPrim is not null)
                             {
                                 OnObjectPropertiesUpdated(new ObjectPropertiesUpdatedEventArgs(simulator, findPrim, props));
 
@@ -1097,7 +1138,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void ObjectPropertiesFamilyHandler(object sender, PacketReceivedEventArgs e)
+        protected void ObjectPropertiesFamilyHandler(object? sender, PacketReceivedEventArgs e)
         {
             var packet = e.Packet;
             var simulator = e.Simulator;
@@ -1123,13 +1164,13 @@ namespace OpenMetaverse
             props.Permissions.NextOwnerMask = (PermissionMask)op.ObjectData.NextOwnerMask;
             props.Permissions.OwnerMask = (PermissionMask)op.ObjectData.OwnerMask;
 
-            if (Client.Settings.OBJECT_TRACKING)
+            if (Client.Settings.World.TrackObjects)
             {
                 if (simulator.GlobalToLocalID.TryGetValue(props.ObjectID, out var localID))
                 {
                     if (simulator.ObjectsPrimitives.TryGetValue(localID, out var findPrim))
                     {
-                        if (findPrim != null)
+                        if (findPrim is not null)
                         {
                             if (simulator.ObjectsPrimitives.TryGetValue(findPrim.LocalID, out var prim))
                             {
@@ -1151,7 +1192,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void PayPriceReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void PayPriceReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             if (m_PayPriceReply != null)
             {
@@ -1182,7 +1223,7 @@ namespace OpenMetaverse
         {
             var msg = (ObjectPhysicsPropertiesMessage)message;
 
-            if (Client.Settings.OBJECT_TRACKING)
+            if (Client.Settings.World.TrackObjects)
             {
                 foreach (var prop in msg.ObjectPhysicsProperties)
                 {

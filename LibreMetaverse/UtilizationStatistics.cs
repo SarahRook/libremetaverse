@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2025, Sjofn LLC.
  * All rights reserved.
@@ -28,7 +28,7 @@
 using System.Collections.Generic;
 using System.Linq;
 
-namespace OpenMetaverse.Stats
+namespace LibreMetaverse.Stats
 {
     public enum Type
     {

@@ -32,24 +32,20 @@ using System.Linq;
 using System.Net;
 using System.Threading.Channels;
 using System.Threading.Tasks;
-using OpenMetaverse.Packets;
-using OpenMetaverse.Interfaces;
-using OpenMetaverse.Messages.Linden;
-using LibreMetaverse;
+using LibreMetaverse.Packets;
+using LibreMetaverse.Interfaces;
+using LibreMetaverse.Messages.Linden;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// NetworkManager is responsible for managing the network layer of 
-    /// OpenMetaverse. It tracks all the server connections, serializes 
+    /// LibreMetaverse. It tracks all the server connections, serializes 
     /// outgoing traffic and deserializes incoming traffic, and provides
     /// instances of delegates for network-related events.
     /// </summary>
     public partial class NetworkManager
     {
-        // TODO: Implement throttle class for incoming and outgoing packets
-        
-        
         #region Enums
 
         /// <summary>
@@ -78,10 +74,10 @@ namespace OpenMetaverse
         public class IncomingPacket
         {
             /// <summary>Reference to the simulator that this packet came from</summary>
-            public Simulator Simulator;
+            public Simulator? Simulator;
 
             /// <summary>Packet that needs to be processed</summary>
-            public Packet Packet;
+            public Packet? Packet;
         }
         
         /// <summary>
@@ -119,14 +115,14 @@ namespace OpenMetaverse
         #region Delegates
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<PacketSentEventArgs> m_PacketSent;
+        private EventHandler<PacketSentEventArgs>? m_PacketSent;
 
         ///<summary>Raises the PacketSent Event</summary>
         /// <param name="e">A PacketSentEventArgs object containing
         /// the data sent from the simulator</param>
         protected virtual void OnPacketSent(PacketSentEventArgs e)
         {
-            EventHandler<PacketSentEventArgs> handler = m_PacketSent;
+            EventHandler<PacketSentEventArgs>? handler = m_PacketSent;
             handler?.Invoke(this, e);
         }
 
@@ -142,14 +138,14 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<LoggedOutEventArgs> m_LoggedOut;
+        private EventHandler<LoggedOutEventArgs>? m_LoggedOut;
 
         ///<summary>Raises the LoggedOut Event</summary>
         /// <param name="e">A LoggedOutEventArgs object containing
         /// the data sent from the simulator</param>
         protected virtual void OnLoggedOut(LoggedOutEventArgs e)
         {
-            EventHandler<LoggedOutEventArgs> handler = m_LoggedOut;
+            EventHandler<LoggedOutEventArgs>? handler = m_LoggedOut;
             handler?.Invoke(this, e);
         }
 
@@ -165,13 +161,13 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<SimConnectingEventArgs> m_SimConnecting;
+        private EventHandler<SimConnectingEventArgs>? m_SimConnecting;
 
         ///<summary>Raises the SimConnecting Event</summary>
         /// <param name="e">A SimConnectingEventArgs object containing the packet data</param>
         protected virtual void OnSimConnecting(SimConnectingEventArgs e)
         {
-            EventHandler<SimConnectingEventArgs> handler = m_SimConnecting;
+            EventHandler<SimConnectingEventArgs>? handler = m_SimConnecting;
             handler?.Invoke(this, e);
         }
 
@@ -187,13 +183,13 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<SimConnectedEventArgs> m_SimConnected;
+        private EventHandler<SimConnectedEventArgs>? m_SimConnected;
 
         ///<summary>Raises the SimConnected Event</summary>
         /// <param name="e">A SimConnectedEventArgs object containing the data sent from the simulator</param>
         protected virtual void OnSimConnected(SimConnectedEventArgs e)
         {
-            EventHandler<SimConnectedEventArgs> handler = m_SimConnected;
+            EventHandler<SimConnectedEventArgs>? handler = m_SimConnected;
             handler?.Invoke(this, e);
         }
 
@@ -209,13 +205,13 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<SimDisconnectedEventArgs> m_SimDisconnected;
+        private EventHandler<SimDisconnectedEventArgs>? m_SimDisconnected;
 
         ///<summary>Raises the SimDisconnected Event</summary>
         /// <param name="e">A SimDisconnectedEventArgs object containing the packet data</param>
         protected virtual void OnSimDisconnected(SimDisconnectedEventArgs e)
         {
-            EventHandler<SimDisconnectedEventArgs> handler = m_SimDisconnected;
+            EventHandler<SimDisconnectedEventArgs>? handler = m_SimDisconnected;
             handler?.Invoke(this, e);
         }
 
@@ -231,13 +227,13 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<DisconnectedEventArgs> m_Disconnected;
+        private EventHandler<DisconnectedEventArgs>? m_Disconnected;
 
         ///<summary>Raises the Disconnected Event</summary>
         /// <param name="e">A DisconnectedEventArgs object containing the packet data</param>
         protected virtual void OnDisconnected(DisconnectedEventArgs e)
         {
-            EventHandler<DisconnectedEventArgs> handler = m_Disconnected;
+            EventHandler<DisconnectedEventArgs>? handler = m_Disconnected;
             handler?.Invoke(this, e);
         }
 
@@ -253,13 +249,13 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<SimChangedEventArgs> m_SimChanged;
+        private EventHandler<SimChangedEventArgs>? m_SimChanged;
 
         ///<summary>Raises the SimChanged Event</summary>
         /// <param name="e">A SimChangedEventArgs object</param>
         protected virtual void OnSimChanged(SimChangedEventArgs e)
         {
-            EventHandler<SimChangedEventArgs> handler = m_SimChanged;
+            EventHandler<SimChangedEventArgs>? handler = m_SimChanged;
             handler?.Invoke(this, e);
         }
 
@@ -275,13 +271,13 @@ namespace OpenMetaverse
         }
 
         /// <summary>The event subscribers, null if no subscribers</summary>
-        private EventHandler<EventQueueRunningEventArgs> m_EventQueueRunning;
+        private EventHandler<EventQueueRunningEventArgs>? m_EventQueueRunning;
 
         ///<summary>Raises the EventQueueRunning Event</summary>
         /// <param name="e">A EventQueueRunningEventArgs object containing the simulator</param>
         protected virtual void OnEventQueueRunning(EventQueueRunningEventArgs e)
         {
-            EventHandler<EventQueueRunningEventArgs> handler = m_EventQueueRunning;
+            EventHandler<EventQueueRunningEventArgs>? handler = m_EventQueueRunning;
             handler?.Invoke(this, e);
         }
 
@@ -296,6 +292,30 @@ namespace OpenMetaverse
             remove { lock (m_EventQueueRunningLock) { m_EventQueueRunning -= value; } }
         }
 
+        private EventHandler<GenericStreamingMessageEventArgs>? m_GenericStreamingMessage;
+
+        ///<summary>Raises the GenericStreamingMessage Event</summary>
+        /// <param name="e">A GenericStreamingMessageEventArgs object containing the data sent from the simulator</param>
+        protected virtual void OnGenericStreamingMessage(GenericStreamingMessageEventArgs e)
+        {
+            EventHandler<GenericStreamingMessageEventArgs>? handler = m_GenericStreamingMessage;
+            handler?.Invoke(this, e);
+        }
+
+        /// <summary>Thread sync lock object</summary>
+        private readonly object m_GenericStreamingMessageLock = new object();
+
+        /// <summary>Raised when the simulator sends a GenericStreamingMessage packet.
+        /// Currently used for GLTF PBR material override data
+        /// (<see cref="GenericStreamingMethod.GltfMaterialOverride"/>); future simulator
+        /// versions may introduce additional method IDs.
+        /// Corresponds to process_generic_streaming_message in the SL C++ viewer.</summary>
+        public event EventHandler<GenericStreamingMessageEventArgs> GenericStreamingMessage
+        {
+            add { lock (m_GenericStreamingMessageLock) { m_GenericStreamingMessage += value; } }
+            remove { lock (m_GenericStreamingMessageLock) { m_GenericStreamingMessage -= value; } }
+        }
+
         #endregion Delegates
 
         #region Properties
@@ -306,7 +326,7 @@ namespace OpenMetaverse
 
         /// <summary>The simulator that the logged in avatar is currently
         /// occupying</summary>
-        public Simulator CurrentSim { get; set; }
+        public Simulator? CurrentSim { get; set; }
 
         /// <summary>Shows whether the network layer is logged in to the
         /// grid or not</summary>
@@ -322,6 +342,7 @@ namespace OpenMetaverse
 
         /// <summary>All simulators we are currently connected to</summary>
         public List<Simulator> Simulators = new List<Simulator>();
+        private readonly ReaderWriterLockSlim _simulatorsLock = new ReaderWriterLockSlim();
 
         /// <summary>Handlers for incoming capability events</summary>
         internal CapsEventDictionary CapsEvents;
@@ -329,26 +350,29 @@ namespace OpenMetaverse
         internal PacketEventDictionary PacketEvents;
 
         /// <summary>Incoming packets that are awaiting handling</summary>
-        private Channel<IncomingPacket> _packetInbox;
+        private Channel<IncomingPacket>? _packetInbox;
 
         private int _packetInboxCount = 0;
 
         /// <summary>Outgoing packets that are awaiting handling</summary>
-        private Channel<OutgoingPacket> _packetOutbox;
+        private Channel<OutgoingPacket>? _packetOutbox;
         
         private int _packetOutboxCount = 0;
 
         // Cancellation and background task tracking for inbox/outbox processors
-        private CancellationTokenSource _cts;
-        private Task _incomingProcessorTask;
-        private Task _outgoingProcessorTask;
+        private CancellationTokenSource? _cts;
+        private Task? _incomingProcessorTask;
+        private Task? _outgoingProcessorTask;
+
+        // Per-category token-bucket throttle for outgoing UDP packets.
+        private UdpThrottle? _udpThrottle;
 
         private readonly GridClient Client;
-        private Timer DisconnectTimer;
+        private Timer? DisconnectTimer;
 
         private long lastPacketWarning = 0;
 
-        private System.Timers.Timer logoutReplyTimeout;
+        private System.Timers.Timer? logoutReplyTimeout;
 
         /// <summary>
         /// Default constructor
@@ -373,15 +397,25 @@ namespace OpenMetaverse
             RegisterCallback(PacketType.CompletePingCheck, CompletePingCheckHandler, false);
             RegisterCallback(PacketType.SimStats, SimStatsHandler, false);
             RegisterCallback(PacketType.GenericMessage, GenericMessageHandler);
+            RegisterCallback(PacketType.GenericStreamingMessage, GenericStreamingMessageHandler);
         }
 
-        private void GenericMessageHandler(object sender, PacketReceivedEventArgs e)
+        private void GenericMessageHandler(object? sender, PacketReceivedEventArgs e)
         {
-            if (!(e.Packet is GenericMessagePacket message)) 
+            if (!(e.Packet is GenericMessagePacket message))
                 return;
-            
+
             var method = Utils.BytesToString(message.MethodData.Method);
             Logger.Info("Received Unhandled Generic Message: " + method, Client);
+        }
+
+        private void GenericStreamingMessageHandler(object? sender, PacketReceivedEventArgs e)
+        {
+            if (!(e.Packet is GenericStreamingMessagePacket packet)) return;
+            OnGenericStreamingMessage(new GenericStreamingMessageEventArgs(
+                e.Simulator,
+                (GenericStreamingMethod)packet.MethodData.Method,
+                packet.DataBlock.Data));
         }
 
         /// <summary>
@@ -467,7 +501,7 @@ namespace OpenMetaverse
         /// </summary>
         /// <param name="packet">Packet to send</param>
         /// <param name="simulator">Simulator to send the packet to</param>
-        public void SendPacket(Packet packet, Simulator simulator)
+        public void SendPacket(Packet packet, Simulator? simulator)
         {
             if (simulator == null && Client.Network.Simulators.Count >= 1)
             {
@@ -537,6 +571,15 @@ namespace OpenMetaverse
         }
 
         /// <summary>
+        /// Update the outgoing UDP throttle rates to match the supplied AgentThrottle values.
+        /// Called automatically by AgentThrottle.Set().
+        /// </summary>
+        internal void UpdateUdpThrottle(AgentThrottle throttle)
+        {
+            _udpThrottle?.Update(throttle);
+        }
+
+        /// <summary>
         /// Connect to simulator assuming legacy region size
         /// </summary>
         /// <param name="ip">IP address to connect to</param>
@@ -545,7 +588,7 @@ namespace OpenMetaverse
         /// <param name="setDefault"></param>
         /// <param name="seedcaps"></param>
         /// <returns></returns>
-        public Simulator Connect(IPAddress ip, ushort port, ulong handle, bool setDefault, Uri seedcaps)
+        public Simulator? Connect(IPAddress ip, ushort port, ulong handle, bool setDefault, Uri? seedcaps)
         {
             return Connect(ip, port, handle, setDefault, seedcaps, Simulator.DefaultRegionSizeX, Simulator.DefaultRegionSizeY);
         }
@@ -563,7 +606,7 @@ namespace OpenMetaverse
         /// <param name="sizeX">Size of the region in X meters</param>
         /// <param name="sizeY">Size of the region in Y meters</param>
         /// <returns>A Simulator object on success, otherwise null</returns>
-        public Simulator Connect(IPAddress ip, ushort port, ulong handle, bool setDefault, Uri seedcaps, uint sizeX, uint sizeY)
+        public Simulator? Connect(IPAddress ip, ushort port, ulong handle, bool setDefault, Uri? seedcaps, uint sizeX, uint sizeY)
         {
             IPEndPoint endPoint = new IPEndPoint(ip, port);
             return Connect(endPoint, handle, setDefault, seedcaps, sizeX, sizeY);
@@ -577,7 +620,7 @@ namespace OpenMetaverse
         /// <param name="setDefault"></param>
         /// <param name="seedcaps"></param>
         /// <returns></returns>
-        public Simulator Connect(IPEndPoint endPoint, ulong handle, bool setDefault, Uri seedcaps) {
+        public Simulator? Connect(IPEndPoint endPoint, ulong handle, bool setDefault, Uri? seedcaps) {
             return Connect(endPoint, handle, setDefault, seedcaps, Simulator.DefaultRegionSizeX, Simulator.DefaultRegionSizeY);
         }
         /// <summary>
@@ -593,9 +636,9 @@ namespace OpenMetaverse
         /// <param name="sizeX">Size of the region in X meters</param>
         /// <param name="sizeY">Size of the region in Y meters</param>
         /// <returns>A Simulator object on success, otherwise null</returns>
-        public Simulator Connect(IPEndPoint endPoint, ulong handle, bool setDefault, Uri seedcaps, uint sizeX, uint sizeY)
+        public Simulator? Connect(IPEndPoint endPoint, ulong handle, bool setDefault, Uri? seedcaps, uint sizeX, uint sizeY)
         {
-            Simulator simulator = FindSimulator(endPoint);
+            Simulator? simulator = FindSimulator(endPoint);
 
             if (simulator == null)
             {
@@ -604,15 +647,19 @@ namespace OpenMetaverse
 
                 // Immediately add this simulator to the list of current sims. It will be removed if the
                 // connection fails
-                lock (Simulators) Simulators.Add(simulator);
+                _simulatorsLock.EnterWriteLock();
+                try { Simulators.Add(simulator); }
+                finally { _simulatorsLock.ExitWriteLock(); }
             }
             
             if (_packetInbox == null || _packetOutbox == null)
             {
                 var options = new UnboundedChannelOptions() {SingleReader = true};
-                
+
                 _packetInbox = Channel.CreateUnbounded<IncomingPacket>(options);
                 _packetOutbox = Channel.CreateUnbounded<OutgoingPacket>(options);
+
+                _udpThrottle = new UdpThrottle(Client.Throttle);
 
                 // Create a CancellationTokenSource for background processors and track tasks
                 _cts = new CancellationTokenSource();
@@ -636,10 +683,9 @@ namespace OpenMetaverse
                     if (args.Cancel)
                     {
                         // Callback is requesting that we abort this connection
-                        lock (Simulators)
-                        {
-                            Simulators.Remove(simulator);
-                        }
+                        _simulatorsLock.EnterWriteLock();
+                        try { Simulators.Remove(simulator); }
+                        finally { _simulatorsLock.ExitWriteLock(); }
                         return null;
                     }
                 }
@@ -651,7 +697,7 @@ namespace OpenMetaverse
                     {
                         // Start a timer that checks if we've been disconnected
                         DisconnectTimer = new Timer(DisconnectTimer_Elapsed, null,
-                            Client.Settings.SIMULATOR_TIMEOUT, Client.Settings.SIMULATOR_TIMEOUT);
+                            Client.Settings.Timing.SimulatorTimeout, Client.Settings.Timing.SimulatorTimeout);
                     }
 
                     if (setDefault)
@@ -666,7 +712,7 @@ namespace OpenMetaverse
                     }
                     
                     // If enabled, send an AgentThrottle packet to the server to increase our bandwidth
-                    if (Client.Settings.SEND_AGENT_THROTTLE)
+                    if (Client.Settings.Agent.SendThrottle)
                     {
                         Client.Throttle.Set(simulator);
                     }
@@ -675,10 +721,9 @@ namespace OpenMetaverse
                 }
 
                 // Connection failed, remove this simulator from our list and destroy it
-                lock (Simulators)
-                {
-                    Simulators.Remove(simulator);
-                }
+                _simulatorsLock.EnterWriteLock();
+                try { Simulators.Remove(simulator); }
+                finally { _simulatorsLock.ExitWriteLock(); }
 
                 return null;
             }
@@ -695,7 +740,7 @@ namespace OpenMetaverse
                 SetCurrentSim(simulator, seedcaps);
 
                 // Send an initial AgentUpdate to complete our movement in to the sim
-                if (Client.Settings.SEND_AGENT_UPDATES)
+                if (Client.Settings.Agent.SendUpdates)
                 {
                     Client.Self.Movement.SendUpdate(true, simulator);
                 }
@@ -721,7 +766,7 @@ namespace OpenMetaverse
             // Otherwise we fire it manually with a NetworkTimeout type after LOGOUT_TIMEOUT
             logoutReplyTimeout = new System.Timers.Timer();
 
-            logoutReplyTimeout.Interval = Client.Settings.LOGOUT_TIMEOUT;
+            logoutReplyTimeout.Interval = Client.Settings.Timing.LogoutTimeout;
             logoutReplyTimeout.Elapsed += delegate
             {
                 logoutReplyTimeout.Stop();
@@ -737,7 +782,7 @@ namespace OpenMetaverse
 
         /// <summary>
         /// Initiate a blocking logout request. This will return when the logout
-        /// handshake has completed or when <see cref="Settings.LOGOUT_TIMEOUT" />
+        /// handshake has completed or when <see cref="TimingSettings.LogoutTimeout" />
         /// has expired and the network layer is manually shut down
         /// </summary>
         public void Logout()
@@ -753,12 +798,46 @@ namespace OpenMetaverse
             // Wait for a logout response. If the response is received, shutdown
             // will be fired in the callback. Otherwise, we fire it manually with
             // a NetworkTimeout type
-            if (!logoutEvent.WaitOne(Client.Settings.LOGOUT_TIMEOUT, false))
+            if (!logoutEvent.WaitOne(Client.Settings.Timing.LogoutTimeout, false))
             {
                 Shutdown(DisconnectType.NetworkTimeout);
             }
 
             LoggedOut -= callback;
+        }
+
+        /// <summary>
+        /// Initiate an async logout request. Returns when the logout handshake has
+        /// completed or when <paramref name="cancellationToken"/> is cancelled or
+        /// <see cref="TimingSettings.LogoutTimeout"/> has expired, whichever comes first.
+        /// </summary>
+        public async Task LogoutAsync(CancellationToken cancellationToken = default)
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            EventHandler<LoggedOutEventArgs> callback = delegate { tcs.TrySetResult(true); };
+
+            LoggedOut += callback;
+            try
+            {
+                RequestLogout();
+
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                linkedCts.CancelAfter(Client.Settings.Timing.LogoutTimeout);
+
+                var completed = await Task.WhenAny(tcs.Task,
+                    Task.Delay(Timeout.InfiniteTimeSpan, linkedCts.Token)
+                        .ContinueWith(_ => false, TaskContinuationOptions.OnlyOnCanceled)).ConfigureAwait(false);
+
+                if (completed != tcs.Task)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Shutdown(DisconnectType.NetworkTimeout);
+                }
+            }
+            finally
+            {
+                LoggedOut -= callback;
+            }
         }
 
         /// <summary>
@@ -768,11 +847,11 @@ namespace OpenMetaverse
         public void RequestLogout()
         {
             // No need to run the disconnect timer anymore
-            if (DisconnectTimer != null)
-            {
-                DisposalHelper.SafeDispose(DisconnectTimer, "DisconnectTimer", (m, e) => Logger.Debug(m, e));
-                DisconnectTimer = null;
-            }
+                    if (DisconnectTimer != null)
+                    {
+                        DisposalHelper.SafeDispose(DisconnectTimer, "DisconnectTimer", (m, e) => Logger.Debug(m));
+                        DisconnectTimer = null;
+                    }
 
             // This will catch a Logout when the client is not logged in
             if (CurrentSim == null || !Connected)
@@ -815,11 +894,13 @@ namespace OpenMetaverse
                 }
 
                 int simulatorsCount;
-                lock (Simulators)
+                _simulatorsLock.EnterWriteLock();
+                try
                 {
                     Simulators.Remove(simulator);
                     simulatorsCount = Simulators.Count;
                 }
+                finally { _simulatorsLock.ExitWriteLock(); }
 
                 if (simulatorsCount == 0)
                 {
@@ -875,7 +956,8 @@ namespace OpenMetaverse
             // Send a CloseCircuit packet to simulators if we are initiating the disconnect
             bool sendCloseCircuit = (type == DisconnectType.ClientInitiated || type == DisconnectType.NetworkTimeout);
 
-            lock (Simulators)
+            _simulatorsLock.EnterWriteLock();
+            try
             {
                 // Disconnect all simulators except the current one
                 foreach (var sim in Simulators.Where(t => t != null && t != CurrentSim))
@@ -892,6 +974,7 @@ namespace OpenMetaverse
 
                 Simulators.Clear();
             }
+            finally { _simulatorsLock.ExitWriteLock(); }
 
             if (CurrentSim != null)
             {
@@ -908,17 +991,23 @@ namespace OpenMetaverse
             }
             
             // Cancel background processors first to speed up shutdown
-            DisposalHelper.SafeCancelAndDispose(_cts, (m, e) => Logger.Debug(m, e));
-            _cts = null;
+            if (_cts != null)
+            {
+                DisposalHelper.SafeCancelAndDispose(_cts, (m, e) => { if (e != null) Logger.Debug(m, e); else Logger.Debug(m); });
+                _cts = null;
+            }
 
-            DisposalHelper.SafeAction(() => _packetInbox?.Writer.Complete(), "Complete packet inbox writer", (m, e) => Logger.Debug(m, e));
-            DisposalHelper.SafeAction(() => _packetOutbox?.Writer.Complete(), "Complete packet outbox writer", (m, e) => Logger.Debug(m, e));
+            DisposalHelper.SafeAction(() => _packetInbox?.Writer.Complete(), "Complete packet inbox writer", (m, e) => { if (e != null) Logger.Debug(m, e); else Logger.Debug(m); });
+            DisposalHelper.SafeAction(() => _packetOutbox?.Writer.Complete(), "Complete packet outbox writer", (m, e) => { if (e != null) Logger.Debug(m, e); else Logger.Debug(m); });
 
             _packetInbox = null;
             _packetOutbox = null;
 
             _incomingProcessorTask = null;
             _outgoingProcessorTask = null;
+
+            _udpThrottle?.Dispose();
+            _udpThrottle = null;
 
             Connected = false;
 
@@ -929,34 +1018,39 @@ namespace OpenMetaverse
             }
         }
 
-        /// <summary>
-        /// Searches through the list of currently connected simulators to find
-        /// one attached to the given IPEndPoint
-        /// </summary>
-        /// <param name="endPoint">IPEndPoint of the Simulator to search for</param>
-        /// <returns>A Simulator reference on success, otherwise null</returns>
-        public Simulator FindSimulator(IPEndPoint endPoint)
+        internal void RemoveSimulator(Simulator simulator)
         {
-            lock (Simulators)
+            _simulatorsLock.EnterWriteLock();
+            try { Simulators.Remove(simulator); }
+            finally { _simulatorsLock.ExitWriteLock(); }
+        }
+
+        public Simulator? FindSimulator(IPEndPoint endPoint)
+        {
+            _simulatorsLock.EnterReadLock();
+            try
             {
                 foreach (var sim in Simulators.Where(t => t.IPEndPoint.Equals(endPoint)))
                 {
                     return sim;
                 }
             }
+            finally { _simulatorsLock.ExitReadLock(); }
 
             return null;
         }
 
-        public Simulator FindSimulator(ulong handle)
+        public Simulator? FindSimulator(ulong handle)
         {
-            lock (Simulators)
+            _simulatorsLock.EnterReadLock();
+            try
             {
                 foreach (var t in Simulators.Where(t => t.Handle == handle))
                 {
                     return t;
                 }
             }
+            finally { _simulatorsLock.ExitReadLock(); }
 
             return null;
         }
@@ -989,11 +1083,8 @@ namespace OpenMetaverse
                 return;
             }
 
-            // FIXME: This is kind of ridiculous. Port the HTB code from Simian over ASAP!
             var reader = _packetOutbox.Reader;
-            var stopwatch = new System.Diagnostics.Stopwatch();
-            stopwatch.Start();
-            
+
             try
             {
                 while (await reader.WaitToReadAsync(ct).ConfigureAwait(false) && Connected && !ct.IsCancellationRequested)
@@ -1002,23 +1093,22 @@ namespace OpenMetaverse
                     {
                         Interlocked.Decrement(ref _packetOutboxCount);
 
-                        var simulator = outgoingPacket.Simulator;
-
-                        var elapsed = stopwatch.ElapsedMilliseconds;
-                        if (elapsed < 10)
+                        var throttle = _udpThrottle;
+                        if (throttle != null)
                         {
-                            await Task.Delay(10 - (int)elapsed, ct).ConfigureAwait(false);
+                            var category = UdpThrottle.Classify(outgoingPacket.Type);
+                            await throttle.AcquireAsync(category, outgoingPacket.Buffer.DataLength, ct).ConfigureAwait(false);
                         }
+
                         try
                         {
-                            simulator.SendPacketFinal(outgoingPacket);
+                            outgoingPacket.Simulator.SendPacketFinal(outgoingPacket);
                         }
                         catch (OperationCanceledException) { throw; }
                         catch (Exception ex)
                         {
                             Logger.Error("OutgoingPacketHandler exception: " + ex, ex, Client);
                         }
-                        stopwatch.Restart();
                     }
                 }
             }
@@ -1053,7 +1143,7 @@ namespace OpenMetaverse
                         var packet = incomingPacket.Packet;
                         var simulator = incomingPacket.Simulator;
 
-                        if (packet == null) continue;
+                        if (packet == null || simulator == null) continue;
 
                         // Skip blacklisted packets
                         if (UDPBlacklist.Contains(packet.Type))
@@ -1085,13 +1175,15 @@ namespace OpenMetaverse
             }
         }
 
-        private void SetCurrentSim(Simulator simulator, Uri seedcaps)
+        private void SetCurrentSim(Simulator simulator, Uri? seedcaps)
         {
             if (simulator == CurrentSim) 
                 return;
 
-            Simulator oldSim = CurrentSim;
-            lock (Simulators) CurrentSim = simulator; // CurrentSim is synchronized against Simulators
+            Simulator? oldSim = CurrentSim;
+            _simulatorsLock.EnterWriteLock();
+            try { CurrentSim = simulator; }
+            finally { _simulatorsLock.ExitWriteLock(); }
 
             simulator.SetSeedCaps(seedcaps, oldSim != simulator);
 
@@ -1104,13 +1196,13 @@ namespace OpenMetaverse
 
         #region Timers
 
-        private void DisconnectTimer_Elapsed(object obj)
+        private void DisconnectTimer_Elapsed(object? obj)
         {
             if (!Connected || CurrentSim == null)
             {
                 if (DisconnectTimer != null)
                 {
-                    DisposalHelper.SafeDispose(DisconnectTimer, "DisconnectTimer", (m, e) => Logger.Debug(m, e));
+                    DisposalHelper.SafeDispose(DisconnectTimer, "DisconnectTimer", (m, e) => Logger.Debug(m));
                     DisconnectTimer = null;
                 }
                 Connected = false;
@@ -1122,7 +1214,7 @@ namespace OpenMetaverse
 
                 if (DisconnectTimer != null)
                 {
-                    DisposalHelper.SafeDispose(DisconnectTimer, "DisconnectTimer", (m, e) => Logger.Debug(m, e));
+                    DisposalHelper.SafeDispose(DisconnectTimer, "DisconnectTimer", (m, e) => { if (e != null) Logger.Debug(m, e); else Logger.Debug(m); });
                     DisconnectTimer = null;
                 }
 
@@ -1136,7 +1228,7 @@ namespace OpenMetaverse
                 // Mark the current simulator as potentially disconnected each time this timer fires.
                 // If the timer is fired again before any packets are received, an actual disconnect
                 // sequence will be triggered
-                CurrentSim.DisconnectCandidate = true;
+                if (CurrentSim != null) CurrentSim.DisconnectCandidate = true;
             }
         }
 
@@ -1147,7 +1239,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void LogoutReplyHandler(object sender, PacketReceivedEventArgs e)
+        protected void LogoutReplyHandler(object? sender, PacketReceivedEventArgs e)
         {
             LogoutReplyPacket logout = (LogoutReplyPacket)e.Packet;
 
@@ -1176,7 +1268,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void StartPingCheckHandler(object sender, PacketReceivedEventArgs e)
+        protected void StartPingCheckHandler(object? sender, PacketReceivedEventArgs e)
         {
             StartPingCheckPacket incomingPing = (StartPingCheckPacket)e.Packet;
             CompletePingCheckPacket ping = new CompletePingCheckPacket
@@ -1184,9 +1276,12 @@ namespace OpenMetaverse
                 PingID = {PingID = incomingPing.PingID.PingID},
                 Header = {Reliable = false}
             };
-            // TODO: We can use OldestUnacked to correct transmission errors
-            //   I don't think that's right.  As far as I can tell, the Viewer
-            //   only uses this to prune its duplicate-checking buffer. -bushing
+
+            // OldestUnacked is the oldest sequence number the sim sent us but hasn't received
+            // our ACK for yet. If it's non-zero, flush our pending ACK queue immediately so
+            // the sim knows we received its packets without waiting for the next ACK interval.
+            if (incomingPing.PingID.OldestUnacked > 0)
+                e.Simulator?.SendAcks();
 
             SendPacket(ping, e.Simulator);
         }
@@ -1194,7 +1289,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void CompletePingCheckHandler(object sender, PacketReceivedEventArgs e)
+        protected void CompletePingCheckHandler(object? sender, PacketReceivedEventArgs e)
         {
             CompletePingCheckPacket pong = (CompletePingCheckPacket)e.Packet;
             //String retval = "Pong2: " + (Environment.TickCount - e.Simulator.Stats.LastPingSent);
@@ -1208,9 +1303,9 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void SimStatsHandler(object sender, PacketReceivedEventArgs e)
+        protected void SimStatsHandler(object? sender, PacketReceivedEventArgs e)
         {
-            if (!Client.Settings.ENABLE_SIMSTATS)
+            if (!Client.Settings.Packets.EnableSimStats)
             {
                 return;
             }
@@ -1301,7 +1396,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void RegionHandshakeHandler(object sender, PacketReceivedEventArgs e)
+        protected void RegionHandshakeHandler(object? sender, PacketReceivedEventArgs e)
         {
             RegionHandshakePacket handshake = (RegionHandshakePacket)e.Packet;
             Simulator simulator = e.Simulator;
@@ -1365,7 +1460,7 @@ namespace OpenMetaverse
 
         protected void EnableSimulatorHandler(string capsKey, IMessage message, Simulator simulator)
         {
-            if (!Client.Settings.MULTIPLE_SIMS) { return; }
+            if (!Client.Settings.Agent.MultipleSims) { return; }
 
             EnableSimulatorMessage msg = (EnableSimulatorMessage)message;
 
@@ -1389,7 +1484,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void DisableSimulatorHandler(object sender, PacketReceivedEventArgs e)
+        protected void DisableSimulatorHandler(object? sender, PacketReceivedEventArgs e)
         {
             DisconnectSim(e.Simulator, false);
         }
@@ -1397,7 +1492,7 @@ namespace OpenMetaverse
         /// <summary>Process an incoming packet and raise the appropriate events</summary>
         /// <param name="sender">The sender</param>
         /// <param name="e">The EventArgs object containing the packet data</param>
-        protected void KickUserHandler(object sender, PacketReceivedEventArgs e)
+        protected void KickUserHandler(object? sender, PacketReceivedEventArgs e)
         {
             string message = Utils.BytesToString(((KickUserPacket)e.Packet).UserInfo.Reason);
 
@@ -1411,7 +1506,7 @@ namespace OpenMetaverse
         /// Async wrapper around the synchronous Connect method. Runs the blocking Connect on a threadpool thread
         /// so callers can await the operation without blocking their calling thread.
         /// </summary>
-        public Task<Simulator> ConnectAsync(IPAddress ip, ushort port, ulong handle, bool setDefault, Uri seedcaps)
+        public Task<Simulator?> ConnectAsync(IPAddress ip, ushort port, ulong handle, bool setDefault, Uri? seedcaps)
         {
             return Task.Run(() => Connect(ip, port, handle, setDefault, seedcaps));
         }
@@ -1419,7 +1514,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Async wrapper around the synchronous Connect method (IPEndPoint overload).
         /// </summary>
-        public Task<Simulator> ConnectAsync(IPEndPoint endPoint, ulong handle, bool setDefault, Uri seedcaps, uint sizeX, uint sizeY)
+        public Task<Simulator?> ConnectAsync(IPEndPoint endPoint, ulong handle, bool setDefault, Uri? seedcaps, uint sizeX, uint sizeY)
         {
             return Task.Run(() => Connect(endPoint, handle, setDefault, seedcaps, sizeX, sizeY));
         }
@@ -1448,6 +1543,7 @@ namespace OpenMetaverse
         public LoggedOutEventArgs(List<UUID> inventoryItems)
         {
             this.m_InventoryItems = inventoryItems;
+            this.InventoryItems = inventoryItems;
         }
     }
 
@@ -1519,9 +1615,9 @@ namespace OpenMetaverse
 
     public class SimChangedEventArgs : EventArgs
     {
-        public Simulator PreviousSimulator { get; }
+        public Simulator? PreviousSimulator { get; }
 
-        public SimChangedEventArgs(Simulator previousSimulator)
+        public SimChangedEventArgs(Simulator? previousSimulator)
         {
             PreviousSimulator = previousSimulator;
         }
@@ -1536,6 +1632,56 @@ namespace OpenMetaverse
             Simulator = simulator;
         }
     }
+
+    /// <summary>
+    /// Identifies the payload type carried in a GenericStreamingMessage UDP packet.
+    /// Corresponds to LLGenericStreamingMessage::Method in llgenericstreamingmessage.h
+    /// (shared viewer/sim header).
+    /// </summary>
+    public enum GenericStreamingMethod : ushort
+    {
+        /// <summary>
+        /// GLTF PBR material override data for a set of object faces.
+        /// Payload is LLSD notation text keyed by object local ID.
+        /// Corresponds to METHOD_GLTF_MATERIAL_OVERRIDE (0x4175).
+        /// </summary>
+        GltfMaterialOverride = 0x4175,
+
+        /// <summary>
+        /// Sentinel value mirroring METHOD_UNKNOWN (0xFFFF) in the SL C++ sources.
+        /// Will not arrive over the wire; present so switch statements have an
+        /// explicit unknown case.
+        /// </summary>
+        Unknown = 0xFFFF,
+    }
+
+    /// <summary>Provides data for the <see cref="NetworkManager.GenericStreamingMessage"/> event</summary>
+    public class GenericStreamingMessageEventArgs : EventArgs
+    {
+        /// <summary>Get the simulator the packet originated from</summary>
+        public Simulator Simulator { get; }
+
+        /// <summary>
+        /// Get the method identifier that describes how to interpret <see cref="Data"/>.
+        /// Known values are defined in <see cref="GenericStreamingMethod"/>.
+        /// Unrecognised values may appear in future simulator versions.
+        /// </summary>
+        public GenericStreamingMethod Method { get; }
+
+        /// <summary>Get the raw payload bytes. Interpretation depends on <see cref="Method"/>.</summary>
+        public byte[] Data { get; }
+
+        /// <param name="simulator">The simulator the packet originated from</param>
+        /// <param name="method">The method identifier</param>
+        /// <param name="data">The raw payload bytes</param>
+        public GenericStreamingMessageEventArgs(Simulator simulator, GenericStreamingMethod method, byte[] data)
+        {
+            Simulator = simulator;
+            Method = method;
+            Data = data;
+        }
+    }
+
     #endregion
 }
 

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2019-2026, Sjofn LLC
  * All rights reserved.
@@ -25,9 +25,9 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-using OpenMetaverse.Packets;
+using LibreMetaverse.Packets;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// AgentManager partial class - Money
@@ -113,7 +113,7 @@ namespace OpenMetaverse
         /// </summary>
         public void PayUploadFee()
         {
-            GiveMoney(UUID.Zero, Client.Settings.UPLOAD_COST, string.Empty, MoneyTransactionType.UploadCharge,
+            GiveMoney(UUID.Zero, Client.Settings.UploadCost, string.Empty, MoneyTransactionType.UploadCharge,
                 TransactionFlags.None);
         }
 
@@ -123,7 +123,17 @@ namespace OpenMetaverse
         /// <param name="description">description of the transaction</param>
         public void PayUploadFee(string description)
         {
-            GiveMoney(UUID.Zero, Client.Settings.UPLOAD_COST, description, MoneyTransactionType.UploadCharge,
+            GiveMoney(UUID.Zero, Client.Settings.UploadCost, description, MoneyTransactionType.UploadCharge,
+                TransactionFlags.None);
+        }
+
+        /// <summary>
+        /// Pay a specific upload fee amount
+        /// </summary>
+        /// <param name="amount">Fee in L$ to pay</param>
+        public void PayUploadFee(int amount)
+        {
+            GiveMoney(UUID.Zero, amount, string.Empty, MoneyTransactionType.UploadCharge,
                 TransactionFlags.None);
         }
 

@@ -41,11 +41,13 @@ namespace LibreMetaverse.Voice.WebRTC
             _category = category ?? "SIPSorcery";
         }
 
-        public IDisposable BeginScope<TState>(TState state) => null;
+        private class NoopDisposable : IDisposable { public void Dispose() { } }
+        private static readonly NoopDisposable _noop = new NoopDisposable();
+        IDisposable ILogger.BeginScope<TState>(TState state) => _noop;
 
         public bool IsEnabled(LogLevel logLevel) => true;
 
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception exception, Func<TState, Exception, string> formatter)
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
         {
             try
             {

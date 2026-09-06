@@ -26,10 +26,11 @@
  */
 
 using System;
-using OpenMetaverse.StructuredData;
+using System.Threading;
+using LibreMetaverse.StructuredData;
 using MessagePack;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// Base Class for Inventory Items
@@ -54,23 +55,23 @@ namespace OpenMetaverse
     [Union(16, typeof(InventoryWearable))]
     public abstract partial class InventoryBase
     {
-        /// <summary><see cref="OpenMetaverse.UUID"/> of item/folder</summary>
+        /// <summary><see cref="LibreMetaverse.UUID"/> of item/folder</summary>
         [Key("UUID")]
-        public UUID UUID;
-        /// <summary><see cref="OpenMetaverse.UUID"/> of parent folder</summary>
+        public UUID UUID { get; set; }
+        /// <summary><see cref="LibreMetaverse.UUID"/> of parent folder</summary>
         [Key("ParentUUID")]
-        public UUID ParentUUID;
+        public UUID ParentUUID { get; set; }
         /// <summary>Name of item/folder</summary>
         [Key("Name")]
-        public string Name;
-        /// <summary>Item/Folder Owners <see cref="OpenMetaverse.UUID"/></summary>
+        public string Name { get; set; } = string.Empty;
+        /// <summary>Item/Folder Owners <see cref="LibreMetaverse.UUID"/></summary>
         [Key("OwnerID")]
-        public UUID OwnerID;
+        public UUID OwnerID { get; set; }
 
         /// <summary>
         /// Constructor, takes an itemID as a parameter
         /// </summary>
-        /// <param name="UUID">The <see cref="OpenMetaverse.UUID"/> of the item</param>
+        /// <param name="UUID">The <see cref="LibreMetaverse.UUID"/> of the item</param>
         protected InventoryBase(UUID UUID)
         {
             if (UUID == UUID.Zero)
@@ -79,21 +80,16 @@ namespace OpenMetaverse
         }
 
         /// <summary>
-        /// Generates a number corresponding to the value of the object to support the use of a hash table,
-        /// suitable for use in hashing algorithms and data structures such as a hash table
+        /// Hash code based solely on UUID — the stable identity of an inventory object.
         /// </summary>
-        /// <returns>A Hashcode of all the combined InventoryBase fields</returns>
-        public override int GetHashCode()
-        {
-            return UUID.GetHashCode() ^ ParentUUID.GetHashCode() ^ Name.GetHashCode() ^ OwnerID.GetHashCode();
-        }
+        public override int GetHashCode() => UUID.GetHashCode();
 
         /// <summary>
         /// Determine whether the specified <see cref="InventoryBase"/> object is equal to the current object
         /// </summary>
         /// <param name="obj">InventoryBase object to compare against</param>
         /// <returns>true if objects are the same</returns>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return obj is InventoryBase inv && Equals(inv);
         }
@@ -130,52 +126,63 @@ namespace OpenMetaverse
         }
         /// <summary><see cref="UUID"/> of the underlying asset</summary>
         [Key("AssetUUID")]
-        public UUID AssetUUID;
-        /// <summary>Combined <see cref="OpenMetaverse.Permissions"/> of the item</summary>
+        public UUID AssetUUID { get; set; }
+        /// <summary>Combined <see cref="LibreMetaverse.Permissions"/> of the item</summary>
         [Key("Permissions")]
-        public Permissions Permissions;
-        /// <summary><see cref="OpenMetaverse.AssetType"/> of the underlying asset</summary>
+        public Permissions Permissions { get; set; }
+        /// <summary><see cref="LibreMetaverse.AssetType"/> of the underlying asset</summary>
         [Key("AssetType")]
-        public AssetType AssetType;
-        /// <summary><see cref="OpenMetaverse.InventoryType"/> of the item</summary>
+        public AssetType AssetType { get; set; }
+        /// <summary><see cref="LibreMetaverse.InventoryType"/> of the item</summary>
         [Key("InventoryType")]
-        public InventoryType InventoryType;
+        public InventoryType InventoryType { get; set; }
         /// <summary><see cref="UUID"/> of the creator of the item</summary>
         [Key("CreatorID")]
-        public UUID CreatorID;
+        public UUID CreatorID { get; set; }
         /// <summary>Description of the item</summary>
         [Key("Description")]
-        public string Description;
+        public string Description { get; set; } = string.Empty;
         /// <summary><see cref="Group"/>s <see cref="UUID"/> the item is owned by</summary>
         [Key("GroupID")]
-        public UUID GroupID;
+        public UUID GroupID { get; set; }
         /// <summary>If true, item is owned by a group</summary>
         [Key("GroupOwned")]
-        public bool GroupOwned;
+        public bool GroupOwned { get; set; }
         /// <summary>Price the item can be purchased for</summary>
         [Key("SalePrice")]
-        public int SalePrice;
-        /// <summary><see cref="OpenMetaverse.SaleType"/> of the item</summary>
+        public int SalePrice { get; set; }
+        /// <summary><see cref="LibreMetaverse.SaleType"/> of the item</summary>
         [Key("SaleType")]
-        public SaleType SaleType;
+        public SaleType SaleType { get; set; }
         /// <summary>Combined flags from <see cref="InventoryItemFlags"/></summary>
         [Key("Flags")]
-        public uint Flags;
+        public uint Flags { get; set; }
 
         /// <summary>Time and date the inventory item was created, stored as
         /// UTC (Coordinated Universal Time)</summary>
         [Key("CreationDate")]
-        public DateTime CreationDate;
+        public DateTime CreationDate { get; set; }
         /// <summary>Used to update the AssetID in requests sent to the server</summary>
         [Key("TransactionID")]
-        public UUID TransactionID;
+        public UUID TransactionID { get; set; }
         /// <summary><see cref="UUID"/> of the previous owner of the item</summary>
         [Key("LastOwnerID")]
-        public UUID LastOwnerID;
+        public UUID LastOwnerID { get; set; }
 
-        /// <summary>inventoryID that this item points to, else this item's inventoryID</summary>
+        /// <summary>
+        /// For a link: the inventory UUID of the item this link points to.
+        /// For a non-link: this item's own inventory UUID.
+        /// </summary>
         [IgnoreMember]
-        public UUID ActualUUID => IsLink() ? AssetUUID : UUID;
+        public UUID ResolvedItemID => IsLink() ? AssetUUID : UUID;
+
+        /// <summary>
+        /// For a non-link: this item's underlying asset UUID.
+        /// For a link: <see cref="UUID.Zero"/> — the asset UUID cannot be determined without
+        /// resolving the link through the inventory store first.
+        /// </summary>
+        [IgnoreMember]
+        public UUID ResolvedAssetID => IsLink() ? UUID.Zero : AssetUUID;
 
         /// <summary>
         ///  Construct a new InventoryItem object
@@ -187,8 +194,8 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct a new InventoryItem object of a specific Type
         /// </summary>
-        /// <param name="type">The type of item from <see cref="T:OpenMetaverse.InventoryType" /></param>
-        /// <param name="itemID"><see cref="T:OpenMetaverse.UUID" /> of the item</param>
+        /// <param name="type">The type of item from <see cref="T:LibreMetaverse.InventoryType" /></param>
+        /// <param name="itemID"><see cref="T:LibreMetaverse.UUID" /> of the item</param>
         public InventoryItem(InventoryType type, UUID itemID) : base(itemID) { InventoryType = type; }
 
         /// <summary>
@@ -200,35 +207,24 @@ namespace OpenMetaverse
             return AssetType == AssetType.Link || AssetType == AssetType.LinkFolder;
         }
 
-        /// <summary>
-        /// Generates a number corresponding to the value of the object to support the use of a hash table.
-        /// Suitable for use in hashing algorithms and data structures such as a hash table
-        /// </summary>
-        /// <returns>A Hashcode of all the combined InventoryItem fields</returns>
-        public override int GetHashCode()
-        {
-            return AssetUUID.GetHashCode() ^ Permissions.GetHashCode() ^ AssetType.GetHashCode() ^
-                InventoryType.GetHashCode() ^ Description.GetHashCode() ^ GroupID.GetHashCode() ^
-                GroupOwned.GetHashCode() ^ SalePrice.GetHashCode() ^ SaleType.GetHashCode() ^
-                Flags.GetHashCode() ^ CreationDate.GetHashCode() ^ LastOwnerID.GetHashCode();
-        }
-
         /// <inheritdoc />
         /// <summary>
         /// Compares an object
         /// </summary>
         /// <param name="obj">The object to compare</param>
         /// <returns>true if comparison object matches</returns>
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return obj is InventoryItem item && Equals(item);
         }
 
+        public override int GetHashCode() => base.GetHashCode();
+
         /// <inheritdoc />
         /// <summary>
-        /// Determine whether the specified <see cref="T:OpenMetaverse.InventoryBase" /> object is equal to the current object
+        /// Determine whether the specified <see cref="T:LibreMetaverse.InventoryBase" /> object is equal to the current object
         /// </summary>
-        /// <param name="o">The <see cref="T:OpenMetaverse.InventoryBase" /> object to compare against</param>
+        /// <param name="o">The <see cref="T:LibreMetaverse.InventoryBase" /> object to compare against</param>
         /// <returns>true if objects are the same</returns>
         public override bool Equals(InventoryBase o)
         {
@@ -264,7 +260,47 @@ namespace OpenMetaverse
         /// <returns>Inventory item created</returns>
         public static InventoryItem FromOSD(OSD data)
         {
+            /*  OSD map looks like (from e.g. GetTaskInventoryAsync()):
+            {
+                "asset_id": "00000000-0000-0000-0000-000000000000",
+                "created_at": 1785363605,
+                "desc": "description",
+                "flags": 0,
+                "inv_type": "script",
+                "item_id": "806baac6-64cd-daae-efff-627208ed1d2b",
+                "metadata": {
+                },
+                "name": "New Script",
+                "parent_id": "74a61033-366a-0b89-4d4b-649c5b0de2ad",
+                "permissions": {
+                    "base_mask": 2147483647,
+                    "creator_id": "90d514eb-85f5-4ffe-b95e-20bcc77168db",
+                    "everyone_mask": 0,
+                    "group_id": "00000000-0000-0000-0000-000000000000",
+                    "group_mask": 0,
+                    "is_owner_group": false,
+                    "last_owner_id": "90d514eb-85f5-4ffe-b95e-20bcc77168db",
+                    "next_owner_mask": 532480,
+                    "owner_id": "90d514eb-85f5-4ffe-b95e-20bcc77168db",
+                    "owner_mask": 2147483647
+                },
+                "sale_info": {
+                    "sale_price": 10,
+                    "sale_type": "not"
+                },
+                "type": "lsltext"
+            }
+            */
             OSDMap descItem = (OSDMap)data;
+
+            InventoryType invType = descItem["inv_type"].Type == OSDType.String
+                ? Utils.StringToInventoryType(descItem["inv_type"].AsString())
+                : (InventoryType)descItem["inv_type"].AsInteger();
+
+            AssetType assetType = descItem["type"].Type == OSDType.String
+                ? Utils.StringToAssetType(descItem["type"].AsString())
+                : (AssetType)descItem["type"].AsInteger();
+
             /*
              * Objects that have been attached in-world prior to being stored on the
              * asset server are stored with the InventoryType of 0 (Texture)
@@ -273,26 +309,24 @@ namespace OpenMetaverse
              * This corrects that behavior by forcing Object Asset types that have an
              * invalid InventoryType with the proper InventoryType of Attachment.
              */
-            InventoryType type = (InventoryType)descItem["inv_type"].AsInteger();
-            if (type == InventoryType.Texture &&
-                ((AssetType)descItem["type"].AsInteger() == AssetType.Object
-                 || (AssetType)descItem["type"].AsInteger() == AssetType.Mesh))
+            if (invType == InventoryType.Texture &&
+                (assetType == AssetType.Object || assetType == AssetType.Mesh))
             {
-                type = InventoryType.Attachment;
+                invType = InventoryType.Attachment;
             }
-            InventoryItem item = InventoryManager.CreateInventoryItem(type, descItem["item_id"]);
+
+            InventoryItem item = InventoryManager.CreateInventoryItem(invType, descItem["item_id"]);
 
             item.ParentUUID = descItem["parent_id"];
             item.Name = descItem["name"];
             item.Description = descItem["desc"];
-            item.OwnerID = descItem["agent_id"];
-            item.ParentUUID = descItem["parent_id"];
             item.AssetUUID = descItem["asset_id"];
-            item.AssetType = (AssetType)descItem["type"].AsInteger();
+            item.AssetType = assetType;
             item.CreationDate = Utils.UnixTimeToDateTime(descItem["created_at"]);
             item.Flags = descItem["flags"];
 
             OSDMap perms = (OSDMap)descItem["permissions"];
+            item.OwnerID = perms["owner_id"];
             item.CreatorID = perms["creator_id"];
             item.LastOwnerID = perms["last_owner_id"];
             item.Permissions = new Permissions(perms["base_mask"], perms["everyone_mask"], perms["group_mask"], perms["next_owner_mask"], perms["owner_mask"]);
@@ -339,7 +373,7 @@ namespace OpenMetaverse
             if (data.TryGetValue("sale_info", out var saleInfo))
             {
                 OSDMap sale = (OSDMap)saleInfo;
-                SalePrice = sale["sale_price"].AsInteger(); 
+                SalePrice = sale["sale_price"].AsInteger();
                 SaleType = (SaleType)sale["sale_type"].AsInteger();
             }
             if (data.ContainsKey("shadow_id"))
@@ -439,14 +473,14 @@ namespace OpenMetaverse
     /// <summary>
     /// InventoryTexture Class representing a graphical image
     /// </summary>
-    /// <seealso cref="T:OpenMetaverse.Imaging.ManagedImage" />
+    /// <seealso cref="T:LibreMetaverse.Imaging.ManagedImage" />
     [MessagePackObject]
     public partial class InventoryTexture : InventoryItem
     {
         /// <summary>
         /// Construct an InventoryTexture object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryTexture(UUID UUID)
             : base(UUID)
@@ -465,7 +499,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventorySound object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventorySound(UUID UUID)
             : base(UUID)
@@ -484,7 +518,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryCallingCard object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryCallingCard(UUID UUID)
             : base(UUID)
@@ -503,7 +537,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryLandmark object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryLandmark(UUID UUID)
             : base(UUID)
@@ -536,7 +570,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryObject object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryObject(UUID UUID)
             : base(UUID)
@@ -575,7 +609,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryNotecard object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryNotecard(UUID UUID)
             : base(UUID)
@@ -594,7 +628,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryCategory object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryCategory(UUID UUID)
             : base(UUID)
@@ -613,7 +647,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryLSL object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryLSL(UUID UUID)
             : base(UUID)
@@ -633,8 +667,8 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventorySnapshot object
         /// </summary>
-        /// <param name="UUID">A <see cref="T:OpenMetaverse.UUID" /> which becomes the 
-        /// <seealso cref="T:OpenMetaverse.InventoryItem" /> objects UUID</param>
+        /// <param name="UUID">A <see cref="T:LibreMetaverse.UUID" /> which becomes the
+        /// <seealso cref="T:LibreMetaverse.InventoryItem" /> objects UUID</param>
         public InventorySnapshot(UUID UUID)
             : base(UUID)
         {
@@ -651,7 +685,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryAttachment object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryAttachment(UUID UUID)
             : base(UUID)
@@ -680,12 +714,12 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryWearable object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryWearable(UUID UUID) : base(UUID) { InventoryType = InventoryType.Wearable; }
 
         /// <summary>
-        /// The <see cref="OpenMetaverse.WearableType"/>, Skin, Shape, Skirt, Etc
+        /// The <see cref="LibreMetaverse.WearableType"/>, Skin, Shape, Skirt, Etc
         /// </summary>
         [IgnoreMember]
         public WearableType WearableType
@@ -705,7 +739,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryAnimation object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryAnimation(UUID UUID)
             : base(UUID)
@@ -724,7 +758,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventoryGesture object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryGesture(UUID UUID)
             : base(UUID)
@@ -743,7 +777,7 @@ namespace OpenMetaverse
         /// <summary>
         /// Construct an InventorySettings object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventorySettings(UUID UUID) : base(UUID)
         {
@@ -759,19 +793,19 @@ namespace OpenMetaverse
     public partial class InventoryMaterial : InventoryItem
     {
         /// <summary>
-        /// Construct an InventorySettings object
+        /// Construct an InventoryMaterial object
         /// </summary>
-        /// <param name="UUID">A <see cref="UUID"/> which becomes the 
+        /// <param name="UUID">A <see cref="UUID"/> which becomes the
         /// <seealso cref="InventoryItem"/> objects UUID</param>
         public InventoryMaterial(UUID UUID) : base(UUID)
         {
-            InventoryType = InventoryType.Settings;
+            InventoryType = InventoryType.Material;
         }
     }
 
     /// <inheritdoc />
     /// <summary>
-    /// A folder contains <see cref="T:OpenMetaverse.InventoryItem" />s and has certain attributes specific 
+    /// A folder contains <see cref="T:LibreMetaverse.InventoryItem" />s and has certain attributes specific
     /// to itself
     /// </summary>
     [MessagePackObject]
@@ -779,17 +813,39 @@ namespace OpenMetaverse
     {
         public const int VERSION_UNKNOWN = -1;
 
-        /// <summary>The Preferred <see cref="T:OpenMetaverse.FolderType"/> for a folder.</summary>
+        /// <summary>The Preferred <see cref="T:LibreMetaverse.FolderType"/> for a folder.</summary>
         [Key("PreferredType")]
-        public FolderType PreferredType;
+        public FolderType PreferredType { get; set; }
 
         /// <summary>The Version of this folder</summary>
         [Key("Version")]
-        public int Version;
+        public int Version { get; set; }
+
+        private int _descendentCount;
 
         /// <summary>Number of child items this folder contains.</summary>
         [Key("DescendentCount")]
-        public int DescendentCount;
+        public int DescendentCount
+        {
+            get => _descendentCount;
+            set => _descendentCount = value;
+        }
+
+        /// <summary>
+        /// Atomically adjusts DescendentCount by delta, clamping to zero.
+        /// Use this instead of direct assignment for concurrent updates.
+        /// </summary>
+        internal void AdjustDescendentCount(int delta)
+        {
+            if (delta == 0) return;
+            int initial, newVal;
+            do
+            {
+                initial = Volatile.Read(ref _descendentCount);
+                newVal = Math.Max(0, initial + delta);
+            }
+            while (Interlocked.CompareExchange(ref _descendentCount, newVal, initial) != initial);
+        }
 
         /// <summary>
         /// Constructor
@@ -812,19 +868,12 @@ namespace OpenMetaverse
             return Name;
         }
 
-        /// <summary>
-        /// Return int hash code
-        /// </summary>
-        /// <returns>Hash code as integer</returns>
-        public override int GetHashCode()
-        {
-            return PreferredType.GetHashCode() ^ Version.GetHashCode() ^ DescendentCount.GetHashCode();
-        }
-
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return obj is InventoryFolder folder && Equals(folder);
         }
+
+        public override int GetHashCode() => base.GetHashCode();
 
         public override bool Equals(InventoryBase o)
         {
@@ -850,7 +899,7 @@ namespace OpenMetaverse
             UUID folderId = res.TryGetValue("category_id", out var catId) ? catId : res["folder_id"];
             var folder = new InventoryFolder(folderId)
             {
-                UUID = res["category_id"].AsUUID(),
+                UUID = folderId,
                 Version = res.ContainsKey("version") ? res["version"].AsInteger() : VERSION_UNKNOWN,
                 ParentUUID = res["parent_id"].AsUUID(),
                 DescendentCount = res["descendents"],
@@ -915,4 +964,3 @@ namespace OpenMetaverse
         }
     }
 }
-

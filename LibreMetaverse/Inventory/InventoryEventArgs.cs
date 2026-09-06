@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2022-2025, Sjofn LLC.
  * All rights reserved.
@@ -27,7 +27,7 @@
 
 using System;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public class InventoryObjectOfferedEventArgs : EventArgs
     {

@@ -29,9 +29,11 @@ using System.Threading;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
-    public class DoubleDictionary<TKey1, TKey2, TValue>
+    public class DoubleDictionary<TKey1, TKey2, TValue> : IDisposable
+        where TKey1 : notnull
+        where TKey2 : notnull
     {
         private readonly Dictionary<TKey1, TValue> _dictionary1;
         private readonly Dictionary<TKey2, TValue> _dictionary2;
@@ -95,12 +97,11 @@ namespace OpenMetaverse
             try
             {
                 // This is an O(n) operation!
-                TValue value;
-                if (_dictionary1.TryGetValue(key1, out value))
+                if (_dictionary1.TryGetValue(key1, out TValue? value))
                 {
                     foreach (var kvp in _dictionary2)
                     {
-                        if (kvp.Value.Equals(value))
+                        if (kvp.Value?.Equals(value) == true)
                         {
                             _dictionary1.Remove(key1);
                             _dictionary2.Remove(kvp.Key);
@@ -123,12 +124,11 @@ namespace OpenMetaverse
             try
             {
                 // This is an O(n) operation!
-                TValue value;
-                if (_dictionary2.TryGetValue(key2, out value))
+                if (_dictionary2.TryGetValue(key2, out TValue? value))
                 {
                     foreach (var kvp in _dictionary1)
                     {
-                        if (kvp.Value.Equals(value))
+                        if (kvp.Value?.Equals(value) == true)
                         {
                             _dictionary2.Remove(key2);
                             _dictionary1.Remove(kvp.Key);
@@ -167,23 +167,23 @@ namespace OpenMetaverse
             return _dictionary2.ContainsKey(key);
         }
 
-        public bool TryGetValue(TKey1 key, out TValue value)
+        public bool TryGetValue(TKey1 key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out TValue value)
         {
             bool success;
             _rwLock.EnterReadLock();
 
-            try { success = _dictionary1.TryGetValue(key, out value); }
+            try { success = _dictionary1.TryGetValue(key, out value!); }
             finally { _rwLock.ExitReadLock(); }
 
             return success;
         }
 
-        public bool TryGetValue(TKey2 key, out TValue value)
+        public bool TryGetValue(TKey2 key, [System.Diagnostics.CodeAnalysis.MaybeNullWhen(false)] out TValue value)
         {
             bool success;
             _rwLock.EnterReadLock();
 
-            try { success = _dictionary2.TryGetValue(key, out value); }
+            try { success = _dictionary2.TryGetValue(key, out value!); }
             finally { _rwLock.ExitReadLock(); }
 
             return success;
@@ -225,7 +225,7 @@ namespace OpenMetaverse
             finally { _rwLock.ExitReadLock(); }
         }
 
-        public TValue FindValue(Predicate<TValue> predicate)
+        public TValue? FindValue(Predicate<TValue> predicate)
         {
             _rwLock.EnterReadLock();
             try
@@ -291,6 +291,11 @@ namespace OpenMetaverse
             finally { _rwLock.ExitUpgradeableReadLock(); }
 
             return list.Count;
+        }
+
+        public void Dispose()
+        {
+            _rwLock.Dispose();
         }
     }
 }

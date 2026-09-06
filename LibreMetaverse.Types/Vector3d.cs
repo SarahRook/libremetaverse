@@ -29,7 +29,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Globalization;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     /// <summary>
     /// A three-dimensional vector with doubleing-point values
@@ -397,7 +397,7 @@ namespace OpenMetaverse
 
         #region Overrides
 
-        public override bool Equals(object obj)
+        public override bool Equals(object? obj)
         {
             return (obj is Vector3d v3d) && this == v3d;
         }

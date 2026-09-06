@@ -42,8 +42,7 @@ using System.IO;
 using System.Text;
 using System.Xml;
 using NUnit.Framework;
-using OpenMetaverse;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.StructuredData;
 
 namespace LibreMetaverse.Tests
 {
@@ -726,7 +725,9 @@ namespace LibreMetaverse.Tests
                 throw new ArgumentException("No arrays specified");
             }
 
-            Type type = arrays[0].GetType().GetElementType();
+            Type? type = arrays[0].GetType().GetElementType();
+            if (type == null)
+                throw new ArgumentException("Unable to determine element type of arrays");
             int totalLength = arrays[0].Length;
             for (int i = 1; i < arrays.Length; i++)
             {
@@ -737,7 +738,7 @@ namespace LibreMetaverse.Tests
                 totalLength += arrays[i].Length;
             }
 
-            Array ret = Array.CreateInstance(type, totalLength);
+            Array ret = Array.CreateInstance(type!, totalLength);
             int index = 0;
             foreach (Array array in arrays)
             {

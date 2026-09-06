@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2025, Sjofn LLC.
  * All rights reserved.
  *
@@ -46,17 +46,23 @@ namespace LibreMetaverse
             CancellationToken token,
             bool immediately = false)
         {
-            return Task.Factory.StartNew(
-                () =>
-                {
-                    if (immediately) { action(); }
+            return Task.Run(async () =>
+            {
+                if (immediately) { action(); }
 
-                    for (; ; )
+                try
+                {
+                    while (!token.IsCancellationRequested)
                     {
-                        if (token.WaitCancellationRequested(pollInterval)) { break; }
+                        await Task.Delay(pollInterval, token).ConfigureAwait(false);
                         action();
                     }
-                }, token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+                }
+                catch (OperationCanceledException)
+                {
+                    // token was cancelled — exit cleanly
+                }
+            }, token);
         }
 
         /// <summary>
@@ -80,31 +86,19 @@ namespace LibreMetaverse
                     await asyncAction().ConfigureAwait(false);
                 }
 
-                for (; ; )
+                try
                 {
-                    if (token.WaitCancellationRequested(pollInterval)) { break; }
-                    await asyncAction().ConfigureAwait(false);
+                    while (!token.IsCancellationRequested)
+                    {
+                        await Task.Delay(pollInterval, token).ConfigureAwait(false);
+                        await asyncAction().ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    // token was cancelled — exit cleanly
                 }
             }, token);
-        }
-    }
-
-    public static class CancellationTokenExtensions
-    {
-        public static bool WaitCancellationRequested(
-            this CancellationToken token,
-            TimeSpan timeout)
-        {
-            try
-            {
-                return token.WaitHandle.WaitOne(timeout);
-            }
-            catch (ObjectDisposedException)
-            {
-                // The CancellationTokenSource has been disposed. Treat this as a cancellation request
-                // so that any waiting loops will exit cleanly instead of throwing.
-                return true;
-            }
         }
     }
 }

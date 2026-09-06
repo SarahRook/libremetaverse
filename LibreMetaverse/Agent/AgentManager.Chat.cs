@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2019-2025, Sjofn LLC
  * All rights reserved.
@@ -29,11 +29,11 @@ using System;
 using System.Threading;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using OpenMetaverse.Messages.Linden;
-using OpenMetaverse.Packets;
-using OpenMetaverse.StructuredData;
+using LibreMetaverse.Messages.Linden;
+using LibreMetaverse.Packets;
+using LibreMetaverse.StructuredData;
 
-namespace OpenMetaverse
+namespace LibreMetaverse
 {
     public partial class AgentManager
     {
@@ -125,6 +125,11 @@ namespace OpenMetaverse
             }
         }
 
+        /// <summary>Send a chat message to the region on a given channel</summary>
+        /// <param name="message">Text to send</param>
+        /// <param name="channel">Chat channel number (0 = public chat)</param>
+        /// <param name="type">Chat type (normal, whisper, shout, etc.)</param>
+        /// <param name="splitLargeMessages">When true, messages exceeding the server limit are split into multiple packets</param>
         public void Chat(string message, int channel, ChatType type, bool splitLargeMessages = true)
         {
             if (channel < 0)
@@ -154,18 +159,29 @@ namespace OpenMetaverse
             }
         }
 
-        public async Task RetrieveInstantMessages(CancellationToken cancellationToken = default)
+        /// <summary>Fetch offline instant messages stored by the server and deliver them as IM events</summary>
+        /// <param name="cancellationToken">Token to cancel the capability request</param>
+        public async Task RetrieveInstantMessagesAsync(CancellationToken cancellationToken = default)
         {
-            Uri offlineMsgsCap = Client.Network.CurrentSim.Caps?.CapabilityURI("ReadOfflineMsgs");
+            var sim = Client.Network.CurrentSim;
+            Uri? offlineMsgsCap = sim?.Caps?.CapabilityURI("ReadOfflineMsgs");
             if (offlineMsgsCap == null 
-                || Client.Network.CurrentSim.Caps.CapabilityURI("AcceptFriendship") == null
-                || Client.Network.CurrentSim.Caps.CapabilityURI("AcceptGroupInvite") == null)
+                || sim?.Caps?.CapabilityURI("AcceptFriendship") == null
+                || sim?.Caps?.CapabilityURI("AcceptGroupInvite") == null)
             {
                 RetrieveInstantMessagesLegacy();
                 return;
             }
 
-            await Client.HttpCapsClient.GetRequestAsync(offlineMsgsCap, cancellationToken, OfflineMessageHandlerCallback);
+            try
+            {
+                var (response, data) = await Client.HttpCapsClient.GetAsync(offlineMsgsCap, cancellationToken);
+                OfflineMessageHandlerCallback(response, data, null);
+            }
+            catch (Exception ex)
+            {
+                OfflineMessageHandlerCallback(null, null, ex);
+            }
         }
 
         private void RetrieveInstantMessagesLegacy()
@@ -181,6 +197,9 @@ namespace OpenMetaverse
             Client.Network.SendPacket(p);
         }
 
+        /// <summary>Send an instant message to another avatar using default session and dialog settings</summary>
+        /// <param name="target">UUID of the recipient avatar</param>
+        /// <param name="message">Message text to send</param>
         public void InstantMessage(UUID target, string message)
         {
             InstantMessage(Name, target, message, AgentID.Equals(target) ? AgentID : target ^ AgentID,
@@ -188,6 +207,10 @@ namespace OpenMetaverse
                 UUID.Zero, Utils.EmptyBytes);
         }
 
+        /// <summary>Send an instant message to another avatar using an explicit session ID</summary>
+        /// <param name="target">UUID of the recipient avatar</param>
+        /// <param name="message">Message text to send</param>
+        /// <param name="imSessionID">IM session UUID; used to correlate replies in an ongoing conversation</param>
         public void InstantMessage(UUID target, string message, UUID imSessionID)
         {
             InstantMessage(Name, target, message, imSessionID,
@@ -195,6 +218,12 @@ namespace OpenMetaverse
                 UUID.Zero, Utils.EmptyBytes);
         }
 
+        /// <summary>Send an instant message to a conference session that includes multiple participants</summary>
+        /// <param name="fromName">Display name of the sender shown to recipients</param>
+        /// <param name="target">UUID of the recipient or conference session</param>
+        /// <param name="message">Message text to send</param>
+        /// <param name="imSessionID">IM session UUID</param>
+        /// <param name="conferenceIDs">Array of avatar UUIDs participating in the conference; packed into the binary bucket</param>
         public void InstantMessage(string fromName, UUID target, string message, UUID imSessionID,
             UUID[] conferenceIDs)
         {
@@ -215,6 +244,16 @@ namespace OpenMetaverse
                 InstantMessageOnline.Offline, Vector3.Zero, UUID.Zero, binaryBucket);
         }
 
+        /// <summary>Send a fully specified instant message packet</summary>
+        /// <param name="fromName">Display name of the sender</param>
+        /// <param name="target">UUID of the recipient</param>
+        /// <param name="message">Message text to send</param>
+        /// <param name="imSessionID">IM session UUID</param>
+        /// <param name="dialog">IM dialog type controlling how the message is presented</param>
+        /// <param name="offline">Whether to store the message for offline delivery</param>
+        /// <param name="position">Sender's region position at time of send</param>
+        /// <param name="regionID">UUID of the sender's current region</param>
+        /// <param name="binaryBucket">Additional data attached to the message (format depends on dialog type)</param>
         public void InstantMessage(string fromName, UUID target, string message, UUID imSessionID,
             InstantMessageDialog dialog, InstantMessageOnline offline, Vector3 position, UUID regionID,
             byte[] binaryBucket)
@@ -255,51 +294,57 @@ namespace OpenMetaverse
             }
         }
 
+        /// <summary>Send an instant message to a group chat session using the agent's own name as the sender</summary>
+        /// <param name="groupID">UUID of the group whose chat session to send to</param>
+        /// <param name="message">Message text to send</param>
         public void InstantMessageGroup(UUID groupID, string message)
         {
             InstantMessageGroup(Name, groupID, message);
         }
 
+        /// <summary>Send an instant message to a group chat session with an explicit sender name</summary>
+        /// <param name="fromName">Display name shown as the sender</param>
+        /// <param name="groupID">UUID of the group whose chat session to send to</param>
+        /// <param name="message">Message text to send</param>
         public void InstantMessageGroup(string fromName, UUID groupID, string message)
         {
-            lock (GroupChatSessions.Dictionary)
+            if (!GroupChatSessions.ContainsKey(groupID))
             {
-                if (!GroupChatSessions.ContainsKey(groupID))
-                {
-                    Logger.Error("No Active group chat session appears to exist, use RequestJoinGroupChat() to join one", Client);
-                    return;
-                }
+                Logger.Error("No Active group chat session appears to exist, use RequestJoinGroupChat() to join one", Client);
+                return;
+            }
 
-                var messageChunks = SplitMultibyteString(message, MaxChatMessageSize);
-                foreach (var messageChunk in messageChunks)
+            var messageChunks = SplitMultibyteString(message, MaxChatMessageSize);
+            foreach (var messageChunk in messageChunks)
+            {
+                ImprovedInstantMessagePacket im = new ImprovedInstantMessagePacket
                 {
-                    ImprovedInstantMessagePacket im = new ImprovedInstantMessagePacket
+                    AgentData =
                     {
-                        AgentData =
-                        {
-                            AgentID = Client.Self.AgentID,
-                            SessionID = Client.Self.SessionID
-                        },
-                        MessageBlock =
-                        {
-                            Dialog = (byte) InstantMessageDialog.SessionSend,
-                            FromAgentName = Utils.StringToBytes(fromName),
-                            FromGroup = false,
-                            Message = Utils.StringToBytes(messageChunk),
-                            Offline = 0,
-                            ID = groupID,
-                            ToAgentID = groupID,
-                            Position = Vector3.Zero,
-                            RegionID = UUID.Zero,
-                            BinaryBucket = Utils.StringToBytes("\0")
-                        }
-                    };
+                        AgentID = Client.Self.AgentID,
+                        SessionID = Client.Self.SessionID
+                    },
+                    MessageBlock =
+                    {
+                        Dialog = (byte) InstantMessageDialog.SessionSend,
+                        FromAgentName = Utils.StringToBytes(fromName),
+                        FromGroup = false,
+                        Message = Utils.StringToBytes(messageChunk),
+                        Offline = 0,
+                        ID = groupID,
+                        ToAgentID = groupID,
+                        Position = Vector3.Zero,
+                        RegionID = UUID.Zero,
+                        BinaryBucket = Utils.StringToBytes("\0")
+                    }
+                };
 
-                    Client.Network.SendPacket(im);
-                }
+                Client.Network.SendPacket(im);
             }
         }
 
+        /// <summary>Request to join a group's chat session; raises <see cref="GroupChatJoined"/> on success</summary>
+        /// <param name="groupID">UUID of the group to join the chat session for</param>
         public void RequestJoinGroupChat(UUID groupID)
         {
             ImprovedInstantMessagePacket im = new ImprovedInstantMessagePacket
@@ -328,6 +373,8 @@ namespace OpenMetaverse
             Client.Network.SendPacket(im);
         }
 
+        /// <summary>Leave a group chat session and remove it from the local session tracking list</summary>
+        /// <param name="groupID">UUID of the group chat session to leave</param>
         public void RequestLeaveGroupChat(UUID groupID)
         {
             ImprovedInstantMessagePacket im = new ImprovedInstantMessagePacket
@@ -354,13 +401,14 @@ namespace OpenMetaverse
 
             Client.Network.SendPacket(im);
 
-            lock (GroupChatSessions.Dictionary)
-            {
-                if (GroupChatSessions.ContainsKey(groupID))
-                    GroupChatSessions.Remove(groupID);
-            }
+            GroupChatSessions.TryRemove(groupID, out _);
         }
 
+        /// <summary>Reply to an in-world script dialog by selecting one of its buttons</summary>
+        /// <param name="channel">Chat channel the dialog reply is sent on</param>
+        /// <param name="buttonIndex">Zero-based index of the selected button</param>
+        /// <param name="buttonLabel">Label text of the selected button</param>
+        /// <param name="objectID">UUID of the scripted object that sent the dialog</param>
         public void ReplyToScriptDialog(int channel, int buttonIndex, string buttonLabel, UUID objectID)
         {
             ScriptDialogReplyPacket reply = new ScriptDialogReplyPacket
@@ -382,18 +430,21 @@ namespace OpenMetaverse
             Client.Network.SendPacket(reply);
         }
 
-        public async Task ChatterBoxAcceptInvite(UUID session_id, CancellationToken cancellationToken = default)
+        /// <summary>Accept an invitation to a ChatterBox (group or conference) chat session via the ChatSessionRequest capability</summary>
+        /// <param name="session_id">Session UUID from the invitation</param>
+        /// <param name="cancellationToken">Token to cancel the capability request</param>
+        public async Task ChatterBoxAcceptInviteAsync(UUID session_id, CancellationToken cancellationToken = default)
         {
             if (Client.Network.CurrentSim == null || Client.Network.CurrentSim.Caps == null)
             {
                 throw new Exception("ChatSessionRequest capability is not currently available");
             }
 
-            Uri cap = Client.Network.CurrentSim.Caps.CapabilityURI("ChatSessionRequest");
+                Uri? cap = Client.Network.CurrentSim.Caps.CapabilityURI("ChatSessionRequest");
             if (cap != null)
             {
                 ChatSessionAcceptInvitation acceptInvite = new ChatSessionAcceptInvitation {SessionID = session_id};
-                await Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, acceptInvite.Serialize(), cancellationToken);
+                await Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, acceptInvite.Serialize(), cancellationToken).ConfigureAwait(false);
             }
             else
             {
@@ -401,34 +452,28 @@ namespace OpenMetaverse
             }
         }
 
-        public void StartIMConference(List<UUID> participants, UUID tmp_session_id, CancellationToken cancellationToken = default)
+        /// <summary>Start a multi-party IM conference session via the ChatSessionRequest capability</summary>
+        /// <param name="participants">List of avatar UUIDs to invite into the conference</param>
+        /// <param name="tmp_session_id">Temporary session UUID generated by the caller to track this conference</param>
+        /// <param name="cancellationToken">Token to cancel the capability request</param>
+        public async Task StartIMConferenceAsync(List<UUID> participants, UUID tmp_session_id, CancellationToken cancellationToken = default)
         {
             if (Client.Network.CurrentSim == null || Client.Network.CurrentSim.Caps == null)
-            {
                 throw new Exception("ChatSessionRequest capability is not currently available");
-            }
 
-            Uri cap = Client.Network.CurrentSim.Caps.CapabilityURI("ChatSessionRequest");
-            if (cap != null)
-            {
-                ChatSessionRequestStartConference startConference = new ChatSessionRequestStartConference
-                {
-                    AgentsBlock = new UUID[participants.Count]
-                };
-
-                for (var i = 0; i < participants.Count; i++)
-                {
-                    startConference.AgentsBlock[i] = participants[i];
-                }
-
-                startConference.SessionID = tmp_session_id;
-
-                _ = Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, startConference.Serialize(), cancellationToken);
-            }
-            else
-            {
+            Uri? cap = Client.Network.CurrentSim.Caps.CapabilityURI("ChatSessionRequest");
+            if (cap == null)
                 throw new Exception("ChatSessionRequest capability is not currently available");
-            }
+
+            ChatSessionRequestStartConference startConference = new ChatSessionRequestStartConference
+            {
+                AgentsBlock = new UUID[participants.Count]
+            };
+            for (var i = 0; i < participants.Count; i++)
+                startConference.AgentsBlock[i] = participants[i];
+            startConference.SessionID = tmp_session_id;
+
+            await Client.HttpCapsClient.PostRequestAsync(cap, OSDFormat.Xml, startConference.Serialize(), cancellationToken).ConfigureAwait(false);
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2006-2016, openmetaverse.co
  * Copyright (c) 2021-2024, Sjofn LLC.
  * All rights reserved.
@@ -25,22 +25,29 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+using System;
 using CoreJ2K;
 using CoreJ2K.Configuration;
-using OpenMetaverse.Imaging;
+using CoreJ2K.Util;
+using LibreMetaverse.Imaging;
 
-namespace OpenMetaverse.Assets
+namespace LibreMetaverse.Assets
 {
     /// <summary>
     /// Represents a texture
     /// </summary>
     public class AssetTexture : Asset
     {
+        static AssetTexture()
+        {
+            ImageFactory.Register(new ManagedImageCreator());
+        }
+
         /// <summary>Override the base classes AssetType</summary>
         public override AssetType AssetType => AssetType.Texture;
 
         /// <summary>A <see cref="ManagedImage"/> object containing image data</summary>
-        public ManagedImage Image;
+        public ManagedImage? Image;
 
         /// <summary></summary>
         public int Components;
@@ -79,8 +86,13 @@ namespace OpenMetaverse.Assets
         /// </summary>
         public sealed override void Encode()
         {
-            AssetData = J2kImage.ToBytes(Image.ExportBitmap(),
-                new CompleteEncoderConfigurationBuilder().ForStreaming().Build());
+            if (Image == null)
+            {
+                AssetData = Array.Empty<byte>();
+                return;
+            }
+
+            AssetData = CompleteConfigurationPresets.Streaming.WithFileFormat(false).Encode(Image);
         }
 
         /// <summary>
@@ -94,8 +106,7 @@ namespace OpenMetaverse.Assets
 
             this.Components = 0;
 
-            var image = J2kImage.FromBytes(AssetData);
-            Image = new ManagedImage(image);
+            Image = J2kImage.DecodeToImage<ManagedImage>(AssetData);
 
             if ((Image.Channels & ManagedImage.ImageChannels.Color) != 0)
                 Components += 3;

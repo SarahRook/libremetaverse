@@ -1,8 +1,8 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.IO;
 using System.Xml;
 
-namespace OpenMetaverse.Assets
+namespace LibreMetaverse.Assets
 {
     public class RegionSettings
     {
