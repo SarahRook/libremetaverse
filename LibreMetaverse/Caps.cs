@@ -66,6 +66,9 @@ namespace LibreMetaverse
         private readonly CancellationTokenSource _HttpCts = new CancellationTokenSource();
         private EventQueueClient? _EventQueueClient = null;
 
+        /// <summary>Delay before retrying a failed seed capability request (not const so tests can shorten it)</summary>
+        internal static int SeedRetryDelayMs = 1_000;
+
         /// <summary>Capabilities URI this system was initialized with</summary>
         public Uri SeedCapsURI => _SeedCapsURI;
 
@@ -280,6 +283,23 @@ namespace LibreMetaverse
             }
         }
 
+        private async Task RetrySeedRequestAsync()
+        {
+            try
+            {
+                // Always wait before retrying: avoids hammering the sim and guarantees the retry starts
+                // on a fresh stack, so repeated failures can never recurse into a stack overflow.
+                // At least 1 ms because Task.Delay(0) completes synchronously and would not yield.
+                await Task.Delay(Math.Max(1, SeedRetryDelayMs), _HttpCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is OperationCanceledException || ex is ObjectDisposedException)
+            {
+                return; // Disconnect() cancelled (or already disposed) _HttpCts while we were waiting
+            }
+
+            await MakeSeedRequestAsync().ConfigureAwait(false);
+        }
+
         private void SeedRequestCompleteHandler(HttpResponseMessage? response, byte[]? responseData, Exception? error)
         {
             if (error != null)
@@ -288,14 +308,10 @@ namespace LibreMetaverse
                 {
                     Logger.Error("Seed capability returned a 404, capability system is aborting");
                 }
-                else
+                else if (!_HttpCts.IsCancellationRequested) // Don't retry after Disconnect()
                 {
                     Logger.Warn($"Seed capability returned {(response == null ? "no response" : response.StatusCode.ToString())}. Trying again.");
-                    // Retry the seed request after disposing/renewing the previous CTS to avoid using canceled token
-                    DisposalHelper.SafeCancelAndDispose(_HttpCts, (m, e) => { if (e != null) Logger.Debug(m, e); else Logger.Debug(m); });
-                    // Create a fresh CTS for retry
-                    // Note: _HttpCts is readonly, so we cannot reassign; instead, call MakeSeedRequest only if the original CTS hasn't been disposed.
-                    _ = MakeSeedRequestAsync();
+                    _ = RetrySeedRequestAsync();
                 }
                 return;
             }
@@ -420,7 +436,15 @@ namespace LibreMetaverse
         /// <param name="simulator">Simulator we received the capabilities from</param>
         private void OnCapabilitiesReceived(Simulator simulator)
         {
-            CapabilitiesReceived?.Invoke(this, new CapabilitiesReceivedEventArgs(simulator));
+            try
+            {
+                CapabilitiesReceived?.Invoke(this, new CapabilitiesReceivedEventArgs(simulator));
+            }
+            catch (Exception ex)
+            {
+                // Must not escape: MakeSeedRequestAsync would treat it as a failed request and re-seed
+                Logger.Error($"Exception in CapabilitiesReceived handler: {ex.Message}", ex, simulator.Client);
+            }
         }
     }
 
