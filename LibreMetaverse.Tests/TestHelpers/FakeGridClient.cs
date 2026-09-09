@@ -16,6 +16,11 @@ namespace LibreMetaverse.Tests.TestHelpers
         private readonly Dictionary<string, (HttpStatusCode Status, string Content, string MediaType)> _responses
             = new Dictionary<string, (HttpStatusCode, string, string)>();
 
+        // Sequenced responses/throws matched by URI path. Each call dequeues the next entry;
+        // once a single entry remains it repeats for all subsequent calls.
+        private readonly Dictionary<string, Queue<Func<HttpResponseMessage>>> _sequences
+            = new Dictionary<string, Queue<Func<HttpResponseMessage>>>();
+
         /// <summary>All requests received, in order.</summary>
         public List<(HttpMethod Method, Uri Uri, string Body)> CapturedRequests { get; } = new List<(HttpMethod, Uri, string)>();
 
@@ -32,6 +37,35 @@ namespace LibreMetaverse.Tests.TestHelpers
         public void AddResponseForPath(string path, HttpStatusCode status, string content, string mediaType = "application/llsd+xml")
         {
             _responses["path:" + path.TrimEnd('/')] = (status, content ?? string.Empty, mediaType ?? "application/llsd+xml");
+        }
+
+        /// <summary>
+        /// Register a sequence of responses matched by URI path (query string ignored). Each call
+        /// returns the next response; once one entry remains it repeats. Lets tests simulate
+        /// transient failures followed by success.
+        /// </summary>
+        public void AddResponseSequenceForPath(string path,
+            params (HttpStatusCode Status, string Content, string MediaType)[] responses)
+        {
+            var q = new Queue<Func<HttpResponseMessage>>();
+            foreach (var r in responses)
+            {
+                var captured = r;
+                q.Enqueue(() => MakeResponse((captured.Status, captured.Content ?? string.Empty,
+                    captured.MediaType ?? "application/llsd+xml")));
+            }
+            _sequences["path:" + path.TrimEnd('/')] = q;
+        }
+
+        /// <summary>
+        /// Register a path (query string ignored) whose requests always throw, simulating a
+        /// network-level failure (e.g. connection refused/timeout).
+        /// </summary>
+        public void AddThrowForPath(string path, string message = "Simulated network failure")
+        {
+            var q = new Queue<Func<HttpResponseMessage>>();
+            q.Enqueue(() => throw new HttpRequestException(message));
+            _sequences["path:" + path.TrimEnd('/')] = q;
         }
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -53,6 +87,15 @@ namespace LibreMetaverse.Tests.TestHelpers
             {
                 CapturedRequests.Add((request.Method, request.RequestUri, body));
                 CapturedRequestBodies.Add(bodyBytes);
+            }
+
+            // Sequenced responses/throws (path-based) take precedence so tests can simulate
+            // transient failures (or network exceptions) followed by success.
+            var seqPath = request?.RequestUri?.GetLeftPart(UriPartial.Path).TrimEnd('/');
+            if (seqPath != null && _sequences.TryGetValue("path:" + seqPath, out var seq) && seq.Count > 0)
+            {
+                var factory = seq.Count == 1 ? seq.Peek() : seq.Dequeue();
+                return factory();
             }
 
             // Exact match
@@ -113,6 +156,25 @@ namespace LibreMetaverse.Tests.TestHelpers
         public void AddHttpResponseForPath(string path, HttpStatusCode status, string content, string mediaType = "application/llsd+xml")
         {
             _fakeHandler.AddResponseForPath(path, status, content, mediaType);
+        }
+
+        /// <summary>
+        /// Configure a sequence of responses for a URI path (query ignored): each request returns
+        /// the next entry, and the final entry repeats. Useful for transient-failure-then-success.
+        /// </summary>
+        public void AddHttpResponseSequenceForPath(string path,
+            params (HttpStatusCode Status, string Content, string MediaType)[] responses)
+        {
+            _fakeHandler.AddResponseSequenceForPath(path, responses);
+        }
+
+        /// <summary>
+        /// Configure a URI path (query ignored) whose requests always throw, simulating a
+        /// network-level failure.
+        /// </summary>
+        public void AddHttpThrowForPath(string path, string message = "Simulated network failure")
+        {
+            _fakeHandler.AddThrowForPath(path, message);
         }
 
         /// <summary>All HTTP requests received by this client, in order.</summary>
