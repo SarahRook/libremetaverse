@@ -94,6 +94,8 @@ namespace LibreMetaverse.Tests
                 case "invalid-title-index":
                     members[UUID.Random().ToString()] = new OSDMap { ["title"] = OSD.FromInteger(10) };
                     break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(scenario), scenario, "Unhandled test scenario");
             }
 
             var replies = new List<GroupMembersReplyEventArgs>();
