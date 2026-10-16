@@ -1087,18 +1087,20 @@ namespace LibreMetaverse
         {
             DisconnectCandidate = false;
 
-            if (!connected) return;
+            if (!connected)
+            {
+                // A simulator can be marked disconnected while its caps (and event queue) are still
+                // running; tear them down anyway or they outlive the GridClient's HTTP client.
+                DisconnectCaps();
+                return;
+            }
 
             connected = false;
             // Stop background timer tasks
             StopTimerTasks();
 
             // Kill the current CAPS system
-            if (Caps != null)
-            {
-                Caps.Disconnect(true);
-                Caps = null;
-            }
+            DisconnectCaps();
 
             if (sendCloseCircuit)
             {
@@ -1126,6 +1128,18 @@ namespace LibreMetaverse
 
             // Shut the socket communication down
             Stop();
+        }
+
+        private void DisconnectCaps()
+        {
+            var caps = Caps;
+            if (caps == null) { return; }
+
+            // Tear down before detaching: CapabilitiesReceived handlers, run by the seed task that
+            // Disconnect waits for, still dereference Simulator.Caps. Then detach only these caps,
+            // not a replacement SetSeedCaps may have installed meanwhile.
+            caps.Disconnect(true);
+            Interlocked.CompareExchange(ref Caps, null, caps);
         }
 
         /// <summary>
