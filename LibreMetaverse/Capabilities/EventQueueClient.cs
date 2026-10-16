@@ -46,10 +46,56 @@ namespace LibreMetaverse.Http
         private const int InitialEqRetryDelayMs = 1_000;
         private const int MaxEqRetryDelayMs = 30_000;
 
-        // Milliseconds to wait before the next request; written by RequestCompletedHandler,
-        // read and reset by the polling loop.  Accessed only from the single EQ task so no
-        // Interlocked is needed, but volatile prevents stale reads across the await boundary.
-        private volatile int _pendingRetryDelayMs;
+        // Minimum pause after any poll that got no successful (2xx) response. Some failures schedule
+        // no backoff (normal long-poll expiry, request timeout, error statuses), and one that fails
+        // instantly every time would otherwise turn the loop into a zero-delay spin.
+        private const int MinRetryDelayAfterFailedPollMs = 100;
+
+        // First backoff step. Overridable by tests to avoid slow runs; not a constant for that reason.
+        internal int _initialRetryDelayMs = InitialEqRetryDelayMs;
+
+        /// <summary>
+        /// State owned by one run of the polling loop. Stop() then Start() can begin a new run while
+        /// the previous one is still handling its last reply, and that late reply must neither cancel
+        /// nor delay the new run.
+        /// </summary>
+        private sealed class PollLoop
+        {
+            public readonly CancellationTokenSource Cts;
+
+            // Captured before Cts is published: Stop()/Dispose()/a later Create() can cancel-and-dispose
+            // Cts from another thread while this run is still going, and CancellationTokenSource.Token's
+            // getter throws ObjectDisposedException once disposed — which is not an
+            // OperationCanceledException, so it would fault the task instead of exiting cleanly.
+            // Reading IsCancellationRequested on this token stays safe after the source is disposed.
+            public readonly CancellationToken Token;
+
+            // Milliseconds to wait before the next request; written by RequestCompletedHandler,
+            // read and reset by the polling loop.  Accessed only from this run's task so no
+            // Interlocked is needed, but volatile prevents stale reads across the await boundary.
+            public volatile int PendingRetryDelayMs;
+
+            // Current backoff step. Unlike PendingRetryDelayMs, which the loop clears before every
+            // request, this survives consecutive failures so the delay actually grows; the loop resets
+            // it after any poll that schedules no backoff.
+            public int RetryBackoffMs;
+
+            public PollLoop(CancellationTokenSource cts)
+            {
+                Cts = cts;
+                Token = cts.Token;
+            }
+        }
+
+        private enum PollResult
+        {
+            /// <summary>The server answered with a success status.</summary>
+            Succeeded,
+            /// <summary>No successful response; polling may continue.</summary>
+            Failed,
+            /// <summary>Polling can never succeed again; the loop must exit.</summary>
+            Stop
+        }
 
         public delegate void ConnectedCallback();
         public delegate void EventCallback(string eventName, OSDMap body);
@@ -122,13 +168,31 @@ namespace LibreMetaverse.Http
         /// jitter derived from Environment.TickCount so multiple clients don't thunderbird
         /// at the same moment.
         /// </summary>
-        private static int NextRetryDelay(int currentMs)
+        private int NextRetryDelay(int currentMs)
         {
-            int next = currentMs == 0 ? InitialEqRetryDelayMs
+            int next = currentMs == 0 ? _initialRetryDelayMs
                                       : Math.Min(MaxEqRetryDelayMs, currentMs * 2);
             // Add 0–12.5% jitter using TickCount as a cheap pseudo-random source.
             next += Math.Abs(Environment.TickCount) % (next / 8 + 1);
             return next;
+        }
+
+        /// <summary>
+        /// Delays the run's next request by the next backoff step, growing across consecutive failures.
+        /// </summary>
+        private void ScheduleRetryBackoff(PollLoop loop)
+        {
+            loop.RetryBackoffMs = NextRetryDelay(loop.RetryBackoffMs);
+            loop.PendingRetryDelayMs = loop.RetryBackoffMs;
+        }
+
+        /// <summary>
+        /// Cancels the given run of the polling loop and no other: Stop() then Start() may have begun
+        /// a newer run meanwhile, which must keep going. Safe against a concurrent Stop()/Dispose().
+        /// </summary>
+        private static void CancelQueue(PollLoop loop)
+        {
+            try { loop.Cts.Cancel(); } catch (ObjectDisposedException) { }
         }
 
         private void Create()
@@ -144,46 +208,44 @@ namespace LibreMetaverse.Http
             }
 
             // Atomically replace previous CTS and dispose it
-            var newCts = new CancellationTokenSource();
-            var prev = Interlocked.Exchange(ref _queueCts, newCts);
+            var loop = new PollLoop(new CancellationTokenSource());
+            var prev = Interlocked.Exchange(ref _queueCts, loop.Cts);
             DisposalHelper.SafeCancelAndDispose(prev);
 
-            // Capture the token once: Dispose()/a later Create() can cancel-and-dispose
-            // this same CTS from another thread while this loop is still running (it only
-            // observes cancellation between awaits), and CancellationTokenSource.Token's
-            // getter throws ObjectDisposedException once disposed — which is not an
-            // OperationCanceledException, so it would fault the task instead of exiting
-            // cleanly. Reading IsCancellationRequested on an already-obtained token stays
-            // safe after the source is disposed, so re-deriving the token from newCts
-            // anywhere below this line must be avoided.
-            var token = newCts.Token;
-
-            _pendingRetryDelayMs = 0;
+            // Never re-derive the token from loop.Cts; see PollLoop.Token.
+            var token = loop.Token;
 
             _eqTask = Task.Run(async () =>
             {
                 try
                 {
                     // First request is immediate.
-                    await ack().ConfigureAwait(false);
+                    var result = await ack().ConfigureAwait(false);
 
-                    while (!token.IsCancellationRequested)
+                    while (result != PollResult.Stop && !token.IsCancellationRequested)
                     {
-                        int delayMs = _pendingRetryDelayMs;
-                        _pendingRetryDelayMs = 0;
+                        int delayMs = loop.PendingRetryDelayMs;
+                        loop.PendingRetryDelayMs = 0;
+
+                        // The backoff only grows across consecutive polls that scheduled one.
+                        if (delayMs == 0) { loop.RetryBackoffMs = 0; }
+
+                        // Never re-poll at once after a failure, even one that scheduled no backoff.
+                        if (result == PollResult.Failed && delayMs < MinRetryDelayAfterFailedPollMs)
+                            delayMs = MinRetryDelayAfterFailedPollMs;
 
                         if (delayMs > 0)
                             await Task.Delay(delayMs, token).ConfigureAwait(false);
 
                         if (token.IsCancellationRequested) break;
 
-                        await ack().ConfigureAwait(false);
+                        result = await ack().ConfigureAwait(false);
                     }
                 }
                 catch (OperationCanceledException) { }
             }, token);
 
-            async Task ack()
+            async Task<PollResult> ack()
             {
                 try
                 {
@@ -204,16 +266,39 @@ namespace LibreMetaverse.Http
                         }
                     }
 
+                    // Read once per poll, so a failure can be traced to the client that caused it.
+                    var http = Simulator.Client.HttpCapsClient;
                     try
                     {
-                        var (response, data) = await Simulator.Client.HttpCapsClient.PostAsync(
+                        var (response, data) = await http.PostAsync(
                             Address, OSDFormat.Xml, payloadSnapshot, token).ConfigureAwait(false);
                         ConnectedResponseHandler(response);
-                        RequestCompletedHandler(response, data, null);
+                        RequestCompletedHandler(loop, response, data, null);
+                        return response.IsSuccessStatusCode ? PollResult.Succeeded : PollResult.Failed;
+                    }
+                    catch (ObjectDisposedException ex)
+                    {
+                        // GridClient.HttpCapsClient is settable: a client that has since been replaced
+                        // is no reason to stop, as the next poll uses its replacement.
+                        var current = Simulator.Client.HttpCapsClient;
+                        if (current != null && !ReferenceEquals(current, http))
+                        {
+                            return PollResult.Failed;
+                        }
+
+                        // The HTTP client was disposed under us (e.g. GridClient.Dispose() while this
+                        // queue was still running). Every further request would fail the same way
+                        // immediately, so this is terminal.
+                        if (!token.IsCancellationRequested)
+                        {
+                            Logger.Info($"Closing event queue at {Simulator}: {ex.ObjectName} has been disposed");
+                            CancelQueue(loop);
+                        }
+                        return PollResult.Stop;
                     }
                     catch (Exception innerEx) when (!(innerEx is OperationCanceledException))
                     {
-                        RequestCompletedHandler(null, null, innerEx);
+                        RequestCompletedHandler(loop, null, null, innerEx);
                     }
                 }
                 catch (OperationCanceledException)
@@ -224,6 +309,8 @@ namespace LibreMetaverse.Http
                 {
                     Logger.Error($"Exception sending EventQueue POST to {Simulator}: {ex.Message}", ex);
                 }
+
+                return PollResult.Failed;
             }
         }
 
@@ -326,10 +413,27 @@ namespace LibreMetaverse.Http
             return false;
         }
 
-        private void RequestCompletedHandler(HttpResponseMessage? response, byte[]? responseData, Exception? error)
+        private void RequestCompletedHandler(PollLoop loop, HttpResponseMessage? response, byte[]? responseData, Exception? error)
         {
-            // Ignore anything if we're no longer connected to the sim.
-            if (!Simulator.Connected) { return; }
+            if (!Simulator.Connected)
+            {
+                if (ReferenceEquals(Simulator.Caps?.EventQueue, this))
+                {
+                    // Still the simulator's own queue, so it may just not have finished connecting: a
+                    // neighbour's seed capability can arrive before its circuit is up. Leave the events
+                    // unacknowledged, so the server delivers them again, and retry later rather than at
+                    // once. Simulator.Disconnect() stops the caps of a simulator that goes away.
+                    ScheduleRetryBackoff(loop);
+                }
+                else
+                {
+                    // Nothing consumes the events of a queue its simulator no longer uses, so stop.
+                    // Merely returning made the loop re-poll at once, forever.
+                    Logger.Debug($"Closing event queue at {Simulator}: simulator is not connected");
+                    CancelQueue(loop);
+                }
+                return;
+            }
 
             try
             {
@@ -360,14 +464,14 @@ namespace LibreMetaverse.Http
                             {
                                 Logger.Error($"Unable to parse response from {Simulator} event queue: " +
                                            error.Message);
-                                _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
+                                ScheduleRetryBackoff(loop);
                             }
                         }
                         else
                         {
                             Logger.Error($"Unable to parse response from {Simulator} event queue: " +
                                        error.Message);
-                            _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
+                            ScheduleRetryBackoff(loop);
                         }
 
                         return;
@@ -378,22 +482,11 @@ namespace LibreMetaverse.Http
                         case HttpStatusCode.NotFound:
                         case HttpStatusCode.Gone:
                             Logger.Info($"Closing event queue at {Simulator} due to missing caps URI");
-
-                            // Cancel safely on snapshot
-                            var ctsSnapshot1 = Volatile.Read(ref _queueCts);
-                            if (ctsSnapshot1 != null)
-                            {
-                                try { ctsSnapshot1.Cancel(); } catch (ObjectDisposedException) { }
-                            }
+                            CancelQueue(loop);
                             break;
                         case (HttpStatusCode)499: // weird error returned occasionally, ignore for now
                             Logger.Debug($"Possible HTTP-out timeout error from {Simulator}, no need to continue");
-
-                            var ctsSnapshot2 = Volatile.Read(ref _queueCts);
-                            if (ctsSnapshot2 != null)
-                            {
-                                try { ctsSnapshot2.Cancel(); } catch (ObjectDisposedException) { }
-                            }
+                            CancelQueue(loop);
                             break;
 
                         case HttpStatusCode.InternalServerError:
@@ -417,16 +510,12 @@ namespace LibreMetaverse.Http
                             {
                                 if (error.InnerException.Message.IndexOf(PROXY_TIMEOUT_RESPONSE, StringComparison.Ordinal) < 0)
                                 {
-                                    var ctsSnapshot3 = Volatile.Read(ref _queueCts);
-                                    if (ctsSnapshot3 != null)
-                                    {
-                                        try { ctsSnapshot3.Cancel(); } catch (ObjectDisposedException) { }
-                                    }
+                                    CancelQueue(loop);
                                 }
                                 else
                                 {
                                     // Proxy timeout wrapped in a 500 — server is stressed, back off.
-                                    _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
+                                    ScheduleRetryBackoff(loop);
                                 }
                             }
                             else
@@ -435,16 +524,12 @@ namespace LibreMetaverse.Http
 
                                 if (!WILLFULLY_IGNORE_LL_SPECS_ON_EVENT_QUEUE || !Simulator.Connected)
                                 {
-                                    var ctsSnapshot4 = Volatile.Read(ref _queueCts);
-                                    if (ctsSnapshot4 != null)
-                                    {
-                                        try { ctsSnapshot4.Cancel(); } catch (ObjectDisposedException) { }
-                                    }
+                                    CancelQueue(loop);
                                 }
                                 else
                                 {
                                     // Ignoring spec's "stop on 500" — back off before retrying.
-                                    _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
+                                    ScheduleRetryBackoff(loop);
                                 }
                             }
                         }
@@ -467,7 +552,7 @@ namespace LibreMetaverse.Http
                             if (response.StatusCode != HttpStatusCode.OK)
                             {
                                 Logger.Warn($"Unrecognized caps connection problem from {Simulator}: {response.StatusCode} {response.ReasonPhrase}");
-                                _pendingRetryDelayMs = NextRetryDelay(_pendingRetryDelayMs);
+                                ScheduleRetryBackoff(loop);
                             }
                             else if (error.InnerException != null)
                             {
@@ -496,7 +581,7 @@ namespace LibreMetaverse.Http
                 {
                     // Got a proper HTTP response — clear any pending backoff regardless of whether
                     // the body parses cleanly.  The server is reachable and answering.
-                    _pendingRetryDelayMs = 0;
+                    loop.PendingRetryDelayMs = 0;
 
                     // Got a response. Validate that the payload is likely LLSD/XML before attempting to parse.
                     if (!IsLikelyLLSD(response, responseData))
@@ -593,6 +678,10 @@ namespace LibreMetaverse.Http
             catch (Exception e)
             {
                 Logger.Warn($"Exception in EventQueueGet handler; {e.Message}", e);
+
+                // Don't re-poll at once: a batch that broke the handler before it was acknowledged
+                // would just be delivered, and fail, again straight away.
+                ScheduleRetryBackoff(loop);
             }
         }
     }
